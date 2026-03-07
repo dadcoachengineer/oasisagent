@@ -68,8 +68,7 @@ OasisAgent is a standalone, containerized Python application that detects infras
 All ingestion sources produce the same `Event` model. The decision engine, handlers, and audit system all operate on this schema. This is the core data contract of the project.
 
 ```python
-@dataclass
-class Event:
+class Event(BaseModel):
     id: str                     # UUID, generated at ingestion
     source: str                 # Ingestion adapter that produced this event
                                 # e.g., "mqtt", "ha_websocket", "ha_log_poller"
@@ -85,26 +84,29 @@ class Event:
     severity: Severity          # enum: info, warning, error, critical
     timestamp: datetime         # When the event occurred (source timestamp)
     ingested_at: datetime       # When the agent received it
-    payload: dict               # Raw source data, structure varies by source
-    context: dict               # Additional context gathered during processing
+    payload: dict[str, Any]     # Raw source data, structure varies by source
+    context: dict[str, Any]     # Additional context gathered during processing
                                 # Populated progressively by T1 and handlers
     metadata: EventMetadata     # Processing metadata (see below)
 
 
-@dataclass
-class EventMetadata:
+class EventMetadata(BaseModel):
     correlation_id: str | None  # Groups related events (e.g., cascading failures)
     dedup_key: str              # For deduplication — source + entity_id + event_type
     ttl: int                    # Seconds before this event expires unprocessed
     retry_count: int            # How many times processing has been attempted
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
     CRITICAL = "critical"
 ```
+
+> **Implementation note:** All models use Pydantic `BaseModel` (not `@dataclass`) for
+> validation, serialization (`.model_dump()`), and structured LLM output parsing
+> (`.model_validate()`). See `oasisagent/models.py`.
 
 ### Event Lifecycle
 
@@ -294,14 +296,13 @@ The local small language model handles:
 T1 receives events that didn't match any T0 pattern. It returns a structured classification:
 
 ```python
-@dataclass
-class TriageResult:
-    disposition: str            # "drop", "known_pattern", "escalate_t2", "escalate_human"
+class TriageResult(BaseModel):
+    disposition: Disposition     # drop, known_pattern, escalate_t2, escalate_human
     confidence: float           # 0.0-1.0
     classification: str         # Event sub-category
     summary: str                # Human-readable summary of what happened
     suggested_fix: str | None   # If disposition is "known_pattern"
-    context_package: dict | None # Structured context for T2 if escalating
+    context_package: dict[str, Any] | None  # Structured context for T2 if escalating
     reasoning: str              # Brief explanation of classification logic
 ```
 
@@ -326,23 +327,21 @@ Invoked only when T1 escalates with `disposition: "escalate_t2"`. Receives:
 Returns a structured diagnosis:
 
 ```python
-@dataclass
-class DiagnosisResult:
+class DiagnosisResult(BaseModel):
     root_cause: str             # What went wrong and why
     confidence: float           # 0.0-1.0
     recommended_actions: list[RecommendedAction]
     risk_assessment: str        # Why this is or isn't safe to auto-fix
     additional_context: str     # Anything the human should know
-    suggested_known_fix: dict | None  # If this should be added to the T0 registry
+    suggested_known_fix: dict[str, Any] | None  # If this should be added to the T0 registry
 
 
-@dataclass
-class RecommendedAction:
+class RecommendedAction(BaseModel):
     description: str
     handler: str                # Which handler should execute this
     operation: str              # Handler-specific operation name
-    params: dict                # Operation parameters
-    risk_tier: str              # "auto_fix", "recommend", "escalate"
+    params: dict[str, Any]      # Operation parameters
+    risk_tier: RiskTier         # auto_fix, recommend, escalate, block
     reasoning: str              # Why this action and this risk tier
 ```
 
