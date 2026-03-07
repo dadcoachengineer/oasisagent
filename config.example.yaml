@@ -16,6 +16,7 @@ agent:
   name: oasis-agent             # Instance name (for logging and multi-agent setups)
   log_level: info               # debug, info, warning, error
   event_queue_size: 1000        # Internal event queue buffer size
+  dedup_window_seconds: 300     # Events with same dedup key within this window are dropped
   shutdown_timeout: 30          # Seconds to wait for graceful shutdown
 
 # -----------------------------------------------------------------------------

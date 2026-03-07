@@ -132,6 +132,7 @@ class AgentConfig(BaseModel):
     name: str = "oasis-agent"
     log_level: LogLevel = LogLevel.INFO
     event_queue_size: Annotated[int, Field(ge=1)] = 1000
+    dedup_window_seconds: Annotated[int, Field(ge=0)] = 300
     shutdown_timeout: Annotated[int, Field(ge=1)] = 30
 
 
