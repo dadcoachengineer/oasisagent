@@ -1,4 +1,33 @@
 # Known fixes for Home Assistant failures.
-# Each entry maps a failure pattern to a diagnosis and recommended action.
-# See ARCHITECTURE.md §5 for the match engine specification.
-fixes: []
+# Evaluated by the T0 match engine — first match wins.
+# See ARCHITECTURE.md §5 for match semantics.
+
+fixes:
+  - id: ha-deprecated-kelvin
+    match:
+      system: homeassistant
+      event_type: automation_error
+      payload_contains: "kelvin"
+    diagnosis: "HA deprecated 'kelvin' parameter in favor of 'color_temp_kelvin'"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: "Replace 'kelvin' with 'color_temp_kelvin' in automation config"
+    risk_tier: recommend
+
+  - id: ha-entity-unavailable-zwave
+    match:
+      system: homeassistant
+      event_type: state_unavailable
+      entity_id_pattern: "*.zwave_*"
+      min_duration: 300
+    diagnosis: "Z-Wave entity unavailable for >5 min, likely controller issue"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: restart_integration
+      details:
+        integration: zwave_js
+    risk_tier: recommend

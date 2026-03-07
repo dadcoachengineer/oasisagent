@@ -255,7 +255,7 @@ fixes:
       operation: notify     # Phase 1: notify only. Phase 2+: config_edit
       details:
         message: "Replace 'kelvin' with 'color_temp_kelvin' in automation config"
-    risk_tier: low
+    risk_tier: recommend
 
   - id: ha-entity-unavailable-zwave
     match:
@@ -270,7 +270,7 @@ fixes:
       operation: restart_integration
       details:
         integration: zwave_js
-    risk_tier: medium
+    risk_tier: recommend
 ```
 
 #### Match Engine
