@@ -17,21 +17,13 @@ from typing import TYPE_CHECKING
 import aiohttp
 
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import SEVERITY_MAP, Event, EventMetadata, Severity
 
 if TYPE_CHECKING:
     from oasisagent.config import HaLogPollerConfig, LogPattern
     from oasisagent.engine.queue import EventQueue
 
 logger = logging.getLogger(__name__)
-
-_SEVERITY_MAP: dict[str, Severity] = {
-    "info": Severity.INFO,
-    "warning": Severity.WARNING,
-    "error": Severity.ERROR,
-    "critical": Severity.CRITICAL,
-}
-
 
 class HaLogPollerAdapter(IngestAdapter):
     """Ingestion adapter that polls Home Assistant's error log.
@@ -144,7 +136,7 @@ class HaLogPollerAdapter(IngestAdapter):
 
                 self._mark_seen(fingerprint)
                 entity_id = match.group(1) if match.lastindex and match.lastindex >= 1 else ""
-                severity = _SEVERITY_MAP.get(pattern.severity, Severity.WARNING)
+                severity = SEVERITY_MAP.get(pattern.severity, Severity.WARNING)
 
                 event = Event(
                     source=self.name,

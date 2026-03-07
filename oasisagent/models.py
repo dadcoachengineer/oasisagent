@@ -33,6 +33,14 @@ class Severity(StrEnum):
     CRITICAL = "critical"
 
 
+SEVERITY_MAP: dict[str, Severity] = {
+    "info": Severity.INFO,
+    "warning": Severity.WARNING,
+    "error": Severity.ERROR,
+    "critical": Severity.CRITICAL,
+}
+
+
 class Disposition(StrEnum):
     """T1 triage dispositions — what to do with an event after classification."""
 

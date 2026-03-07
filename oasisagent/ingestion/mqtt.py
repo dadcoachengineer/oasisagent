@@ -16,23 +16,13 @@ import aiomqtt
 
 from oasisagent.backoff import ExponentialBackoff
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import SEVERITY_MAP, Event, EventMetadata, Severity
 
 if TYPE_CHECKING:
     from oasisagent.config import MqttIngestionConfig, MqttTopicMapping
     from oasisagent.engine.queue import EventQueue
 
 logger = logging.getLogger(__name__)
-
-# Map string severity values from config to Severity enum.
-# "auto" is not a valid Severity — adapters must resolve it before
-# constructing an Event.
-_SEVERITY_MAP: dict[str, Severity] = {
-    "info": Severity.INFO,
-    "warning": Severity.WARNING,
-    "error": Severity.ERROR,
-    "critical": Severity.CRITICAL,
-}
 
 _DEFAULT_SEVERITY = Severity.WARNING
 _DEFAULT_SYSTEM = "unknown"
@@ -215,9 +205,9 @@ class MqttAdapter(IngestAdapter):
     def _resolve_severity(configured: str, payload: dict[str, Any]) -> Severity:
         """Resolve severity from config, payload, or default."""
         if configured != "auto":
-            return _SEVERITY_MAP.get(configured, _DEFAULT_SEVERITY)
+            return SEVERITY_MAP.get(configured, _DEFAULT_SEVERITY)
         payload_severity = str(payload.get("severity", ""))
-        return _SEVERITY_MAP.get(payload_severity, _DEFAULT_SEVERITY)
+        return SEVERITY_MAP.get(payload_severity, _DEFAULT_SEVERITY)
 
 
 def _topic_matches(pattern: str, topic: str) -> bool:
