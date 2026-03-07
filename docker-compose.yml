@@ -1,0 +1,21 @@
+services:
+  oasisagent:
+    build: .
+    container_name: oasisagent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./known_fixes:/app/known_fixes:ro
+      # Phase 2: Uncomment for Docker handler
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    # For home lab setups where HA, EMQX, and InfluxDB are on the local network,
+    # host networking is the simplest option — no port mapping or extra_hosts needed:
+    # network_mode: host
+    #
+    # Alternative: bridge networking with explicit host mappings:
+    # extra_hosts:
+    #   - "homeassistant:192.168.1.120"
+    #   - "emqx:192.168.1.120"
+    #   - "influxdb:192.168.1.120"

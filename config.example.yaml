@@ -1,0 +1,223 @@
+# =============================================================================
+# OasisAgent Configuration
+# =============================================================================
+#
+# This is the complete configuration reference. Copy to config.yaml and
+# customize for your environment.
+#
+# Secrets use ${VAR} syntax and are resolved from environment variables.
+# See .env.example for the full list of expected variables.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Agent — Global settings
+# -----------------------------------------------------------------------------
+agent:
+  name: oasis-agent             # Instance name (for logging and multi-agent setups)
+  log_level: info               # debug, info, warning, error
+  event_queue_size: 1000        # Internal event queue buffer size
+  shutdown_timeout: 30          # Seconds to wait for graceful shutdown
+
+# -----------------------------------------------------------------------------
+# Ingestion — Event sources
+# Each adapter connects to an external system and produces canonical Events.
+# Enable only what you use.
+# -----------------------------------------------------------------------------
+ingestion:
+
+  # MQTT subscriber — connects to any MQTT broker (EMQX, Mosquitto, etc.)
+  mqtt:
+    enabled: true
+    broker: mqtt://localhost:1883
+    username: ${MQTT_USER}
+    password: ${MQTT_PASS}
+    client_id: oasis-agent
+    qos: 1
+    topics:
+      # Each topic mapping tells the agent how to interpret messages on that topic.
+      # Fields set to "auto" are inferred from the message payload or topic structure.
+      - pattern: "homeassistant/error/#"
+        system: homeassistant
+        event_type: automation_error
+        severity: error
+      - pattern: "oasis/alerts/#"
+        system: auto
+        event_type: auto
+        severity: auto
+
+  # Home Assistant WebSocket — real-time state changes and automation failures
+  ha_websocket:
+    enabled: true
+    url: ws://localhost:8123/api/websocket
+    token: ${HA_TOKEN}
+    subscriptions:
+      # State change monitoring — fires when entities transition to bad states
+      state_changes:
+        enabled: true
+        trigger_states: ["unavailable", "unknown"]
+        # Entities that are expected to be temporarily unavailable (battery sensors, etc.)
+        ignore_entities: []
+        # Debounce: entity must be in bad state for this many seconds before emitting event
+        min_duration: 60
+      # Automation failure tracking
+      automation_failures:
+        enabled: true
+      # Service call error tracking
+      service_call_errors:
+        enabled: true
+
+  # Home Assistant Log Poller — pattern-match against HA error logs
+  ha_log_poller:
+    enabled: true
+    url: http://localhost:8123
+    token: ${HA_TOKEN}
+    poll_interval: 30            # Seconds between polls
+    dedup_window: 300            # Same error within this window = one event
+    patterns:
+      # Each pattern matches a log line regex and produces an event
+      - regex: "Error setting up integration '(.+)'"
+        event_type: integration_failure
+        severity: error
+      - regex: "(.+) is unavailable"
+        event_type: state_unavailable
+        severity: warning
+      - regex: "Deprecated .+ used in (.+)"
+        event_type: deprecation_warning
+        severity: warning
+
+# -----------------------------------------------------------------------------
+# LLM — Language model configuration
+# OasisAgent is provider-agnostic. Any OpenAI-compatible endpoint works:
+# Ollama, LM Studio, vLLM, llama.cpp, or any cloud provider via LiteLLM.
+# -----------------------------------------------------------------------------
+llm:
+
+  # T1 — Triage: Local small language model for classification and context packaging
+  triage:
+    base_url: http://localhost:11434/v1    # Ollama default
+    model: qwen2.5:7b
+    api_key: ${TRIAGE_LLM_API_KEY:-not-needed}
+    timeout: 5                   # Seconds — local models should respond fast
+    max_tokens: 1024
+    temperature: 0.1             # Low temp for consistent classification
+
+  # T2 — Reasoning: Cloud model for novel failure diagnosis
+  reasoning:
+    base_url: https://api.anthropic.com
+    model: claude-sonnet-4-5-20250929    # Or claude-opus-4-6, gpt-4o, gemini-2.0-flash, etc.
+    api_key: ${REASONING_LLM_API_KEY}
+    timeout: 45                  # Cloud models can take longer
+    max_tokens: 4096
+    temperature: 0.2
+
+  # Shared LLM options
+  options:
+    cost_tracking: true          # Track token usage and estimated cost per role
+    retry_attempts: 2            # Retries on transient failures (timeout, 5xx)
+    fallback_to_triage: true     # If reasoning endpoint is down, T1 attempts diagnosis
+    log_prompts: false           # WARNING: enables logging of full prompts (may contain secrets)
+
+# -----------------------------------------------------------------------------
+# Handlers — Managed system integrations
+# Each handler knows how to interact with one system's API.
+# Enable only the systems you want OasisAgent to manage.
+# -----------------------------------------------------------------------------
+handlers:
+
+  # Home Assistant — automation errors, state monitoring, integration restarts
+  homeassistant:
+    enabled: true
+    url: http://localhost:8123
+    token: ${HA_TOKEN}
+    verify_timeout: 30           # Seconds to wait after action to verify effect
+
+  # Docker — container health and restart (Phase 2)
+  docker:
+    enabled: false
+    socket: unix:///var/run/docker.sock
+    # For remote Docker hosts:
+    # url: tcp://192.168.1.120:2375
+    # tls_verify: true
+
+  # Proxmox — VM/CT management (Phase 3)
+  proxmox:
+    enabled: false
+    url: https://localhost:8006
+    user: ${PROXMOX_USER}
+    token_name: ${PROXMOX_TOKEN_NAME}
+    token_value: ${PROXMOX_TOKEN_VALUE}
+    verify_ssl: false
+
+# -----------------------------------------------------------------------------
+# Guardrails — Safety controls
+# These are enforced in code, not in model prompts. The LLM never decides
+# whether to act — it classifies and recommends. Guardrails decide.
+# -----------------------------------------------------------------------------
+guardrails:
+
+  # Entity patterns that are permanently blocked from any automated action.
+  # Uses glob-style matching against entity_id.
+  blocked_domains:
+    - "lock.*"
+    - "alarm_control_panel.*"
+    - "camera.*"
+    - "cover.*"
+
+  # Additional specific entities to block (user-defined)
+  blocked_entities: []
+
+  # Master switches
+  kill_switch: false             # Set true to disable ALL automated actions instantly
+  dry_run: false                 # Set true to log every decision without executing anything
+
+  # Circuit breaker — prevents remediation loops
+  circuit_breaker:
+    max_attempts_per_entity: 3   # Max remediation attempts per entity per rolling window
+    window_minutes: 60           # Rolling window for attempt counting
+    cooldown_minutes: 15         # Minimum time between retry attempts on same entity
+    global_failure_rate_threshold: 0.3  # 30% failure rate across all actions = global pause
+    global_pause_minutes: 30     # Duration of global pause when threshold is breached
+
+# -----------------------------------------------------------------------------
+# Audit — Action logging
+# Every event, decision, and action is logged to InfluxDB. Non-negotiable.
+# If the agent touched something, there's a record.
+# -----------------------------------------------------------------------------
+audit:
+  influxdb:
+    enabled: true
+    url: http://localhost:8086
+    token: ${INFLUXDB_TOKEN}
+    org: myorg
+    bucket: oasisagent
+  retention_days: 90             # How long to keep audit records
+
+# -----------------------------------------------------------------------------
+# Notifications — Alert channels
+# Messages are sent for: RECOMMEND/ESCALATE decisions, AUTO_FIX results,
+# circuit breaker trips, and agent lifecycle events (start/stop/error).
+# -----------------------------------------------------------------------------
+notifications:
+
+  # MQTT notifications — publishes to a configurable topic
+  mqtt:
+    enabled: true
+    broker: mqtt://localhost:1883
+    topic_prefix: oasis/notifications
+    username: ${MQTT_USER}
+    password: ${MQTT_PASS}
+
+  # Email notifications (SMTP)
+  email:
+    enabled: false
+    smtp_host: localhost
+    smtp_port: 587
+    from: oasis-agent@example.com
+    to:
+      - admin@example.com
+
+  # Webhook notifications (POST JSON to URL)
+  webhook:
+    enabled: false
+    urls:
+      - https://hooks.example.com/oasis
