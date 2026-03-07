@@ -10,9 +10,11 @@ services:
       - ./known_fixes:/app/known_fixes:ro
       # Phase 2: Uncomment for Docker handler
       # - /var/run/docker.sock:/var/run/docker.sock:ro
-    # Network examples for connecting to external services:
-    # networks:
-    #   - monitoring    # Connect to your existing monitoring network
+    # For home lab setups where HA, EMQX, and InfluxDB are on the local network,
+    # host networking is the simplest option — no port mapping or extra_hosts needed:
+    # network_mode: host
+    #
+    # Alternative: bridge networking with explicit host mappings:
     # extra_hosts:
     #   - "homeassistant:192.168.1.120"
     #   - "emqx:192.168.1.120"

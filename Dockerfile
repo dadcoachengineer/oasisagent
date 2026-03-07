@@ -24,4 +24,6 @@ WORKDIR /app
 
 USER oasis
 
+ENV PYTHONUNBUFFERED=1
+
 ENTRYPOINT ["python", "-m", "oasisagent"]
