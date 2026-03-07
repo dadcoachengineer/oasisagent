@@ -1,0 +1,4 @@
+# Known fixes for Home Assistant failures.
+# Each entry maps a failure pattern to a diagnosis and recommended action.
+# See ARCHITECTURE.md §5 for the match engine specification.
+fixes: []

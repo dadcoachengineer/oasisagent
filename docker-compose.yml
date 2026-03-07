@@ -1,0 +1,19 @@
+services:
+  oasisagent:
+    build: .
+    container_name: oasisagent
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./known_fixes:/app/known_fixes:ro
+      # Phase 2: Uncomment for Docker handler
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Network examples for connecting to external services:
+    # networks:
+    #   - monitoring    # Connect to your existing monitoring network
+    # extra_hosts:
+    #   - "homeassistant:192.168.1.120"
+    #   - "emqx:192.168.1.120"
+    #   - "influxdb:192.168.1.120"
