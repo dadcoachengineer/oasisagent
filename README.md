@@ -1,66 +1,155 @@
-# oasis-agent
+# OasisAgent
 
-Autonomous Infrastructure Operations Agent — detects, diagnoses, and remediates failures across home infrastructure systems (Home Assistant, Docker, Proxmox) without human intervention.
+Autonomous infrastructure operations agent for home labs. Detects failures, classifies them with tiered LLM reasoning, and auto-remediates or escalates with full context.
 
-## What it does
+OasisAgent bridges the gap between **monitoring** (you know something broke) and **resolution** (it's fixed). It sits alongside your existing stack — not inside it — and closes that gap automatically for known issues, and with intelligent diagnosis for novel ones.
 
-oasis-agent is a standalone Docker container that sits alongside your existing monitoring stack (Telegraf, EMQX, InfluxDB, Grafana) and closes the gap between **detection** and **resolution**:
+## How It Works
 
-1. **Detect** — Subscribes to failure events via EMQX/MQTT
-2. **Classify** — Matches against a known-fixes registry (fast path) or routes to Claude API for diagnosis (slow path)
-3. **Decide** — Applies guardrails: auto-fix (low risk), recommend (medium risk), escalate (high risk)
-4. **Act** — Executes remediation via system APIs (HA REST, Docker socket, Proxmox API)
-5. **Verify** — Confirms the fix holds; escalates if it doesn't
-6. **Audit** — Logs everything to InfluxDB for Grafana dashboards
+```
+Event Source → Ingestion → Decision Engine → Handler → Verify → Audit
+                               │
+                    ┌──────────┼──────────┐
+                    T0         T1          T2
+                  Lookup    Local SLM   Cloud LLM
+                  (<1ms)   (100-500ms)  (5-45s)
+```
 
-## Key design principles
+**Three-tier reasoning:**
 
-- **Two-tier reasoning**: Known fixes resolve in milliseconds via lookup. Novel failures route to Claude API. The LLM is a fallback, not the hot path.
-- **Safety first**: Security systems (locks, alarms, cameras) are permanently blocked from auto-remediation. Circuit breakers prevent remediation loops.
-- **Full audit trail**: Every decision is logged to InfluxDB with complete context.
-- **Extensible handlers**: Adding a new managed system requires only a new handler module + MQTT topic subscription.
+- **T0 — Known Fixes**: Pattern match against a YAML registry. Instant. No LLM. Covers the common cases.
+- **T1 — Triage**: A local small language model classifies events, filters noise, and packages context. Runs on your hardware at near-zero cost.
+- **T2 — Diagnosis**: A cloud reasoning model (Claude, GPT, Gemini, or self-hosted) diagnoses novel failures and recommends actions. Invoked only when T1 can't handle it.
+
+**Safety guardrails (enforced in code, not prompts):**
+
+- Risk tiers: `AUTO_FIX` → `RECOMMEND` → `ESCALATE` → `BLOCK`
+- Blocked domains: Security systems (locks, alarms, cameras) are permanently excluded
+- Circuit breaker: Max 3 attempts per entity per hour, global kill switch at 30% failure rate
+- Dry-run mode: Log every decision without executing anything
+- Kill switch: Disable all automated actions instantly
+
+## Supported Systems
+
+| System | Phase | Capabilities |
+|--------|-------|-------------|
+| Home Assistant | 1 | Automation errors, state monitoring, log analysis, integration restarts |
+| Docker | 2 | Container health, restart, log collection |
+| Proxmox | 3 | VM/CT management, node monitoring |
+
+Additional systems can be added by implementing the handler interface.
+
+## Ingestion Sources
+
+OasisAgent doesn't require a single event pipeline. It supports multiple ingestion adapters that all produce the same canonical event model:
+
+- **MQTT** — Subscribe to topics on any MQTT broker
+- **HA WebSocket** — Real-time state changes, automation failures, service call errors
+- **HA Log Poller** — Pattern-match against Home Assistant logs
+- **More planned** — Docker events, Proxmox tasks, webhook receiver, InfluxDB alerts
+
+## LLM Configuration
+
+OasisAgent is **provider-agnostic**. You bring your own endpoints for both tiers:
+
+```yaml
+llm:
+  triage:
+    base_url: http://your-ollama-host:11434/v1   # Any OpenAI-compatible endpoint
+    model: qwen2.5:7b
+    api_key: ${TRIAGE_LLM_API_KEY:-not-needed}
+
+  reasoning:
+    base_url: https://api.anthropic.com            # Or openai, openrouter, etc.
+    model: claude-sonnet-4-5-20250929       # Or claude-opus-4-6, gpt-4o, gemini-2.0, etc.
+    api_key: ${REASONING_LLM_API_KEY}
+```
+
+Any OpenAI-compatible API works — Ollama, LM Studio, vLLM, llama.cpp, or any cloud provider via [LiteLLM](https://github.com/BerriAI/litellm). Mix and match as you like.
+
+## Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose
+- An MQTT broker (EMQX, Mosquitto, etc.)
+- Home Assistant with a long-lived access token
+- InfluxDB v2 (for audit logging)
+- A local LLM endpoint (Ollama recommended) for T1 triage
+- A cloud LLM API key for T2 reasoning (optional — T1 can run standalone)
+
+### Deploy
+
+```bash
+# Clone the repo
+git clone https://github.com/yourusername/oasisagent.git
+cd oasisagent
+
+# Configure
+cp config.example.yaml config.yaml
+cp .env.example .env
+# Edit config.yaml and .env with your endpoints, tokens, and preferences
+
+# Run
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f oasisagent
+```
+
+### Configuration
+
+All configuration is in `config.yaml` with secrets in environment variables. See `config.example.yaml` for a fully documented reference.
+
+Key sections:
+- `ingestion` — Which event sources to enable and how to connect
+- `llm` — T1 (triage) and T2 (reasoning) endpoints and models
+- `handlers` — Which managed systems to enable and their API connections
+- `guardrails` — Safety controls, blocked domains, circuit breaker settings
+- `audit` — InfluxDB connection for the audit trail
+- `notifications` — Where to send alerts (MQTT, email, webhook)
 
 ## Architecture
 
-```
-EMQX (MQTT) ──► oasis-agent ──► HA REST API
-                    │              Docker API
-                    │              Proxmox API
-                    │
-                    ├──► InfluxDB (audit)
-                    ├──► Claude API (diagnosis)
-                    └──► Notifications (MQTT/email/push)
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design specification, including data models, component interfaces, configuration schema, and phasing details.
 
-## Project structure
+## Known Fixes Registry
 
-```
-oasis-agent/
-  core/           # MQTT listener, decision engine, audit, config, models
-  handlers/       # System-specific remediation (HA, Docker, Proxmox)
-  known_fixes/    # YAML registries of known failure → fix mappings
-  notifications/  # Notification dispatcher
-  tests/          # Test suite
-  config.yaml     # Runtime configuration
-  Dockerfile
-  docker-compose.yml
+The `known_fixes/` directory contains YAML files mapping known failure patterns to fixes. These power the T0 (instant lookup) tier:
+
+```yaml
+fixes:
+  - id: ha-deprecated-kelvin
+    match:
+      system: homeassistant
+      event_type: automation_error
+      payload_contains: "kelvin"
+    diagnosis: "HA deprecated 'kelvin' in favor of 'color_temp_kelvin'"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
 ```
 
-## Phasing
+Contributing known fixes is one of the easiest ways to improve OasisAgent for everyone. If you've hit a failure that the agent diagnosed via T1/T2, consider adding it to the registry so it resolves instantly next time.
 
-- **Phase 1**: Core framework — MQTT listener, decision engine, HA handler, known-fixes registry, InfluxDB audit, circuit breaker
-- **Phase 2**: Claude API integration, Docker handler, notifications, Grafana dashboard
-- **Phase 3**: Proxmox handler, preventive scanner, verification loop, learning loop
+## Roadmap
 
-## Prerequisites
+- **Phase 1**: Core framework — ingestion, decision engine, HA handler, known fixes, audit, circuit breaker
+- **Phase 2**: Docker handler, cloud LLM diagnosis, notifications, Grafana dashboard, approval queue
+- **Phase 3**: Proxmox handler, preventive scanning, learning loop (auto-promote T2 diagnoses to T0)
 
-| Dependency | Description |
-|---|---|
-| EMQX Broker | Running MQTT broker for event bus |
-| InfluxDB v2 | Audit log storage |
-| Home Assistant | REST API with long-lived access token |
-| Claude API Key | For LLM-based diagnosis (Phase 2) |
+## Contributing
+
+Contributions welcome. The most impactful areas:
+
+1. **Known fixes** — Add YAML entries for failure patterns you've encountered
+2. **Ingestion adapters** — New event sources
+3. **Handlers** — Support for additional managed systems
+4. **Notification channels** — ntfy, Pushover, Slack, Discord, etc.
+
+Please open an issue before starting work on major features to discuss the approach.
 
 ## License
 
-Private — All rights reserved.
+MIT — see [LICENSE](LICENSE) for details.
