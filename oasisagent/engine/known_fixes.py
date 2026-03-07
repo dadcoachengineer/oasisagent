@@ -157,12 +157,12 @@ class KnownFixRegistry:
     def match(self, event: Event) -> KnownFix | None:
         """Find the first fix that matches the given event, or None."""
         for fix in self._fixes:
-            if self._matches(fix.match, event):
+            if self._matches(fix.match, event, fix_id=fix.id):
                 return fix
         return None
 
     @staticmethod
-    def _matches(match: FixMatch, event: Event) -> bool:
+    def _matches(match: FixMatch, event: Event, *, fix_id: str = "") -> bool:
         """Evaluate all conditions in a FixMatch against an Event.
 
         All specified conditions must be true (logical AND).
@@ -190,7 +190,7 @@ class KnownFixRegistry:
                 "min_duration=%d is configured for fix '%s' but duration tracking "
                 "is not yet implemented. Condition is treated as met.",
                 match.min_duration,
-                "unknown",
+                fix_id,
             )
 
         return True
