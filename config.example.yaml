@@ -132,6 +132,7 @@ handlers:
     url: http://localhost:8123
     token: ${HA_TOKEN}
     verify_timeout: 30           # Seconds to wait after action to verify effect
+    verify_poll_interval: 2.0    # Seconds between verification polls
 
   # Docker — container health and restart (Phase 2)
   docker:
