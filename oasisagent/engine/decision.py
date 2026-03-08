@@ -13,7 +13,7 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from oasisagent.engine.guardrails import GuardrailResult  # noqa: TC001 — Pydantic field type
 
@@ -58,7 +58,7 @@ class DecisionResult(BaseModel):
     matched_fix_id: str | None = None
     diagnosis: str = ""
     guardrail_result: GuardrailResult | None = None
-    details: dict[str, Any] = {}
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
