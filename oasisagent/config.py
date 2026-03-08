@@ -372,7 +372,7 @@ class CircuitBreakerConfig(BaseModel):
 
     max_attempts_per_entity: Annotated[int, Field(ge=1)] = 3
     window_minutes: Annotated[int, Field(ge=1)] = 60
-    cooldown_minutes: Annotated[int, Field(ge=1)] = 15
+    cooldown_minutes: Annotated[int, Field(ge=0)] = 15
     global_failure_rate_threshold: Annotated[float, Field(gt=0.0, le=1.0)] = 0.3
     global_pause_minutes: Annotated[int, Field(ge=1)] = 30
 
