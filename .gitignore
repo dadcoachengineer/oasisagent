@@ -12,6 +12,7 @@ env/
 
 # Environment and secrets
 .env
+config.yaml
 *.pem
 *.key
 
