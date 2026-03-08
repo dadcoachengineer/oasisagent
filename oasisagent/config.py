@@ -326,6 +326,7 @@ class HaHandlerConfig(BaseModel):
     url: str = "http://localhost:8123"
     token: str = ""
     verify_timeout: Annotated[int, Field(ge=1)] = 30
+    verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
 
 
 class DockerHandlerConfig(BaseModel):
