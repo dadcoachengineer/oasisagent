@@ -90,12 +90,12 @@ def _make_engine(
 class TestT0Matched:
     """Events that match a T0 fix and pass guardrails."""
 
-    def test_matched_event_returns_matched(self) -> None:
+    async def test_matched_event_returns_matched(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.RECOMMEND)
         engine = _make_engine(fixes=[fix])
         event = _make_event()
 
-        result = engine.process_event(event)
+        result = await engine.process_event(event)
 
         assert result.event_id == event.id
         assert result.tier == DecisionTier.T0
@@ -105,11 +105,11 @@ class TestT0Matched:
         assert result.guardrail_result is not None
         assert result.guardrail_result.allowed is True
 
-    def test_auto_fix_tier_allowed(self) -> None:
+    async def test_auto_fix_tier_allowed(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.AUTO_FIX)
         engine = _make_engine(fixes=[fix])
 
-        result = engine.process_event(_make_event())
+        result = await engine.process_event(_make_event())
 
         assert result.disposition == DecisionDisposition.MATCHED
         assert result.guardrail_result.risk_tier == RiskTier.AUTO_FIX
@@ -123,42 +123,42 @@ class TestT0Matched:
 class TestT0Blocked:
     """Events that match a T0 fix but are blocked by guardrails."""
 
-    def test_blocked_domain_returns_blocked(self) -> None:
+    async def test_blocked_domain_returns_blocked(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.AUTO_FIX)
         engine = _make_engine(fixes=[fix])
         event = _make_event(entity_id="lock.front_door")
 
-        result = engine.process_event(event)
+        result = await engine.process_event(event)
 
         assert result.disposition == DecisionDisposition.BLOCKED
         assert result.matched_fix_id == "test-fix"
         assert result.guardrail_result is not None
         assert result.guardrail_result.allowed is False
 
-    def test_kill_switch_blocks(self) -> None:
+    async def test_kill_switch_blocks(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.RECOMMEND)
         config = _make_guardrails(kill_switch=True)
         engine = _make_engine(fixes=[fix], guardrails_config=config)
 
-        result = engine.process_event(_make_event())
+        result = await engine.process_event(_make_event())
 
         assert result.disposition == DecisionDisposition.BLOCKED
         assert "kill switch" in result.guardrail_result.reason.lower()
 
-    def test_escalate_tier_blocked(self) -> None:
+    async def test_escalate_tier_blocked(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.ESCALATE)
         engine = _make_engine(fixes=[fix])
 
-        result = engine.process_event(_make_event())
+        result = await engine.process_event(_make_event())
 
         assert result.disposition == DecisionDisposition.BLOCKED
         assert result.guardrail_result.risk_tier == RiskTier.ESCALATE
 
-    def test_block_tier_blocked(self) -> None:
+    async def test_block_tier_blocked(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.BLOCK)
         engine = _make_engine(fixes=[fix])
 
-        result = engine.process_event(_make_event())
+        result = await engine.process_event(_make_event())
 
         assert result.disposition == DecisionDisposition.BLOCKED
 
@@ -171,12 +171,12 @@ class TestT0Blocked:
 class TestT0DryRun:
     """Events matched in dry run mode."""
 
-    def test_dry_run_returns_dry_run_disposition(self) -> None:
+    async def test_dry_run_returns_dry_run_disposition(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.RECOMMEND)
         config = _make_guardrails(dry_run=True)
         engine = _make_engine(fixes=[fix], guardrails_config=config)
 
-        result = engine.process_event(_make_event())
+        result = await engine.process_event(_make_event())
 
         assert result.disposition == DecisionDisposition.DRY_RUN
         assert result.matched_fix_id == "test-fix"
@@ -185,32 +185,31 @@ class TestT0DryRun:
 
 
 # ---------------------------------------------------------------------------
-# No T0 match
+# No T0 match, no T1 available
 # ---------------------------------------------------------------------------
 
 
 class TestUnmatched:
-    """Events with no T0 match produce an UNMATCHED result."""
+    """Events with no T0 match and no T1 produce an UNMATCHED result."""
 
-    def test_no_match_returns_unmatched(self) -> None:
+    async def test_no_match_returns_unmatched(self) -> None:
         engine = _make_engine(fixes=[])
         event = _make_event()
 
-        result = engine.process_event(event)
+        result = await engine.process_event(event)
 
         assert result.event_id == event.id
         assert result.tier == DecisionTier.T0
         assert result.disposition == DecisionDisposition.UNMATCHED
         assert result.matched_fix_id is None
         assert result.guardrail_result is None
-        assert "T1/T2" in result.diagnosis
 
-    def test_unmatched_when_system_differs(self) -> None:
+    async def test_unmatched_when_system_differs(self) -> None:
         fix = _make_fix(match=FixMatch(system="docker"))
         engine = _make_engine(fixes=[fix])
         event = _make_event(system="homeassistant")
 
-        result = engine.process_event(event)
+        result = await engine.process_event(event)
 
         assert result.disposition == DecisionDisposition.UNMATCHED
 
@@ -223,7 +222,7 @@ class TestUnmatched:
 class TestMultipleEvents:
     """Process multiple events through the engine."""
 
-    def test_process_batch_in_order(self) -> None:
+    async def test_process_batch_in_order(self) -> None:
         fix = _make_fix(
             match=FixMatch(system="homeassistant", payload_contains="kelvin"),
         )
@@ -235,21 +234,21 @@ class TestMultipleEvents:
             _make_event(payload={"error": "kelvin in config"}),
         ]
 
-        results = [engine.process_event(e) for e in events]
+        results = [await engine.process_event(e) for e in events]
 
         assert results[0].disposition == DecisionDisposition.MATCHED
         assert results[1].disposition == DecisionDisposition.UNMATCHED
         assert results[2].disposition == DecisionDisposition.MATCHED
 
-    def test_different_entities_different_outcomes(self) -> None:
+    async def test_different_entities_different_outcomes(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.AUTO_FIX)
         engine = _make_engine(fixes=[fix])
 
         safe = _make_event(entity_id="light.kitchen")
         blocked = _make_event(entity_id="lock.front_door")
 
-        safe_result = engine.process_event(safe)
-        blocked_result = engine.process_event(blocked)
+        safe_result = await engine.process_event(safe)
+        blocked_result = await engine.process_event(blocked)
 
         assert safe_result.disposition == DecisionDisposition.MATCHED
         assert blocked_result.disposition == DecisionDisposition.BLOCKED
@@ -273,11 +272,13 @@ class TestDecisionResultModel:
         assert DecisionDisposition.BLOCKED == "blocked"
         assert DecisionDisposition.DRY_RUN == "dry_run"
         assert DecisionDisposition.UNMATCHED == "unmatched"
+        assert DecisionDisposition.DROPPED == "dropped"
+        assert DecisionDisposition.ESCALATED == "escalated"
 
-    def test_result_serialization(self) -> None:
+    async def test_result_serialization(self) -> None:
         fix = _make_fix(risk_tier=RiskTier.RECOMMEND)
         engine = _make_engine(fixes=[fix])
-        result = engine.process_event(_make_event())
+        result = await engine.process_event(_make_event())
 
         data = result.model_dump()
         assert data["tier"] == "t0"
@@ -293,7 +294,7 @@ class TestDecisionResultModel:
 class TestIntegration:
     """End-to-end: load real YAML fixes, run events through engine."""
 
-    def test_kelvin_event_matched_and_allowed(self) -> None:
+    async def test_kelvin_event_matched_and_allowed(self) -> None:
         registry = KnownFixRegistry()
         registry.load(Path("known_fixes"))
         guardrails = GuardrailsEngine(_make_guardrails())
@@ -306,14 +307,14 @@ class TestIntegration:
             payload={"error": "kelvin deprecated"},
         )
 
-        result = engine.process_event(event)
+        result = await engine.process_event(event)
 
         assert result.disposition == DecisionDisposition.MATCHED
         assert result.matched_fix_id == "ha-deprecated-kelvin"
         assert result.tier == DecisionTier.T0
         assert result.guardrail_result.allowed is True
 
-    def test_unrelated_event_unmatched(self) -> None:
+    async def test_unrelated_event_unmatched(self) -> None:
         registry = KnownFixRegistry()
         registry.load(Path("known_fixes"))
         guardrails = GuardrailsEngine(_make_guardrails())
@@ -325,6 +326,6 @@ class TestIntegration:
             payload={"container": "nginx"},
         )
 
-        result = engine.process_event(event)
+        result = await engine.process_event(event)
 
         assert result.disposition == DecisionDisposition.UNMATCHED

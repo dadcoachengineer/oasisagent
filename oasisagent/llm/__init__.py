@@ -8,6 +8,7 @@ from oasisagent.llm.client import (
     TokenUsage,
     UsageStats,
 )
+from oasisagent.llm.triage import TriageService
 
 __all__ = [
     "LLMClient",
@@ -15,5 +16,6 @@ __all__ = [
     "LLMResponse",
     "LLMRole",
     "TokenUsage",
+    "TriageService",
     "UsageStats",
 ]
