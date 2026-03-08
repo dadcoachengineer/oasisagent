@@ -314,24 +314,21 @@ class TestT1Unavailable:
         )
         event = _make_event(event_type="state_unavailable")
 
-        # The triage service raises, but the engine catches it
-        # via TriageService._safe_fallback. Since we're mocking the
-        # triage_service directly (not TriageService), the engine will
-        # see the exception propagate from _apply_t1_triage.
-        # The decision engine doesn't catch classify() errors itself —
-        # TriageService.classify() handles fallback internally.
-        # With a raw mock, the exception propagates.
-        # So this tests that the pipeline handles the error gracefully.
+        # The raw mock doesn't have TriageService's internal fallback,
+        # so the ConnectionError propagates from _apply_t1_triage.
+        # Verify triage was attempted before the failure.
         try:
             result = await harness.run_pipeline(event)
-            # If engine catches it, we'd get UNMATCHED
+            # If engine catches it, we'd get UNMATCHED or ESCALATED
             assert result.disposition in (
                 DecisionDisposition.UNMATCHED,
                 DecisionDisposition.ESCALATED,
             )
         except ConnectionError:
-            # Expected — raw mock doesn't have TriageService's error handling
-            pass
+            # Error propagated — triage service mock doesn't have
+            # TriageService's internal fallback. Verify the call_log
+            # shows triage was attempted before the failure.
+            assert "triage.classify" in harness.call_log
 
 
 class TestCircuitBreakerInteraction:
