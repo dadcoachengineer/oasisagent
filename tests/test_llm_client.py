@@ -482,15 +482,15 @@ class TestUsageStats:
         assert stats["reasoning"].total_requests == 0
 
     @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
-    async def test_usage_not_accumulated_when_none(self, mock_acomp: AsyncMock) -> None:
-        """No usage in response → stats not updated (no phantom zeros)."""
+    async def test_request_counted_even_without_usage(self, mock_acomp: AsyncMock) -> None:
+        """No usage in response → request counted, but token stats stay zero."""
         mock_acomp.return_value = _mock_response(usage_present=False)
         client = _client()
 
         await client.complete(LLMRole.TRIAGE, _MESSAGES)
 
         stats = client.get_usage_stats()
-        assert stats["triage"].total_requests == 0
+        assert stats["triage"].total_requests == 1
         assert stats["triage"].total_tokens == 0
 
     @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)

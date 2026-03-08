@@ -289,10 +289,12 @@ class LLMClient:
                 completion_tokens=response.usage.completion_tokens or 0,
                 total_tokens=response.usage.total_tokens or 0,
             )
-            # Accumulate stats
-            if self._config.options.cost_tracking:
-                stats = self._usage[role]
-                stats.total_requests += 1
+
+        # Accumulate stats — request always counted, tokens only when present
+        if self._config.options.cost_tracking:
+            stats = self._usage[role]
+            stats.total_requests += 1
+            if usage is not None:
                 stats.total_prompt_tokens += usage.prompt_tokens
                 stats.total_completion_tokens += usage.completion_tokens
                 stats.total_tokens += usage.total_tokens
