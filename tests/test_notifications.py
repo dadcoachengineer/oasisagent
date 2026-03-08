@@ -43,7 +43,6 @@ def _make_notification(**overrides: Any) -> Notification:
 
 def _mock_mqtt_channel(
     send_result: bool = True,
-    start_error: Exception | None = None,
 ) -> MqttNotificationChannel:
     """Create an MQTT channel with a mocked client."""
     channel = MqttNotificationChannel(_make_config())

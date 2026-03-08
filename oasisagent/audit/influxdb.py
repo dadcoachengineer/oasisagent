@@ -105,7 +105,7 @@ class AuditWriter:
             .time(event.timestamp)
         )
 
-        await self._write(point)
+        await self._write(point, measurement="oasis_event")
 
     async def write_decision(
         self, event: Event, result: DecisionResult
@@ -132,7 +132,7 @@ class AuditWriter:
             .time(datetime.now(UTC))
         )
 
-        await self._write(point)
+        await self._write(point, measurement="oasis_decision")
 
     async def write_action(
         self,
@@ -158,7 +158,7 @@ class AuditWriter:
             .time(datetime.now(UTC))
         )
 
-        await self._write(point)
+        await self._write(point, measurement="oasis_action")
 
     async def write_circuit_breaker(
         self,
@@ -188,7 +188,7 @@ class AuditWriter:
             .time(datetime.now(UTC))
         )
 
-        await self._write(point)
+        await self._write(point, measurement="oasis_circuit_breaker")
 
     # -------------------------------------------------------------------
     # Internal helpers
@@ -201,7 +201,7 @@ class AuditWriter:
                 "AuditWriter.start() must be called before writing"
             )
 
-    async def _write(self, point: Point) -> None:
+    async def _write(self, point: Point, *, measurement: str = "") -> None:
         """Write a point to InfluxDB. Best-effort — errors are logged."""
         try:
             assert self._write_api is not None
@@ -209,6 +209,6 @@ class AuditWriter:
         except Exception as exc:
             logger.warning(
                 "Audit write failed for %s: %s",
-                point._name,
+                measurement,
                 exc,
             )
