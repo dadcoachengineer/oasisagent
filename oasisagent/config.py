@@ -434,6 +434,8 @@ class MqttNotificationConfig(BaseModel):
     topic_prefix: str = "oasis/notifications"
     username: str = ""
     password: str = ""
+    qos: Annotated[int, Field(ge=0, le=2)] = 1
+    retain: bool = False
 
 
 class EmailNotificationConfig(BaseModel):
