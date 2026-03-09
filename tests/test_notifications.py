@@ -380,3 +380,72 @@ class TestDispatcherLifecycle:
         await dispatcher.stop()
 
         assert results == {}
+
+    def test_channels_property(self) -> None:
+        ch1 = _StubChannel("ch1")
+        ch2 = _StubChannel("ch2")
+        dispatcher = NotificationDispatcher([ch1, ch2])
+
+        channels = dispatcher.channels
+        assert len(channels) == 2
+        # Returns a copy, not the internal list
+        channels.pop()
+        assert len(dispatcher.channels) == 2
+
+
+# ---------------------------------------------------------------------------
+# MQTT channel: publish_raw
+# ---------------------------------------------------------------------------
+
+
+class TestMqttPublishRaw:
+    async def test_publish_raw_delegates_to_client(self) -> None:
+        channel = _mock_mqtt_channel()
+
+        result = await channel.publish_raw(
+            "oasis/pending/abc", '{"id": "abc"}', qos=1, retain=True
+        )
+
+        assert result is True
+        channel._client.publish.assert_awaited_once_with(
+            topic="oasis/pending/abc",
+            payload='{"id": "abc"}',
+            qos=1,
+            retain=True,
+        )
+
+    async def test_publish_raw_retain_default_false(self) -> None:
+        channel = _mock_mqtt_channel()
+
+        await channel.publish_raw("some/topic", b"payload")
+
+        call_kwargs = channel._client.publish.call_args.kwargs
+        assert call_kwargs["retain"] is False
+
+    async def test_publish_raw_without_start_returns_false(self) -> None:
+        channel = MqttNotificationChannel(_make_config())
+
+        result = await channel.publish_raw("topic", "payload")
+
+        assert result is False
+
+    async def test_publish_raw_failure_returns_false(self) -> None:
+        channel = _mock_mqtt_channel()
+        channel._client.publish.side_effect = Exception("broker down")
+
+        result = await channel.publish_raw("topic", "payload")
+
+        assert result is False
+
+    async def test_publish_raw_empty_payload(self) -> None:
+        """Empty payload clears a retained message."""
+        channel = _mock_mqtt_channel()
+
+        result = await channel.publish_raw(
+            "oasis/pending/abc", b"", qos=1, retain=True
+        )
+
+        assert result is True
+        call_kwargs = channel._client.publish.call_args.kwargs
+        assert call_kwargs["payload"] == b""
+        assert call_kwargs["retain"] is True

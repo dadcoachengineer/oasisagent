@@ -10,6 +10,7 @@ ARCHITECTURE.md §15 defines the orchestrator specification.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 import time
@@ -17,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from oasisagent.approval.listener import ApprovalListener
+from oasisagent.approval.pending import PendingAction, PendingQueue
 from oasisagent.audit.influxdb import AuditWriter
 from oasisagent.engine.circuit_breaker import CircuitBreaker
 from oasisagent.engine.decision import (
@@ -45,6 +48,8 @@ from oasisagent.notifications.dispatcher import NotificationDispatcher
 from oasisagent.notifications.mqtt import MqttNotificationChannel
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from oasisagent.config import OasisAgentConfig
     from oasisagent.handlers.base import Handler
     from oasisagent.ingestion.base import IngestAdapter
@@ -76,6 +81,10 @@ class Orchestrator:
         self._handlers: dict[str, Handler] = {}
         self._audit: AuditWriter | None = None
         self._dispatcher: NotificationDispatcher | None = None
+        self._pending_queue: PendingQueue | None = None
+        self._approval_listener: ApprovalListener | None = None
+        self._approval_listener_task: asyncio.Task[None] | None = None
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._adapters: list[IngestAdapter] = []
         self._adapter_tasks: list[asyncio.Task[None]] = []
 
@@ -97,6 +106,9 @@ class Orchestrator:
 
         try:
             while not self._shutting_down:
+                # Sweep expired pending actions each tick
+                self._expire_stale_actions()
+
                 try:
                     assert self._queue is not None
                     event = await asyncio.wait_for(
@@ -179,7 +191,18 @@ class Orchestrator:
             channels.append(MqttNotificationChannel(cfg.notifications.mqtt))
         self._dispatcher = NotificationDispatcher(channels)
 
-        # 12. Ingestion adapters
+        # 12. Pending action queue (for RECOMMEND-tier actions)
+        self._pending_queue = PendingQueue()
+
+        # 13. Approval listener (subscribes to MQTT approve/reject topics)
+        if cfg.ingestion.mqtt.enabled:
+            self._approval_listener = ApprovalListener(
+                config=cfg.ingestion.mqtt,
+                on_approve=self._handle_approval,
+                on_reject=self._handle_rejection,
+            )
+
+        # 14. Ingestion adapters
         if cfg.ingestion.mqtt.enabled:
             self._adapters.append(MqttAdapter(cfg.ingestion.mqtt, self._queue))
         if cfg.ingestion.ha_websocket.enabled:
@@ -219,6 +242,14 @@ class Orchestrator:
         except Exception:
             logger.exception("Failed to start notification dispatcher")
 
+        # Approval listener — background task
+        if self._approval_listener is not None:
+            self._approval_listener_task = asyncio.create_task(
+                self._run_approval_listener(),
+                name="approval-listener",
+            )
+            logger.info("Approval listener started")
+
         # Ingestion adapters — launched as background tasks
         for adapter in self._adapters:
             task = asyncio.create_task(
@@ -238,11 +269,38 @@ class Orchestrator:
                 "Ingestion adapter %s crashed", adapter.name
             )
 
+    async def _run_approval_listener(self) -> None:
+        """Run the approval listener. Logs exceptions but never propagates."""
+        try:
+            assert self._approval_listener is not None
+            await self._approval_listener.start()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Approval listener crashed")
+
     async def _shutdown(self) -> None:
         """Tear down components in reverse dependency order."""
         self._shutting_down = True
 
-        # 1. Stop ingestion adapters
+        # 1. Stop approval listener
+        if self._approval_listener is not None:
+            try:
+                await self._approval_listener.stop()
+            except Exception:
+                logger.exception("Error stopping approval listener")
+        if self._approval_listener_task is not None:
+            self._approval_listener_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._approval_listener_task
+
+        # 2. Expire all remaining pending actions
+        if self._pending_queue is not None:
+            for pending in self._pending_queue.list_pending():
+                self._pending_queue.reject(pending.id)
+            logger.info("Rejected all remaining pending actions on shutdown")
+
+        # 3. Stop ingestion adapters
         for adapter in self._adapters:
             try:
                 await adapter.stop()
@@ -255,7 +313,7 @@ class Orchestrator:
         if self._adapter_tasks:
             await asyncio.gather(*self._adapter_tasks, return_exceptions=True)
 
-        # 2. Drain queue with timeout
+        # 4. Drain queue with timeout
         assert self._queue is not None
         timeout = self._config.agent.shutdown_timeout
         deadline = time.monotonic() + timeout
@@ -269,28 +327,28 @@ class Orchestrator:
                 break
             await self._process_one(event)
 
-        # 3. Stop handlers
+        # 5. Stop handlers
         for name, handler in self._handlers.items():
             try:
                 await handler.stop()
             except Exception:
                 logger.exception("Error stopping handler %s", name)
 
-        # 4. Stop notification dispatcher
+        # 6. Stop notification dispatcher
         if self._dispatcher is not None:
             try:
                 await self._dispatcher.stop()
             except Exception:
                 logger.exception("Error stopping notification dispatcher")
 
-        # 5. Stop audit writer
+        # 7. Stop audit writer
         if self._audit is not None:
             try:
                 await self._audit.stop()
             except Exception:
                 logger.exception("Error stopping audit writer")
 
-        # 6. Log final stats
+        # 8. Log final stats
         logger.info(
             "OasisAgent stopped — events=%d, actions=%d, errors=%d",
             self._events_processed,
@@ -312,6 +370,12 @@ class Orchestrator:
         """Called on SIGTERM/SIGINT — sets the shutdown flag."""
         logger.info("Received shutdown signal")
         self._shutting_down = True
+
+    def _schedule_task(self, coro: Coroutine[None, None, None]) -> None:
+        """Schedule a coroutine as a background task with reference tracking."""
+        task = asyncio.get_event_loop().create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     # -------------------------------------------------------------------
     # Event processing pipeline
@@ -343,6 +407,8 @@ class Orchestrator:
             # independently approved by guardrails in the decision engine.
             if result.recommended_actions and result.disposition == DecisionDisposition.MATCHED:
                 await self._dispatch_t2_actions(event, result, duration_ms)
+            elif self._should_enqueue(result):
+                await self._enqueue_pending(event, result)
             elif self._should_execute(result):
                 action_result = await self._dispatch_handler(event, result)
                 await self._audit_action(event, result, action_result, duration_ms)
@@ -377,6 +443,23 @@ class Orchestrator:
             return False
         age = (datetime.now(UTC) - event.timestamp).total_seconds()
         return age > ttl
+
+    def _should_enqueue(self, result: DecisionResult) -> bool:
+        """Determine if the result should be enqueued for operator approval.
+
+        RECOMMEND-tier T0 matches go to the pending queue instead of
+        auto-executing. This is tier-agnostic — any RECOMMEND action
+        from T0, T1, or T2 follows the same path.
+        """
+        if result.disposition != DecisionDisposition.MATCHED:
+            return False
+        if result.guardrail_result is None:
+            return False
+        if not result.guardrail_result.allowed:
+            return False
+        if result.guardrail_result.dry_run:
+            return False
+        return result.guardrail_result.risk_tier == RiskTier.RECOMMEND
 
     def _should_execute(self, result: DecisionResult) -> bool:
         """Determine if the result warrants handler execution.
@@ -495,11 +578,27 @@ class Orchestrator:
         """Dispatch each T2 recommended action independently.
 
         Each action was already guardrail-checked by the decision engine.
-        We dispatch them one by one to the appropriate handler.
+        AUTO_FIX actions execute immediately; RECOMMEND actions are
+        enqueued for operator approval. This is tier-agnostic — the
+        same RECOMMEND path is used regardless of whether the action
+        came from T0, T1, or T2.
         """
         assert self._circuit_breaker is not None
+        assert self._pending_queue is not None
 
         for action in result.recommended_actions:
+            # RECOMMEND-tier actions go to the pending queue
+            if action.risk_tier == RiskTier.RECOMMEND:
+                pending = self._pending_queue.add(
+                    event_id=event.id,
+                    action=action,
+                    diagnosis=result.diagnosis,
+                    timeout_minutes=self._config.guardrails.approval_timeout_minutes,
+                )
+                await self._publish_pending_action(pending)
+                await self._publish_pending_list()
+                continue
+
             handler = self._handlers.get(action.handler)
             if handler is None:
                 logger.warning(
@@ -541,6 +640,234 @@ class Orchestrator:
                 self._circuit_breaker.record_attempt(
                     event.entity_id, success=False
                 )
+
+    # -------------------------------------------------------------------
+    # Approval queue
+    # -------------------------------------------------------------------
+
+    async def _enqueue_pending(
+        self, event: Event, result: DecisionResult
+    ) -> None:
+        """Enqueue a RECOMMEND-tier T0 match for operator approval."""
+        assert self._pending_queue is not None
+        assert self._registry is not None
+
+        fix = (
+            self._registry.get_fix_by_id(result.matched_fix_id)
+            if result.matched_fix_id
+            else None
+        )
+        if fix is None:
+            return
+
+        action = RecommendedAction(
+            description=fix.diagnosis,
+            handler=fix.action.handler,
+            operation=fix.action.operation,
+            params=fix.action.details,
+            risk_tier=fix.risk_tier,
+        )
+
+        pending = self._pending_queue.add(
+            event_id=event.id,
+            action=action,
+            diagnosis=result.diagnosis,
+            timeout_minutes=self._config.guardrails.approval_timeout_minutes,
+        )
+        await self._publish_pending_action(pending)
+        await self._publish_pending_list()
+
+        # Notify operator about the pending action
+        await self._send_notification(event, result)
+
+    def _handle_approval(self, action_id: str) -> None:
+        """Called by the approval listener when an action is approved.
+
+        Schedules the async dispatch on the event loop since this
+        callback is invoked synchronously from the MQTT message handler.
+        """
+        self._schedule_task(self._process_approval(action_id))
+
+    def _handle_rejection(self, action_id: str) -> None:
+        """Called by the approval listener when an action is rejected.
+
+        Schedules the async processing on the event loop.
+        """
+        self._schedule_task(self._process_rejection(action_id))
+
+    async def _process_approval(self, action_id: str) -> None:
+        """Dispatch an approved pending action through the handler pipeline."""
+        assert self._pending_queue is not None
+        assert self._circuit_breaker is not None
+
+        pending = self._pending_queue.approve(action_id)
+        if pending is None:
+            return
+
+        # Clear the retained MQTT message for this action
+        await self._clear_pending_mqtt(action_id)
+        await self._publish_pending_list()
+
+        handler = self._handlers.get(pending.action.handler)
+        if handler is None:
+            logger.warning(
+                "No handler registered for '%s' (approved action %s)",
+                pending.action.handler,
+                action_id,
+            )
+            return
+
+        # Build a minimal Event for dispatch context.
+        # TODO: PendingAction should carry entity_id from the original event
+        # so the circuit breaker correlates approved action failures with the
+        # entity's failure budget. Same backlog bucket as target_entity_id
+        # on RecommendedAction (issue #19).
+        from oasisagent.models import Event, Severity
+
+        event = Event(
+            id=pending.event_id,
+            source="approval_queue",
+            system="oasisagent",
+            event_type="approved_action",
+            entity_id=f"pending:{action_id}",
+            severity=Severity.INFO,
+            timestamp=pending.created_at,
+        )
+
+        try:
+            action_result = await handler.execute(event, pending.action)
+            success = action_result.status == ActionStatus.SUCCESS
+            self._circuit_breaker.record_attempt(
+                event.entity_id, success=success
+            )
+            if success:
+                self._actions_taken += 1
+            logger.info(
+                "Approved action %s executed: status=%s",
+                action_id,
+                action_result.status,
+            )
+        except Exception:
+            logger.exception(
+                "Handler failed for approved action %s", action_id
+            )
+            self._circuit_breaker.record_attempt(
+                event.entity_id, success=False
+            )
+
+    async def _process_rejection(self, action_id: str) -> None:
+        """Record a rejected pending action."""
+        assert self._pending_queue is not None
+
+        pending = self._pending_queue.reject(action_id)
+        if pending is None:
+            return
+
+        # Clear the retained MQTT message
+        await self._clear_pending_mqtt(action_id)
+        await self._publish_pending_list()
+
+        logger.info("Action %s rejected by operator", action_id)
+
+    def _expire_stale_actions(self) -> None:
+        """Sweep for expired pending actions and notify."""
+        if self._pending_queue is None:
+            return
+
+        expired = self._pending_queue.expire_stale()
+        for pending in expired:
+            self._schedule_task(self._notify_expired(pending))
+
+    async def _notify_expired(self, pending: PendingAction) -> None:
+        """Send notification for an expired pending action and clean up MQTT."""
+        await self._clear_pending_mqtt(pending.id)
+        await self._publish_pending_list()
+
+        if self._dispatcher is None:
+            return
+
+        from oasisagent.models import Severity
+
+        notification = Notification(
+            event_id=pending.event_id,
+            severity=Severity.WARNING,
+            title=f"[EXPIRED] Pending action expired: {pending.action.description[:60]}",
+            message=(
+                f"Action: {pending.action.operation} via {pending.action.handler}\n"
+                f"Diagnosis: {pending.diagnosis}\n"
+                f"Created: {pending.created_at.isoformat()}\n"
+                f"Expired: {pending.expires_at.isoformat()}"
+            ),
+        )
+
+        try:
+            await self._dispatcher.dispatch(notification)
+        except Exception:
+            logger.warning(
+                "Notification failed for expired action %s",
+                pending.id,
+                exc_info=True,
+            )
+
+    def _get_mqtt_channel(self) -> MqttNotificationChannel | None:
+        """Find the MQTT notification channel, if configured."""
+        if self._dispatcher is None:
+            return None
+        for channel in self._dispatcher.channels:
+            if isinstance(channel, MqttNotificationChannel):
+                return channel
+        return None
+
+    async def _publish_pending_action(self, pending: PendingAction) -> None:
+        """Publish a pending action to oasis/pending/{action_id} (retained).
+
+        MQTT message contract:
+        - Topic: oasis/pending/{action_id}
+        - Payload: JSON with id, event_id, action, diagnosis, timestamps
+        - QoS 1, retain=True so late subscribers see pending items
+        """
+        mqtt = self._get_mqtt_channel()
+        if mqtt is None:
+            return
+
+        import json
+
+        payload = json.dumps(pending.model_dump(mode="json"), default=str)
+        topic = f"oasis/pending/{pending.id}"
+
+        await mqtt.publish_raw(topic, payload, qos=1, retain=True)
+
+    async def _publish_pending_list(self) -> None:
+        """Publish the current pending list to oasis/pending/list (retained).
+
+        This is a snapshot of all PENDING actions so that new subscribers
+        (CLI, UI) get current state immediately on connect.
+        """
+        if self._pending_queue is None:
+            return
+
+        mqtt = self._get_mqtt_channel()
+        if mqtt is None:
+            return
+
+        import json
+
+        payload = json.dumps(self._pending_queue.to_list_payload(), default=str)
+        await mqtt.publish_raw("oasis/pending/list", payload, qos=1, retain=True)
+
+    async def _clear_pending_mqtt(self, action_id: str) -> None:
+        """Clear a retained MQTT message by publishing empty payload."""
+        mqtt = self._get_mqtt_channel()
+        if mqtt is None:
+            return
+
+        await mqtt.publish_raw(
+            f"oasis/pending/{action_id}", b"", qos=1, retain=True
+        )
+
+    # -------------------------------------------------------------------
+    # Audit
+    # -------------------------------------------------------------------
 
     async def _audit_decision(
         self, event: Event, result: DecisionResult

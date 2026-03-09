@@ -395,6 +395,7 @@ class GuardrailsConfig(BaseModel):
     blocked_entities: list[str] = Field(default_factory=list)
     kill_switch: bool = False
     dry_run: bool = False
+    approval_timeout_minutes: Annotated[int, Field(ge=1)] = 30
     circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
 
 

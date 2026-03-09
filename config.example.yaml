@@ -173,6 +173,7 @@ guardrails:
   # Master switches
   kill_switch: false             # Set true to disable ALL automated actions instantly
   dry_run: false                 # Set true to log every decision without executing anything
+  approval_timeout_minutes: 30   # RECOMMEND actions expire after this many minutes without approval
 
   # Circuit breaker — prevents remediation loops
   circuit_breaker:
