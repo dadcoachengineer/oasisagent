@@ -32,6 +32,7 @@ from oasisagent.ingestion.ha_log_poller import HaLogPollerAdapter
 from oasisagent.ingestion.ha_websocket import HaWebSocketAdapter
 from oasisagent.ingestion.mqtt import MqttAdapter
 from oasisagent.llm.client import LLMClient
+from oasisagent.llm.reasoning import ReasoningService
 from oasisagent.llm.triage import TriageService
 from oasisagent.models import (
     ActionResult,
@@ -70,6 +71,7 @@ class Orchestrator:
         self._guardrails: GuardrailsEngine | None = None
         self._llm_client: LLMClient | None = None
         self._triage_service: TriageService | None = None
+        self._reasoning_service: ReasoningService | None = None
         self._decision_engine: DecisionEngine | None = None
         self._handlers: dict[str, Handler] = {}
         self._audit: AuditWriter | None = None
@@ -150,28 +152,34 @@ class Orchestrator:
         # 6. Triage service
         self._triage_service = TriageService(self._llm_client)
 
-        # 7. Decision engine
+        # 7. Reasoning service (T2)
+        # TODO: Wire entity_context fetching (handler.get_context()) into the
+        # T2 pipeline once §16.2 entity context enrichment is implemented.
+        self._reasoning_service = ReasoningService(self._llm_client)
+
+        # 8. Decision engine
         self._decision_engine = DecisionEngine(
             registry=self._registry,
             guardrails=self._guardrails,
             triage_service=self._triage_service,
+            reasoning_service=self._reasoning_service,
         )
 
-        # 8. Handlers
+        # 9. Handlers
         if cfg.handlers.homeassistant.enabled:
             ha = HomeAssistantHandler(cfg.handlers.homeassistant)
             self._handlers[ha.name()] = ha
 
-        # 9. Audit writer
+        # 10. Audit writer
         self._audit = AuditWriter(cfg.audit)
 
-        # 10. Notification channels
+        # 11. Notification channels
         channels = []
         if cfg.notifications.mqtt.enabled:
             channels.append(MqttNotificationChannel(cfg.notifications.mqtt))
         self._dispatcher = NotificationDispatcher(channels)
 
-        # 11. Ingestion adapters
+        # 12. Ingestion adapters
         if cfg.ingestion.mqtt.enabled:
             self._adapters.append(MqttAdapter(cfg.ingestion.mqtt, self._queue))
         if cfg.ingestion.ha_websocket.enabled:
@@ -330,8 +338,12 @@ class Orchestrator:
             # 3. Audit the decision (best-effort)
             await self._audit_decision(event, result)
 
-            # 4. Handler dispatch (if action required and not dry-run)
-            if self._should_execute(result):
+            # 4. Handler dispatch
+            # T2 results may carry multiple recommended_actions, each
+            # independently approved by guardrails in the decision engine.
+            if result.recommended_actions and result.disposition == DecisionDisposition.MATCHED:
+                await self._dispatch_t2_actions(event, result, duration_ms)
+            elif self._should_execute(result):
                 action_result = await self._dispatch_handler(event, result)
                 await self._audit_action(event, result, action_result, duration_ms)
             elif self._is_dry_run(result):
@@ -476,6 +488,59 @@ class Orchestrator:
                 status=ActionStatus.FAILURE,
                 error_message=str(exc),
             )
+
+    async def _dispatch_t2_actions(
+        self, event: Event, result: DecisionResult, duration_ms: float
+    ) -> None:
+        """Dispatch each T2 recommended action independently.
+
+        Each action was already guardrail-checked by the decision engine.
+        We dispatch them one by one to the appropriate handler.
+        """
+        assert self._circuit_breaker is not None
+
+        for action in result.recommended_actions:
+            handler = self._handlers.get(action.handler)
+            if handler is None:
+                logger.warning(
+                    "No handler registered for '%s' (T2 action on event %s)",
+                    action.handler,
+                    event.id,
+                )
+                continue
+
+            try:
+                action_result = await handler.execute(event, action)
+                success = action_result.status == ActionStatus.SUCCESS
+                self._circuit_breaker.record_attempt(
+                    event.entity_id, success=success
+                )
+                if success:
+                    self._actions_taken += 1
+
+                # Audit each action individually
+                if action_result.duration_ms is None:
+                    action_result = action_result.model_copy(
+                        update={"duration_ms": duration_ms}
+                    )
+                if self._audit is not None:
+                    try:
+                        await self._audit.write_action(event, action, action_result)
+                    except Exception:
+                        logger.warning(
+                            "Audit action write failed for event %s",
+                            event.id,
+                            exc_info=True,
+                        )
+            except Exception:
+                logger.exception(
+                    "Handler %s failed for T2 action on event %s",
+                    action.handler,
+                    event.id,
+                )
+                self._circuit_breaker.record_attempt(
+                    event.entity_id, success=False
+                )
 
     async def _audit_decision(
         self, event: Event, result: DecisionResult

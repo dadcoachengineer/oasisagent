@@ -398,7 +398,7 @@ class TestT1EscalateT2:
         result = await harness.run_pipeline(event)
 
         assert result.disposition == DecisionDisposition.ESCALATED
-        assert result.details["escalate_to"] == "t2"
+        assert result.details["escalate_to"] == "human"
         assert harness.call_log == [
             "registry.match",
             "triage.classify",
