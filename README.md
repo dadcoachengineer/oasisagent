@@ -34,7 +34,7 @@ Event Source → Ingestion → Decision Engine → Handler → Verify → Audit
 | System | Phase | Capabilities |
 |--------|-------|-------------|
 | Home Assistant | 1 | Automation errors, state monitoring, log analysis, integration restarts |
-| Docker | 2 | Container health, restart, log collection |
+| Docker | 2 | Container health, restart, stats, log collection, OOM/crash detection |
 | Proxmox | 3 | VM/CT management, node monitoring |
 
 Additional systems can be added by implementing the handler interface.
@@ -82,7 +82,7 @@ Any OpenAI-compatible API works — Ollama, LM Studio, vLLM, llama.cpp, or any c
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/oasisagent.git
+git clone https://github.com/dadcoachengineer/oasisagent.git
 cd oasisagent
 
 # Configure
@@ -102,12 +102,38 @@ docker-compose logs -f oasisagent
 All configuration is in `config.yaml` with secrets in environment variables. See `config.example.yaml` for a fully documented reference.
 
 Key sections:
+- `agent` — Global settings including event queue size, correlation window, metrics port
 - `ingestion` — Which event sources to enable and how to connect
 - `llm` — T1 (triage) and T2 (reasoning) endpoints and models
 - `handlers` — Which managed systems to enable and their API connections
 - `guardrails` — Safety controls, blocked domains, circuit breaker settings
 - `audit` — InfluxDB connection for the audit trail
 - `notifications` — Where to send alerts (MQTT, email, webhook)
+
+## Approval Queue
+
+Actions classified as `RECOMMEND` risk tier require operator approval before execution. The approval queue uses MQTT for communication:
+
+```bash
+# List pending actions
+oasisagent queue list --broker mqtt://localhost:1883
+
+# Approve a specific action
+oasisagent queue approve <action-id>
+
+# Reject an action
+oasisagent queue reject <action-id>
+```
+
+Pending actions expire automatically after a configurable timeout (default: 30 minutes).
+
+## Observability
+
+OasisAgent ships with three observability layers:
+
+- **InfluxDB audit trail** — Every event, decision, action, and verification is recorded for full accountability
+- **Grafana dashboards** — Import `dashboards/oasisagent-overview.json` for event volume, decision distribution, action results, and more
+- **Prometheus metrics** — Enable `agent.metrics_port` to expose `/metrics` for real-time alerting (events, decisions, actions, queue depth, processing latency)
 
 ## Architecture
 
@@ -133,11 +159,30 @@ fixes:
 
 Contributing known fixes is one of the easiest ways to improve OasisAgent for everyone. If you've hit a failure that the agent diagnosed via T1/T2, consider adding it to the registry so it resolves instantly next time.
 
+## Dependencies
+
+Core runtime:
+
+| Package | Purpose |
+|---------|---------|
+| `pydantic` | Config validation and data models |
+| `pyyaml` | Config file parsing |
+| `litellm` | Provider-agnostic LLM client |
+| `aiomqtt` | MQTT ingestion and notifications |
+| `aiohttp` | HTTP clients (HA, Docker, webhook) and Prometheus metrics server |
+| `aiosmtplib` | Email notifications via SMTP |
+| `prometheus_client` | Prometheus metrics exposition |
+| `influxdb-client[async]` | InfluxDB audit trail |
+
+Dev: `pytest`, `pytest-asyncio`, `pytest-cov`, `ruff`
+
+All dependencies are declared in `pyproject.toml`. Install with `pip install .` or `pip install -e ".[dev]"` for development.
+
 ## Roadmap
 
-- **Phase 1**: Core framework — ingestion, decision engine, HA handler, known fixes, audit, circuit breaker
-- **Phase 2**: Docker handler, cloud LLM diagnosis, notifications, Grafana dashboard, approval queue
-- **Phase 3**: Proxmox handler, preventive scanning, learning loop (auto-promote T2 diagnoses to T0)
+- **Phase 1** (v0.1.0): Core framework — ingestion, decision engine, HA handler, known fixes, audit, circuit breaker
+- **Phase 2** (v0.2.0): T2 cloud reasoning, approval queue + CLI, verification loop, event correlation, Docker handler, email/webhook notifications, Grafana dashboards, Prometheus metrics
+- **Phase 3**: Proxmox handler, web admin UI, messaging integrations, preventive scanning, learning loop (auto-promote T2 diagnoses to T0)
 
 ## Contributing
 
