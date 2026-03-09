@@ -62,6 +62,7 @@ def _make_config(**guardrail_overrides: Any) -> OasisAgentConfig:
             shutdown_timeout=2,
             event_ttl=300,
             known_fixes_dir="/nonexistent",
+            correlation_window=0,
         ),
         ingestion=IngestionConfig(
             mqtt=MqttIngestionConfig(enabled=False),

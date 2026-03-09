@@ -742,3 +742,73 @@ class TestHandlerDispatch:
         mocks["circuit_breaker"].record_attempt.assert_called_once_with(
             event.entity_id, success=True
         )
+
+
+# ---------------------------------------------------------------------------
+# Event correlation (§16.5)
+# ---------------------------------------------------------------------------
+
+
+class TestEventCorrelation:
+    async def test_correlated_event_skips_decision_engine(self) -> None:
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        mocks["decision"].process_event.return_value = _dropped_result("evt-1")
+
+        e1 = _make_event(entity_id="sensor.one")
+        e2 = _make_event(entity_id="sensor.two")
+
+        await orchestrator._process_one(e1)
+        await orchestrator._process_one(e2)
+
+        # Decision engine called only for the leader
+        mocks["decision"].process_event.assert_called_once()
+        # Both events counted as processed
+        assert orchestrator._events_processed == 2
+
+    async def test_correlated_event_is_audited(self) -> None:
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        mocks["decision"].process_event.return_value = _dropped_result("evt-1")
+
+        e1 = _make_event(entity_id="sensor.one")
+        e2 = _make_event(entity_id="sensor.two")
+
+        await orchestrator._process_one(e1)
+        await orchestrator._process_one(e2)
+
+        # Audit called for both events (leader decision + correlated decision)
+        assert mocks["audit"].write_decision.call_count == 2
+
+        # Second call is for the correlated event
+        second_call = mocks["audit"].write_decision.call_args_list[1]
+        correlated_result = second_call[0][1]
+        assert correlated_result.disposition.value == "correlated"
+        assert "leader" in correlated_result.diagnosis.lower()
+
+    async def test_correlation_disabled_processes_all(self) -> None:
+        config = _make_config(correlation_window=0)
+        orchestrator = _setup_orchestrator(config)
+        mocks = _mock_components(orchestrator)
+        mocks["decision"].process_event.return_value = _dropped_result("evt-1")
+
+        e1 = _make_event(entity_id="sensor.one")
+        e2 = _make_event(entity_id="sensor.two")
+
+        await orchestrator._process_one(e1)
+        await orchestrator._process_one(e2)
+
+        # Both events go through decision engine
+        assert mocks["decision"].process_event.call_count == 2
+
+    async def test_correlation_id_set_on_event_metadata(self) -> None:
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        mocks["decision"].process_event.return_value = _dropped_result("evt-1")
+
+        event = _make_event()
+        assert event.metadata.correlation_id is None
+
+        await orchestrator._process_one(event)
+
+        assert event.metadata.correlation_id is not None
