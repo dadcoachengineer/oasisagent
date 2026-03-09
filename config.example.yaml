@@ -143,6 +143,8 @@ handlers:
     # For remote Docker hosts:
     # url: tcp://192.168.1.120:2375
     # tls_verify: true
+    verify_timeout: 30           # Seconds to wait after restart to verify container running
+    verify_poll_interval: 2.0    # Seconds between verification polls
 
   # Proxmox — VM/CT management (Phase 3)
   proxmox:

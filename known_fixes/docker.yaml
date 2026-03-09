@@ -1,2 +1,64 @@
-# Known fixes for Docker container failures (Phase 2).
-fixes: []
+# Known fixes for Docker container failures.
+# Evaluated by the T0 match engine — first match wins.
+# See ARCHITECTURE.md §5 for match semantics.
+#
+# Note: payload_contains patterns assume Docker event payloads as
+# serialized JSON. Exact key names depend on the ingestion adapter's
+# event normalization. Refine patterns once the Docker ingestion
+# adapter is implemented.
+
+fixes:
+  - id: docker-oomkilled
+    match:
+      system: docker
+      event_type: container_die
+      payload_contains: "OOMKilled"
+    diagnosis: "Container was OOM-killed — memory limit exceeded"
+    action:
+      type: auto_fix
+      handler: docker
+      operation: restart_container
+      details:
+        message: "OOM-killed container restarted — review memory limits"
+    risk_tier: auto_fix
+
+  - id: docker-healthcheck-failure
+    match:
+      system: docker
+      event_type: health_status_unhealthy
+    diagnosis: "Container health check is failing"
+    action:
+      type: auto_fix
+      handler: docker
+      operation: restart_container
+      details:
+        message: "Unhealthy container restarted via health check trigger"
+    risk_tier: auto_fix
+
+  - id: docker-exit-137
+    match:
+      system: docker
+      event_type: container_die
+      payload_contains: "exitCode\":137"
+    diagnosis: "Container received SIGKILL (exit code 137) — possibly OOM or external kill"
+    action:
+      type: auto_fix
+      handler: docker
+      operation: restart_container
+      details:
+        message: "Container killed with SIGKILL — restarted, check logs for root cause"
+    risk_tier: auto_fix
+
+  - id: docker-crash-loop
+    match:
+      system: docker
+      event_type: container_die
+      payload_contains: "RestartCount"
+    diagnosis: "Container is in a crash loop — repeated restarts detected"
+    action:
+      type: recommend
+      handler: docker
+      operation: inspect_container
+      details:
+        message: "Container crash loop detected — escalating for human review"
+    risk_tier: escalate
