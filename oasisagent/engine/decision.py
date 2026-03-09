@@ -50,6 +50,7 @@ class DecisionDisposition(StrEnum):
     UNMATCHED = "unmatched"
     DROPPED = "dropped"
     ESCALATED = "escalated"
+    CORRELATED = "correlated"
 
 
 class DecisionResult(BaseModel):

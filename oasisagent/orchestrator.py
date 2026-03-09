@@ -22,10 +22,12 @@ from oasisagent.approval.listener import ApprovalListener
 from oasisagent.approval.pending import PendingAction, PendingQueue
 from oasisagent.audit.influxdb import AuditWriter
 from oasisagent.engine.circuit_breaker import CircuitBreaker
+from oasisagent.engine.correlator import EventCorrelator
 from oasisagent.engine.decision import (
     DecisionDisposition,
     DecisionEngine,
     DecisionResult,
+    DecisionTier,
 )
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
@@ -72,6 +74,7 @@ class Orchestrator:
 
         # Components — populated by _build_components()
         self._queue: EventQueue | None = None
+        self._correlator: EventCorrelator | None = None
         self._registry: KnownFixRegistry | None = None
         self._circuit_breaker: CircuitBreaker | None = None
         self._guardrails: GuardrailsEngine | None = None
@@ -145,7 +148,12 @@ class Orchestrator:
             dedup_window_seconds=cfg.agent.dedup_window_seconds,
         )
 
-        # 2. Known fixes registry
+        # 2. Event correlator
+        self._correlator = EventCorrelator(
+            window_seconds=cfg.agent.correlation_window,
+        )
+
+        # 3. Known fixes registry
         self._registry = KnownFixRegistry()
         fixes_dir = Path(cfg.agent.known_fixes_dir)
         if fixes_dir.exists():
@@ -394,7 +402,31 @@ class Orchestrator:
                 logger.info("Event %s expired (TTL), dropping", event.id)
                 return
 
-            # 2. Decision (T0 → T1 → T2, guardrails applied)
+            # 2. Correlation check
+            assert self._correlator is not None
+            correlation = self._correlator.check(event)
+            event.metadata.correlation_id = correlation.correlation_id
+
+            if not correlation.is_leader:
+                correlated_result = DecisionResult(
+                    event_id=event.id,
+                    tier=DecisionTier.T0,
+                    disposition=DecisionDisposition.CORRELATED,
+                    diagnosis=(
+                        f"Correlated with leader event {correlation.leader_event_id}"
+                    ),
+                    details={"leader_event_id": correlation.leader_event_id},
+                )
+                await self._audit_decision(event, correlated_result)
+                self._events_processed += 1
+                logger.debug(
+                    "Event %s correlated with leader %s, skipping",
+                    event.id,
+                    correlation.leader_event_id,
+                )
+                return
+
+            # 3. Decision (T0 → T1 → T2, guardrails applied)
             assert self._decision_engine is not None
             result = await self._decision_engine.process_event(event)
 

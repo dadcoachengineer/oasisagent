@@ -136,6 +136,7 @@ class AgentConfig(BaseModel):
     shutdown_timeout: Annotated[int, Field(ge=1)] = 30
     event_ttl: Annotated[int, Field(ge=0)] = 300
     known_fixes_dir: str = "known_fixes/"
+    correlation_window: Annotated[int, Field(ge=0)] = 30
 
 
 # -- Ingestion: MQTT --------------------------------------------------------

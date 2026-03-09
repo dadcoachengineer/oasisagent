@@ -1,6 +1,7 @@
 """Decision engine — event classification, guardrails, and handler dispatch."""
 
 from oasisagent.engine.circuit_breaker import CircuitBreaker, CircuitBreakerResult
+from oasisagent.engine.correlator import CorrelationResult, EventCorrelator
 from oasisagent.engine.decision import (
     DecisionDisposition,
     DecisionEngine,
@@ -13,10 +14,12 @@ from oasisagent.engine.known_fixes import KnownFixRegistry
 __all__ = [
     "CircuitBreaker",
     "CircuitBreakerResult",
+    "CorrelationResult",
     "DecisionDisposition",
     "DecisionEngine",
     "DecisionResult",
     "DecisionTier",
+    "EventCorrelator",
     "GuardrailResult",
     "GuardrailsEngine",
     "KnownFixRegistry",
