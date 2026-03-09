@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from oasisagent.config import AuditConfig
     from oasisagent.engine.circuit_breaker import CircuitBreakerResult
     from oasisagent.engine.decision import DecisionResult
-    from oasisagent.models import ActionResult, Event, RecommendedAction
+    from oasisagent.models import ActionResult, Event, RecommendedAction, VerifyResult
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +189,31 @@ class AuditWriter:
         )
 
         await self._write(point, measurement="oasis_circuit_breaker")
+
+    async def write_verify(
+        self,
+        event: Event,
+        action: RecommendedAction,
+        verify_result: VerifyResult,
+    ) -> None:
+        """Record a verification result (oasis_verify measurement)."""
+        if not self._enabled:
+            return
+        self._ensure_started()
+
+        point = (
+            Point("oasis_verify")
+            .tag("event_id", event.id)
+            .tag("handler", action.handler)
+            .tag("operation", action.operation)
+            .tag("verified", str(verify_result.verified).lower())
+            .field("message", verify_result.message)
+            .field("checked_at", verify_result.checked_at.isoformat())
+            .field("event_timestamp", event.timestamp.isoformat())
+            .time(verify_result.checked_at)
+        )
+
+        await self._write(point, measurement="oasis_verify")
 
     # -------------------------------------------------------------------
     # Internal helpers

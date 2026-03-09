@@ -43,6 +43,7 @@ from oasisagent.models import (
     Notification,
     RecommendedAction,
     RiskTier,
+    VerifyResult,
 )
 from oasisagent.notifications.dispatcher import NotificationDispatcher
 from oasisagent.notifications.mqtt import MqttNotificationChannel
@@ -557,6 +558,7 @@ class Orchestrator:
             )
             if success:
                 self._actions_taken += 1
+                await self._verify_action(handler, event, action, action_result)
             return action_result
         except Exception as exc:
             logger.exception(
@@ -616,6 +618,7 @@ class Orchestrator:
                 )
                 if success:
                     self._actions_taken += 1
+                    await self._verify_action(handler, event, action, action_result)
 
                 # Audit each action individually
                 if action_result.duration_ms is None:
@@ -742,6 +745,9 @@ class Orchestrator:
             )
             if success:
                 self._actions_taken += 1
+                await self._verify_action(
+                    handler, event, pending.action, action_result
+                )
             logger.info(
                 "Approved action %s executed: status=%s",
                 action_id,
@@ -864,6 +870,103 @@ class Orchestrator:
         await mqtt.publish_raw(
             f"oasis/pending/{action_id}", b"", qos=1, retain=True
         )
+
+    # -------------------------------------------------------------------
+    # Verification
+    # -------------------------------------------------------------------
+
+    async def _verify_action(
+        self,
+        handler: Handler,
+        event: Event,
+        action: RecommendedAction,
+        action_result: ActionResult,
+    ) -> VerifyResult | None:
+        """Verify a successfully executed action had the desired effect.
+
+        Returns None if verification is skipped (non-SUCCESS result or
+        dry_run mode). The handler owns the wait/polling strategy.
+        """
+        if action_result.status != ActionStatus.SUCCESS:
+            return None
+
+        # DRY_RUN guard: even if somehow reached with DRY_RUN status,
+        # nothing was actually executed — nothing to verify
+        if self._config.guardrails.dry_run:
+            return None
+
+        try:
+            verify_result = await handler.verify(event, action, action_result)
+        except Exception as exc:
+            logger.warning(
+                "Verification raised for %s on event %s: %s",
+                action.operation,
+                event.id,
+                exc,
+            )
+            verify_result = VerifyResult(verified=False, message=str(exc))
+
+        # Audit the verification result (best-effort)
+        if self._audit is not None:
+            try:
+                await self._audit.write_verify(event, action, verify_result)
+            except Exception:
+                logger.warning(
+                    "Audit verify write failed for event %s",
+                    event.id,
+                    exc_info=True,
+                )
+
+        if verify_result.verified:
+            logger.info(
+                "Verification passed for %s on %s: %s",
+                action.operation,
+                event.entity_id,
+                verify_result.message,
+            )
+        else:
+            logger.warning(
+                "Verification failed for %s on %s: %s",
+                action.operation,
+                event.entity_id,
+                verify_result.message,
+            )
+            await self._send_verify_failed_notification(
+                event, action, verify_result
+            )
+
+        return verify_result
+
+    async def _send_verify_failed_notification(
+        self,
+        event: Event,
+        action: RecommendedAction,
+        verify_result: VerifyResult,
+    ) -> None:
+        """Send a notification when action verification fails."""
+        if self._dispatcher is None:
+            return
+
+        notification = Notification(
+            event_id=event.id,
+            severity=event.severity,
+            title=f"[VERIFY_FAILED] {action.operation} on {event.entity_id}",
+            message=(
+                f"Action: {action.description}\n"
+                f"Handler: {action.handler}\n"
+                f"Verify message: {verify_result.message}\n"
+                f"Checked at: {verify_result.checked_at.isoformat()}"
+            ),
+        )
+
+        try:
+            await self._dispatcher.dispatch(notification)
+        except Exception:
+            logger.warning(
+                "Notification failed for verify failure on event %s",
+                event.id,
+                exc_info=True,
+            )
 
     # -------------------------------------------------------------------
     # Audit
