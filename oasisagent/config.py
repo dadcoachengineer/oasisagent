@@ -451,6 +451,9 @@ class EmailNotificationConfig(BaseModel):
     enabled: bool = False
     smtp_host: str = "localhost"
     smtp_port: Annotated[int, Field(ge=1, le=65535)] = 587
+    username: str = ""
+    password: str = ""
+    starttls: bool = True
     from_address: str = Field(default="oasis-agent@example.com", alias="from")
     to: list[str] = Field(default_factory=list)
 

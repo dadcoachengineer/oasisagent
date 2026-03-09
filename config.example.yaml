@@ -220,6 +220,9 @@ notifications:
     enabled: false
     smtp_host: localhost
     smtp_port: 587
+    username: "${SMTP_USER:-}"
+    password: "${SMTP_PASS:-}"
+    starttls: true
     from: oasis-agent@example.com
     to:
       - admin@example.com
