@@ -18,6 +18,7 @@ agent:
   event_queue_size: 1000        # Internal event queue buffer size
   dedup_window_seconds: 300     # Events with same dedup key within this window are dropped
   shutdown_timeout: 30          # Seconds to wait for graceful shutdown
+  event_ttl: 300                # Default TTL (seconds) for events; per-event TTL takes precedence
   known_fixes_dir: known_fixes/ # Directory containing T0 YAML fix registries
 
 # -----------------------------------------------------------------------------
