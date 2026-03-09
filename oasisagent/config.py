@@ -340,6 +340,8 @@ class DockerHandlerConfig(BaseModel):
     socket: str = "unix:///var/run/docker.sock"
     url: str | None = None
     tls_verify: bool = True
+    verify_timeout: Annotated[int, Field(ge=1)] = 30
+    verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
 
 
 class ProxmoxHandlerConfig(BaseModel):

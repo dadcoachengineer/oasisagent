@@ -32,6 +32,7 @@ from oasisagent.engine.decision import (
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
 from oasisagent.engine.queue import EventQueue
+from oasisagent.handlers.docker import DockerHandler
 from oasisagent.handlers.homeassistant import HomeAssistantHandler
 from oasisagent.ingestion.ha_log_poller import HaLogPollerAdapter
 from oasisagent.ingestion.ha_websocket import HaWebSocketAdapter
@@ -190,6 +191,9 @@ class Orchestrator:
         if cfg.handlers.homeassistant.enabled:
             ha = HomeAssistantHandler(cfg.handlers.homeassistant)
             self._handlers[ha.name()] = ha
+        if cfg.handlers.docker.enabled:
+            docker = DockerHandler(cfg.handlers.docker)
+            self._handlers[docker.name()] = docker
 
         # 10. Audit writer
         self._audit = AuditWriter(cfg.audit)
