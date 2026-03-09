@@ -21,6 +21,7 @@ agent:
   event_ttl: 300                # Default TTL (seconds) for events; per-event TTL takes precedence
   known_fixes_dir: known_fixes/ # Directory containing T0 YAML fix registries
   correlation_window: 30        # Group related events within this window (seconds); 0 to disable
+  metrics_port: 0               # Prometheus /metrics port; 0 to disable
 
 # -----------------------------------------------------------------------------
 # Ingestion — Event sources

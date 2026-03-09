@@ -171,6 +171,11 @@ class PendingQueue:
         """Look up a pending action by ID. Returns None if not found."""
         return self._actions.get(action_id)
 
+    @property
+    def pending_count(self) -> int:
+        """Return the number of actions with PENDING status."""
+        return sum(1 for a in self._actions.values() if a.status == PendingStatus.PENDING)
+
     def list_pending(self) -> list[PendingAction]:
         """Return all actions with PENDING status."""
         return [
