@@ -154,6 +154,13 @@ class KnownFixRegistry:
         self._fixes = fixes
         logger.info("Loaded %d known fixes from %s", len(self._fixes), directory)
 
+    def get_fix_by_id(self, fix_id: str) -> KnownFix | None:
+        """Look up a fix by its unique ID. Returns None if not found."""
+        for fix in self._fixes:
+            if fix.id == fix_id:
+                return fix
+        return None
+
     def match(self, event: Event) -> KnownFix | None:
         """Find the first fix that matches the given event, or None."""
         for fix in self._fixes:

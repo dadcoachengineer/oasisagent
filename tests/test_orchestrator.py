@@ -378,7 +378,7 @@ class TestDispatchRules:
         mock_fix.action.details = {}
         mock_fix.diagnosis = "Restart integration"
         mock_fix.risk_tier = RiskTier.AUTO_FIX
-        mock_registry.match.return_value = mock_fix
+        mock_registry.get_fix_by_id.return_value = mock_fix
         orchestrator._registry = mock_registry
 
         await orchestrator._process_one(event)
@@ -518,7 +518,7 @@ class TestErrorIsolation:
         mock_fix.action.details = {}
         mock_fix.diagnosis = "Test fix"
         mock_fix.risk_tier = RiskTier.AUTO_FIX
-        mock_registry.match.return_value = mock_fix
+        mock_registry.get_fix_by_id.return_value = mock_fix
         orchestrator._registry = mock_registry
 
         await orchestrator._process_one(event)
@@ -626,7 +626,7 @@ class TestEventTiming:
         mock_fix.action.details = {}
         mock_fix.diagnosis = "Test fix"
         mock_fix.risk_tier = RiskTier.AUTO_FIX
-        mock_registry.match.return_value = mock_fix
+        mock_registry.get_fix_by_id.return_value = mock_fix
         orchestrator._registry = mock_registry
 
         await orchestrator._process_one(event)
@@ -692,7 +692,7 @@ class TestHandlerDispatch:
         mock_fix.action.details = {}
         mock_fix.diagnosis = "Fix"
         mock_fix.risk_tier = RiskTier.AUTO_FIX
-        mock_registry.match.return_value = mock_fix
+        mock_registry.get_fix_by_id.return_value = mock_fix
         orchestrator._registry = mock_registry
 
         result = _matched_result(event.id)
@@ -706,7 +706,7 @@ class TestHandlerDispatch:
         event = _make_event()
 
         mock_registry = MagicMock()
-        mock_registry.match.return_value = None
+        mock_registry.get_fix_by_id.return_value = None
         orchestrator._registry = mock_registry
 
         result = _matched_result(event.id)
@@ -732,7 +732,7 @@ class TestHandlerDispatch:
         mock_fix.action.details = {}
         mock_fix.diagnosis = "Fix"
         mock_fix.risk_tier = RiskTier.AUTO_FIX
-        mock_registry.match.return_value = mock_fix
+        mock_registry.get_fix_by_id.return_value = mock_fix
         orchestrator._registry = mock_registry
 
         result = _matched_result(event.id)

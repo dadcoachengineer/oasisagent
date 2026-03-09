@@ -335,6 +335,7 @@ class Orchestrator:
                 action_result = await self._dispatch_handler(event, result)
                 await self._audit_action(event, result, action_result, duration_ms)
             elif self._is_dry_run(result):
+                # DRY_RUN always notifies, skip _should_notify check
                 self._events_processed += 1
                 await self._send_notification(event, result)
                 return
@@ -412,12 +413,21 @@ class Orchestrator:
     async def _dispatch_handler(
         self, event: Event, result: DecisionResult
     ) -> ActionResult:
-        """Find the appropriate handler and execute the action."""
+        """Find the appropriate handler and execute the action.
+
+        Uses result.matched_fix_id from the DecisionResult rather than
+        re-matching against the registry — the decision engine is the
+        single source of truth for which fix to apply.
+        """
         assert self._circuit_breaker is not None
         assert self._registry is not None
 
-        # Get the matched fix to find handler/operation
-        fix = self._registry.match(event)
+        # Look up the fix the decision engine already matched
+        fix = (
+            self._registry.get_fix_by_id(result.matched_fix_id)
+            if result.matched_fix_id
+            else None
+        )
         if fix is None:
             return ActionResult(
                 status=ActionStatus.SKIPPED,
@@ -492,7 +502,11 @@ class Orchestrator:
         if self._audit is None:
             return
 
-        fix = self._registry.match(event) if self._registry else None
+        fix = (
+            self._registry.get_fix_by_id(result.matched_fix_id)
+            if self._registry and result.matched_fix_id
+            else None
+        )
         if fix is None:
             return
 
