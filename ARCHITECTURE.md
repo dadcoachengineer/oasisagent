@@ -1,8 +1,8 @@
 # OasisAgent — Architecture Specification
 
 > **Version**: 0.3.0
-> **Status**: Phase 1 complete, Phase 2 in progress
-> **Last updated**: March 8, 2026
+> **Status**: Phase 2 complete (v0.2.0)
+> **Last updated**: March 9, 2026
 
 This document defines the architecture for OasisAgent, an autonomous infrastructure operations agent for home lab environments. It serves as the implementation contract — all code should conform to these designs.
 
@@ -1133,18 +1133,18 @@ dependencies except where noted.
 
 ### Phase 2 Checklist
 
-- [ ] Orchestrator + `__main__.py` entry point (§15)
-- [ ] T2 deep reasoning prompts (§16.1)
-- [ ] Human-in-the-loop approval queue (§16.2)
-- [ ] Approval queue CLI (§16.3)
-- [ ] Verification loop (§16.4)
-- [ ] Event correlation (§16.5)
-- [ ] Docker handler (§16.6)
-- [ ] Notification channels: email + webhook (§16.7)
-- [ ] Grafana dashboard templates (§16.8)
-- [ ] Prometheus metrics endpoint (§16.9)
-- [ ] Phase 2 test pass + documentation update
-- [ ] Tag v0.2.0
+- [x] Orchestrator + `__main__.py` entry point (§15)
+- [x] T2 deep reasoning prompts (§16.1)
+- [x] Human-in-the-loop approval queue (§16.2)
+- [x] Approval queue CLI (§16.3)
+- [x] Verification loop (§16.4)
+- [x] Event correlation (§16.5)
+- [x] Docker handler (§16.6)
+- [x] Notification channels: email + webhook (§16.7)
+- [x] Grafana dashboard templates (§16.8)
+- [x] Prometheus metrics endpoint (§16.9)
+- [x] Phase 2 test pass + documentation update
+- [x] Tag v0.2.0
 
 ---
 
