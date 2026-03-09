@@ -119,6 +119,36 @@ class TestKnownFixModel:
 
 
 # ---------------------------------------------------------------------------
+# get_fix_by_id
+# ---------------------------------------------------------------------------
+
+
+class TestGetFixById:
+    """Tests for looking up fixes by ID."""
+
+    def test_found(self) -> None:
+        registry = KnownFixRegistry()
+        fix = _make_fix(id="ha-restart-zwave")
+        registry._fixes = [fix]
+
+        result = registry.get_fix_by_id("ha-restart-zwave")
+        assert result is fix
+
+    def test_not_found(self) -> None:
+        registry = KnownFixRegistry()
+        registry._fixes = [_make_fix(id="ha-restart-zwave")]
+
+        result = registry.get_fix_by_id("nonexistent")
+        assert result is None
+
+    def test_empty_registry(self) -> None:
+        registry = KnownFixRegistry()
+
+        result = registry.get_fix_by_id("anything")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
 # Match engine
 # ---------------------------------------------------------------------------
 
