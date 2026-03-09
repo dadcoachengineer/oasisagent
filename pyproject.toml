@@ -29,6 +29,7 @@ dependencies = [
     "aiomqtt>=2.0",
     "aiohttp>=3.9",
     "aiosmtplib>=3.0",
+    "prometheus_client>=0.20",
     "influxdb-client[async]>=1.36",
 ]
 

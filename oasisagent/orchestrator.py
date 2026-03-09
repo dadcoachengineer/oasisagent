@@ -40,6 +40,11 @@ from oasisagent.ingestion.mqtt import MqttAdapter
 from oasisagent.llm.client import LLMClient
 from oasisagent.llm.reasoning import ReasoningService
 from oasisagent.llm.triage import TriageService
+from oasisagent.metrics import MetricsServer
+from oasisagent.metrics import inc_actions as _inc_actions
+from oasisagent.metrics import inc_decisions as _inc_decisions
+from oasisagent.metrics import inc_events as _inc_events
+from oasisagent.metrics import observe_processing_time as _observe_processing_time
 from oasisagent.models import (
     ActionResult,
     ActionStatus,
@@ -90,6 +95,7 @@ class Orchestrator:
         self._approval_listener: ApprovalListener | None = None
         self._approval_listener_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._metrics_server: MetricsServer | None = None
         self._adapters: list[IngestAdapter] = []
         self._adapter_tasks: list[asyncio.Task[None]] = []
 
@@ -235,6 +241,13 @@ class Orchestrator:
                 HaLogPollerAdapter(cfg.ingestion.ha_log_poller, self._queue)
             )
 
+        # 15. Metrics server (Prometheus)
+        if cfg.agent.metrics_port > 0:
+            from oasisagent import metrics as metrics_mod
+
+            self._metrics_server = MetricsServer(cfg.agent.metrics_port)
+            metrics_mod.set_callback_sources(self._queue, self._pending_queue)
+
     # -------------------------------------------------------------------
     # Component lifecycle
     # -------------------------------------------------------------------
@@ -270,6 +283,13 @@ class Orchestrator:
                 name="approval-listener",
             )
             logger.info("Approval listener started")
+
+        # Metrics server
+        if self._metrics_server is not None:
+            try:
+                await self._metrics_server.start()
+            except Exception:
+                logger.exception("Failed to start metrics server")
 
         # Ingestion adapters — launched as background tasks
         for adapter in self._adapters:
@@ -362,7 +382,14 @@ class Orchestrator:
             except Exception:
                 logger.exception("Error stopping notification dispatcher")
 
-        # 7. Stop audit writer
+        # 7. Stop metrics server
+        if self._metrics_server is not None:
+            try:
+                await self._metrics_server.stop()
+            except Exception:
+                logger.exception("Error stopping metrics server")
+
+        # 8. Stop audit writer
         if self._audit is not None:
             try:
                 await self._audit.stop()
@@ -414,6 +441,9 @@ class Orchestrator:
                 logger.info("Event %s expired (TTL), dropping", event.id)
                 return
 
+            # 1b. Metrics: count ingested event
+            _inc_events(event.source, event.severity.value)
+
             # 2. Correlation check
             assert self._correlator is not None
             correlation = self._correlator.check(event)
@@ -431,6 +461,7 @@ class Orchestrator:
                 )
                 await self._audit_decision(event, correlated_result)
                 self._events_processed += 1
+                _observe_processing_time("t0", time.monotonic() - start)
                 logger.debug(
                     "Event %s correlated with leader %s, skipping",
                     event.id,
@@ -460,6 +491,7 @@ class Orchestrator:
             elif self._is_dry_run(result):
                 # DRY_RUN always notifies, skip _should_notify check
                 self._events_processed += 1
+                _observe_processing_time(result.tier.value, time.monotonic() - start)
                 await self._send_notification(event, result)
                 return
 
@@ -468,6 +500,7 @@ class Orchestrator:
                 await self._send_notification(event, result)
 
             self._events_processed += 1
+            _observe_processing_time(result.tier.value, time.monotonic() - start)
 
         except Exception:
             logger.exception("Unhandled error processing event %s", event.id)
@@ -1020,6 +1053,11 @@ class Orchestrator:
         self, event: Event, result: DecisionResult
     ) -> None:
         """Write decision to audit trail. Best-effort."""
+        risk_tier = ""
+        if result.guardrail_result is not None:
+            risk_tier = result.guardrail_result.risk_tier.value
+        _inc_decisions(result.tier.value, result.disposition.value, risk_tier)
+
         if self._audit is None:
             return
         try:
@@ -1038,14 +1076,19 @@ class Orchestrator:
         duration_ms: float,
     ) -> None:
         """Write action result to audit trail. Best-effort."""
-        if self._audit is None:
-            return
-
         fix = (
             self._registry.get_fix_by_id(result.matched_fix_id)
             if self._registry and result.matched_fix_id
             else None
         )
+        if fix is not None:
+            _inc_actions(
+                fix.action.handler, fix.action.operation, action_result.status.value
+            )
+
+        if self._audit is None:
+            return
+
         if fix is None:
             return
 

@@ -137,6 +137,7 @@ class AgentConfig(BaseModel):
     event_ttl: Annotated[int, Field(ge=0)] = 300
     known_fixes_dir: str = "known_fixes/"
     correlation_window: Annotated[int, Field(ge=0)] = 30
+    metrics_port: Annotated[int, Field(ge=0, le=65535)] = 0
 
 
 # -- Ingestion: MQTT --------------------------------------------------------
