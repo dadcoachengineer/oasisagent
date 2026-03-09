@@ -26,6 +26,11 @@ class NotificationDispatcher:
     def __init__(self, channels: list[NotificationChannel]) -> None:
         self._channels = channels
 
+    @property
+    def channels(self) -> list[NotificationChannel]:
+        """All registered notification channels."""
+        return list(self._channels)
+
     async def start(self) -> None:
         """Start all channels. Failures are logged, not raised."""
         for channel in self._channels:
