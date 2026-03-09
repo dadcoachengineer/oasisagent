@@ -14,6 +14,7 @@ class TestMain:
     def test_missing_config_exits_with_error(self) -> None:
         """Exit code 1 when config.yaml doesn't exist."""
         with (
+            patch("sys.argv", ["oasisagent"]),
             patch(
                 "oasisagent.__main__.load_config",
                 side_effect=ConfigError("not found"),
@@ -31,6 +32,7 @@ class TestMain:
         mock_orchestrator.run = AsyncMock()
 
         with (
+            patch("sys.argv", ["oasisagent"]),
             patch("oasisagent.__main__.load_config", return_value=mock_config),
             patch(
                 "oasisagent.__main__.Orchestrator",
