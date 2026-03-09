@@ -15,11 +15,8 @@ This is a **public open-source project (MIT license)**. All code must be config-
 
 ### Code Quality
 - Python 3.11+, fully async (asyncio)
-- Type hints on all function signatures
 - Pydantic for config validation and data models
-- All modules must have corresponding tests
 - Use `ruff` for linting and formatting
-- Production-quality code — no TODOs in merged code, no bare excepts, no print statements
 
 ### Architecture Constraints
 - **The canonical Event model is the core data contract.** All ingestion adapters produce `Event` objects. The decision engine, handlers, and audit system all consume them. Do not create parallel data structures.
@@ -74,9 +71,7 @@ Dev: pytest, pytest-asyncio, pytest-cov, ruff
 
 ## What NOT to Do
 
-- Don't hardcode any infrastructure details (IPs, hostnames, org names)
 - Don't let LLM models make safety decisions — guardrails are code
 - Don't call LiteLLM directly outside the LLM client module
 - Don't create Event-like objects outside the canonical model
-- Don't skip tests for "simple" modules — everything gets tested
 - Don't add Phase 2/3 features to Phase 1 scope (stub the handlers, don't implement them)
