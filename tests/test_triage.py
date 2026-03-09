@@ -325,7 +325,7 @@ class TestDecisionEngineT1:
 
         assert result.tier == DecisionTier.T1
         assert result.disposition == DecisionDisposition.ESCALATED
-        assert result.details["escalate_to"] == "t2"
+        assert result.details["escalate_to"] == "human"
 
     async def test_t0_miss_t1_escalate_human(self) -> None:
         service = _mock_triage_service(_t1_json(disposition="escalate_human"))

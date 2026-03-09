@@ -1,8 +1,8 @@
 """Decision engine — core orchestrator for the event pipeline.
 
 Receives events from the queue, runs them through T0 known fixes lookup,
-then T1 triage (if no T0 match), applies guardrails, and produces
-DecisionResults.
+then T1 triage (if no T0 match), then T2 reasoning (if T1 escalates),
+applies guardrails, and produces DecisionResults.
 
 ARCHITECTURE.md §6 describes the decision flow.
 """
@@ -16,12 +16,14 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from oasisagent.engine.guardrails import GuardrailResult  # noqa: TC001 — Pydantic field type
+from oasisagent.models import RecommendedAction  # noqa: TC001 — Pydantic field type
 
 if TYPE_CHECKING:
     from oasisagent.engine.guardrails import GuardrailsEngine
     from oasisagent.engine.known_fixes import KnownFix, KnownFixRegistry
+    from oasisagent.llm.reasoning import ReasoningService
     from oasisagent.llm.triage import TriageService
-    from oasisagent.models import Event
+    from oasisagent.models import Event, TriageResult
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ class DecisionResult(BaseModel):
     matched_fix_id: str | None = None
     diagnosis: str = ""
     guardrail_result: GuardrailResult | None = None
+    recommended_actions: list[RecommendedAction] = Field(default_factory=list)
     details: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -70,15 +73,19 @@ class DecisionResult(BaseModel):
 
 
 class DecisionEngine:
-    """Orchestrates event processing through T0 lookup, T1 triage, and guardrails.
+    """Orchestrates event processing through T0 lookup, T1 triage, T2 reasoning,
+    and guardrails.
 
-    For Phase 1, the engine:
+    The engine:
     1. Looks up events against the T0 known fixes registry
     2. If no T0 match and triage_service is available, calls T1 SLM
-    3. Applies guardrails to matched/classified fixes
-    4. Returns a DecisionResult for every event (matched, dropped, or escalated)
+    3. If T1 escalates to T2, calls the cloud reasoning model
+    4. Applies guardrails to each recommended action
+    5. Returns a DecisionResult for every event
 
-    T2 deep reasoning and handler dispatch are added in later items.
+    T2 may return multiple RecommendedActions. Each action is independently
+    checked against guardrails. The DecisionResult carries the full list
+    so the orchestrator can dispatch each one separately.
     """
 
     def __init__(
@@ -86,10 +93,12 @@ class DecisionEngine:
         registry: KnownFixRegistry,
         guardrails: GuardrailsEngine,
         triage_service: TriageService | None = None,
+        reasoning_service: ReasoningService | None = None,
     ) -> None:
         self._registry = registry
         self._guardrails = guardrails
         self._triage = triage_service
+        self._reasoning = reasoning_service
 
     async def process_event(self, event: Event) -> DecisionResult:
         """Process a single event through the decision pipeline.
@@ -206,6 +215,14 @@ class DecisionEngine:
             )
 
         if triage_result.disposition == Disposition.ESCALATE_T2:
+            if self._reasoning is not None:
+                return await self._apply_t2_reasoning(event, triage_result)
+            # No reasoning service configured — escalate to human
+            logger.info(
+                "T1 escalated to T2 but reasoning service not configured, "
+                "escalating to human for event %s",
+                event.id,
+            )
             return DecisionResult(
                 event_id=event.id,
                 tier=DecisionTier.T1,
@@ -215,7 +232,7 @@ class DecisionEngine:
                     "classification": triage_result.classification,
                     "confidence": triage_result.confidence,
                     "reasoning": triage_result.reasoning,
-                    "escalate_to": "t2",
+                    "escalate_to": "human",
                 },
             )
 
@@ -254,4 +271,101 @@ class DecisionEngine:
             tier=DecisionTier.T1,
             disposition=DecisionDisposition.ESCALATED,
             diagnosis=f"Unexpected T1 disposition: {triage_result.disposition}",
+        )
+
+    async def _apply_t2_reasoning(
+        self, event: Event, triage_result: TriageResult
+    ) -> DecisionResult:
+        """Call T2 reasoning and apply guardrails to each recommended action.
+
+        Each action is independently checked against guardrails. Actions
+        that pass are included in the result; blocked actions are filtered
+        out. If no actions pass, the event is escalated to a human.
+        """
+        assert self._reasoning is not None
+
+        diagnosis = await self._reasoning.diagnose(
+            event, triage_result, entity_context={}, known_fixes=[]
+        )
+
+        if not diagnosis.recommended_actions:
+            logger.info(
+                "T2 returned no actions for event %s, escalating to human",
+                event.id,
+            )
+            return DecisionResult(
+                event_id=event.id,
+                tier=DecisionTier.T2,
+                disposition=DecisionDisposition.ESCALATED,
+                diagnosis=diagnosis.root_cause,
+                details={
+                    "escalate_to": "human",
+                    "confidence": diagnosis.confidence,
+                    "risk_assessment": diagnosis.risk_assessment,
+                },
+            )
+
+        # Apply guardrails to each action independently
+        approved_actions: list[RecommendedAction] = []
+        blocked_count = 0
+
+        for action in diagnosis.recommended_actions:
+            guardrail_result = self._guardrails.check(
+                entity_id=event.entity_id,
+                risk_tier=action.risk_tier,
+            )
+
+            if guardrail_result.allowed and not guardrail_result.dry_run:
+                approved_actions.append(action)
+            else:
+                blocked_count += 1
+                logger.info(
+                    "T2 action blocked by guardrails for event %s: "
+                    "handler=%s, op=%s, reason=%s",
+                    event.id,
+                    action.handler,
+                    action.operation,
+                    guardrail_result.reason,
+                )
+
+        if not approved_actions:
+            logger.info(
+                "All %d T2 actions blocked by guardrails for event %s, "
+                "escalating to human",
+                blocked_count,
+                event.id,
+            )
+            return DecisionResult(
+                event_id=event.id,
+                tier=DecisionTier.T2,
+                disposition=DecisionDisposition.BLOCKED,
+                diagnosis=diagnosis.root_cause,
+                recommended_actions=diagnosis.recommended_actions,
+                details={
+                    "confidence": diagnosis.confidence,
+                    "risk_assessment": diagnosis.risk_assessment,
+                    "blocked_count": blocked_count,
+                },
+            )
+
+        logger.info(
+            "T2 diagnosis for event %s: %d actions approved, %d blocked",
+            event.id,
+            len(approved_actions),
+            blocked_count,
+        )
+
+        return DecisionResult(
+            event_id=event.id,
+            tier=DecisionTier.T2,
+            disposition=DecisionDisposition.MATCHED,
+            diagnosis=diagnosis.root_cause,
+            recommended_actions=approved_actions,
+            details={
+                "confidence": diagnosis.confidence,
+                "risk_assessment": diagnosis.risk_assessment,
+                "total_actions": len(diagnosis.recommended_actions),
+                "approved_actions": len(approved_actions),
+                "blocked_count": blocked_count,
+            },
         )
