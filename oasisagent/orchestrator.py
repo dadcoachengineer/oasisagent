@@ -202,6 +202,14 @@ class Orchestrator:
         channels = []
         if cfg.notifications.mqtt.enabled:
             channels.append(MqttNotificationChannel(cfg.notifications.mqtt))
+        if cfg.notifications.email.enabled:
+            from oasisagent.notifications.email import EmailNotificationChannel
+
+            channels.append(EmailNotificationChannel(cfg.notifications.email))
+        if cfg.notifications.webhook.enabled:
+            from oasisagent.notifications.webhook import WebhookNotificationChannel
+
+            channels.append(WebhookNotificationChannel(cfg.notifications.webhook))
         self._dispatcher = NotificationDispatcher(channels)
 
         # 12. Pending action queue (for RECOMMEND-tier actions)
