@@ -717,7 +717,11 @@ class Orchestrator:
             )
             return
 
-        # Build a minimal Event for dispatch context
+        # Build a minimal Event for dispatch context.
+        # TODO: PendingAction should carry entity_id from the original event
+        # so the circuit breaker correlates approved action failures with the
+        # entity's failure budget. Same backlog bucket as target_entity_id
+        # on RecommendedAction (issue #19).
         from oasisagent.models import Event, Severity
 
         event = Event(
@@ -805,6 +809,15 @@ class Orchestrator:
                 exc_info=True,
             )
 
+    def _get_mqtt_channel(self) -> MqttNotificationChannel | None:
+        """Find the MQTT notification channel, if configured."""
+        if self._dispatcher is None:
+            return None
+        for channel in self._dispatcher.channels:
+            if isinstance(channel, MqttNotificationChannel):
+                return channel
+        return None
+
     async def _publish_pending_action(self, pending: PendingAction) -> None:
         """Publish a pending action to oasis/pending/{action_id} (retained).
 
@@ -813,7 +826,8 @@ class Orchestrator:
         - Payload: JSON with id, event_id, action, diagnosis, timestamps
         - QoS 1, retain=True so late subscribers see pending items
         """
-        if self._dispatcher is None:
+        mqtt = self._get_mqtt_channel()
+        if mqtt is None:
             return
 
         import json
@@ -821,24 +835,7 @@ class Orchestrator:
         payload = json.dumps(pending.model_dump(mode="json"), default=str)
         topic = f"oasis/pending/{pending.id}"
 
-        # Use the notification MQTT channel's client if available
-        for channel in self._dispatcher.channels:
-            if channel.name() == "mqtt":
-                try:
-                    await channel._client.publish(
-                        topic=topic,
-                        payload=payload,
-                        qos=1,
-                        retain=True,
-                    )
-                    logger.debug("Published pending action to %s", topic)
-                except Exception:
-                    logger.warning(
-                        "Failed to publish pending action %s",
-                        pending.id,
-                        exc_info=True,
-                    )
-                break
+        await mqtt.publish_raw(topic, payload, qos=1, retain=True)
 
     async def _publish_pending_list(self) -> None:
         """Publish the current pending list to oasis/pending/list (retained).
@@ -846,52 +843,27 @@ class Orchestrator:
         This is a snapshot of all PENDING actions so that new subscribers
         (CLI, UI) get current state immediately on connect.
         """
-        if self._dispatcher is None or self._pending_queue is None:
+        if self._pending_queue is None:
+            return
+
+        mqtt = self._get_mqtt_channel()
+        if mqtt is None:
             return
 
         import json
 
         payload = json.dumps(self._pending_queue.to_list_payload(), default=str)
-
-        for channel in self._dispatcher.channels:
-            if channel.name() == "mqtt":
-                try:
-                    await channel._client.publish(
-                        topic="oasis/pending/list",
-                        payload=payload,
-                        qos=1,
-                        retain=True,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to publish pending list",
-                        exc_info=True,
-                    )
-                break
+        await mqtt.publish_raw("oasis/pending/list", payload, qos=1, retain=True)
 
     async def _clear_pending_mqtt(self, action_id: str) -> None:
         """Clear a retained MQTT message by publishing empty payload."""
-        if self._dispatcher is None:
+        mqtt = self._get_mqtt_channel()
+        if mqtt is None:
             return
 
-        topic = f"oasis/pending/{action_id}"
-
-        for channel in self._dispatcher.channels:
-            if channel.name() == "mqtt":
-                try:
-                    await channel._client.publish(
-                        topic=topic,
-                        payload=b"",
-                        qos=1,
-                        retain=True,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to clear retained message for %s",
-                        action_id,
-                        exc_info=True,
-                    )
-                break
+        await mqtt.publish_raw(
+            f"oasis/pending/{action_id}", b"", qos=1, retain=True
+        )
 
     # -------------------------------------------------------------------
     # Audit

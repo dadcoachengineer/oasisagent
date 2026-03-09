@@ -71,6 +71,41 @@ class MqttNotificationChannel(NotificationChannel):
             self._client = None
             logger.info("MQTT notification channel stopped")
 
+    async def publish_raw(
+        self,
+        topic: str,
+        payload: str | bytes,
+        *,
+        qos: int = 1,
+        retain: bool = False,
+    ) -> bool:
+        """Publish a raw message to an arbitrary MQTT topic.
+
+        Used by the orchestrator for approval queue topics
+        (oasis/pending/*, oasis/pending/list) that are not standard
+        notifications.
+
+        Returns True on success, False on failure (best-effort).
+        """
+        if self._client is None:
+            logger.warning(
+                "MQTT channel not started — cannot publish to %s", topic
+            )
+            return False
+
+        try:
+            await self._client.publish(
+                topic=topic,
+                payload=payload,
+                qos=qos,
+                retain=retain,
+            )
+            logger.debug("MQTT raw publish: topic=%s, retain=%s", topic, retain)
+            return True
+        except Exception as exc:
+            logger.warning("MQTT raw publish failed for %s: %s", topic, exc)
+            return False
+
     async def send(self, notification: Notification) -> bool:
         """Publish a notification to MQTT.
 
