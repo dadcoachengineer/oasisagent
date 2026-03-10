@@ -51,7 +51,9 @@ def _load_file_secrets() -> None:
                 value = Path(file_path).read_text().strip()
                 os.environ[target_key] = value
             except OSError:
-                pass  # File doesn't exist — skip silently
+                logging.getLogger(__name__).debug(
+                    "Skipped %s: file %s not found", key, file_path,
+                )
 
 
 def _run_agent() -> None:
