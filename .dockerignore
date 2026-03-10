@@ -32,6 +32,7 @@ htmlcov/
 Dockerfile
 docker-compose.yml
 docker-stack.yml
+portainer-stack.yml
 .dockerignore
 
 # CI/CD
