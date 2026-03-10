@@ -102,7 +102,7 @@ class HaLogPollerAdapter(IngestAdapter):
 
     async def _poll(self) -> None:
         """Fetch the error log and process entries."""
-        url = f"{self._config.url.rstrip('/')}/api/error/all"
+        url = f"{self._config.url.rstrip('/')}/api/error_log"
         headers = {
             "Authorization": f"Bearer {self._config.token}",
             "Content-Type": "application/json",
