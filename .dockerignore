@@ -1,0 +1,52 @@
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv
+venv
+
+# Test and development
+tests/
+.pytest_cache
+.coverage
+htmlcov/
+.ruff_cache
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Docker
+Dockerfile
+docker-compose.yml
+docker-stack.yml
+.dockerignore
+
+# CI/CD
+.github/
+
+# Docs and config
+*.md
+!README.md
+!LICENSE
+.env
+.env.*
+config.yaml
+
+# Dashboards (not needed in runtime image)
+dashboards/
+
+# Claude
+.claude/

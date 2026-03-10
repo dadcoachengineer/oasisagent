@@ -14,6 +14,10 @@ RUN pip install --no-cache-dir --prefix=/install .
 # Stage 2: Runtime — lean image with no build tools
 FROM python:3.11-slim AS runtime
 
+LABEL org.opencontainers.image.source="https://github.com/dadcoachengineer/oasisagent"
+LABEL org.opencontainers.image.description="Autonomous infrastructure operations agent for home labs"
+LABEL org.opencontainers.image.licenses="MIT"
+
 RUN groupadd --gid 1000 oasis && \
     useradd --uid 1000 --gid oasis --create-home oasis
 

@@ -98,6 +98,11 @@ ingestion:
 llm:
 
   # T1 — Triage: Local small language model for classification and context packaging
+  # Default: Ollama at localhost. For cloud-hosted triage (e.g., OpenRouter):
+  #   base_url: https://openrouter.ai/api/v1
+  #   model: meta-llama/llama-3.1-8b-instruct
+  #   api_key: ${TRIAGE_LLM_API_KEY}
+  #   timeout: 15
   triage:
     base_url: http://localhost:11434/v1    # Ollama default
     model: qwen2.5:7b
@@ -141,9 +146,13 @@ handlers:
   docker:
     enabled: false
     socket: unix:///var/run/docker.sock
-    # For remote Docker hosts:
-    # url: tcp://192.168.1.120:2375
+    # For remote Docker hosts (TCP + TLS recommended for Swarm nodes):
+    # socket: ""                 # Clear socket when using TCP
+    # url: tcp://docker-host:2376
     # tls_verify: true
+    # tls_ca: /certs/ca.pem
+    # tls_cert: /certs/cert.pem
+    # tls_key: /certs/key.pem
     verify_timeout: 30           # Seconds to wait after restart to verify container running
     verify_poll_interval: 2.0    # Seconds between verification polls
 

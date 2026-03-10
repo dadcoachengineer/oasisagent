@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -33,8 +34,30 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_file_secrets() -> None:
+    """Load Docker/Swarm secrets from *_FILE env vars.
+
+    For each env var ending in ``_FILE``, read the file contents and
+    set the corresponding env var (without the ``_FILE`` suffix).
+    This is the standard Docker secret pattern: the orchestrator mounts
+    secrets as files at ``/run/secrets/``, and services read them via
+    ``*_FILE`` environment variables.
+    """
+    for key in list(os.environ):
+        if key.endswith("_FILE"):
+            file_path = os.environ[key]
+            target_key = key.removesuffix("_FILE")
+            try:
+                value = Path(file_path).read_text().strip()
+                os.environ[target_key] = value
+            except OSError:
+                pass  # File doesn't exist — skip silently
+
+
 def _run_agent() -> None:
     """Load config, create orchestrator, and run the event loop."""
+    _load_file_secrets()
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
