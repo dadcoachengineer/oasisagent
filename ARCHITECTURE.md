@@ -202,7 +202,7 @@ class IngestAdapter(ABC):
   ```
 
 #### Home Assistant Log Poller
-- Polls HA's `/api/error/all` endpoint or reads log file directly
+- Polls HA's `/api/error_log` endpoint or reads log file directly
 - Pattern-matches log entries against known error signatures
 - Deduplicates based on error fingerprint + time window
 - Config:
