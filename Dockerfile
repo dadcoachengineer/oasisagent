@@ -23,6 +23,7 @@ RUN groupadd --gid 1000 oasis && \
 
 COPY --from=builder /install /usr/local
 COPY --from=builder /build/known_fixes /app/known_fixes
+COPY config.default.yaml /app/config.yaml
 
 WORKDIR /app
 
