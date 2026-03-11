@@ -146,7 +146,7 @@ docker compose --profile monitoring up -d
 docker stack deploy -c docker-compose.yml oasis
 ```
 
-Set environment variables in your orchestrator (Portainer, etc.) or via `docker stack deploy --env-file .env`. The compose file includes deploy constraints, resource limits, and rolling update policy.
+Set environment variables in your orchestrator (Portainer stack UI, etc.) or export them before deploying. The compose file includes deploy constraints, resource limits, and rolling update policy.
 
 | Variable | Required | Default |
 |----------|----------|---------|

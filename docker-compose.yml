@@ -53,6 +53,9 @@ services:
       INFLUX_ORG: ${INFLUX_ORG:-myorg}
       INFLUX_BUCKET: ${INFLUX_BUCKET:-oasisagent}
       DRY_RUN: ${DRY_RUN:-true}
+    # volumes:
+    #   - ./known_fixes:/app/known_fixes:ro   # mount custom T0 fix registry
+    #   - /var/run/docker.sock:/var/run/docker.sock:ro   # Docker handler (v0.3.0)
     networks:
       - oasis
     ports:
@@ -85,7 +88,7 @@ services:
 
 networks:
   oasis:
-    driver: overlay
+    # No explicit driver — Docker picks bridge for compose, overlay for Swarm.
     attachable: true
 
 volumes:
