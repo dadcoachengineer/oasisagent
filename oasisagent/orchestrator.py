@@ -158,7 +158,6 @@ class Orchestrator:
         or by ``run()`` in standalone mode.
         """
         if self._shutting_down:
-            await self._shutdown()
             return
         self._shutting_down = True
         logger.info("Shutdown requested")

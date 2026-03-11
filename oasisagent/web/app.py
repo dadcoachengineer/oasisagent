@@ -41,16 +41,16 @@ def _get_version() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Manage orchestrator lifecycle within the FastAPI process."""
-    from oasisagent.__main__ import _configure_logging, _load_file_secrets
+    from pathlib import Path
+
+    from oasisagent.bootstrap import configure_logging, load_file_secrets
     from oasisagent.config import load_config
     from oasisagent.orchestrator import Orchestrator
 
-    _load_file_secrets()
-
-    from pathlib import Path
+    load_file_secrets()
 
     config = load_config(Path("config.yaml"))
-    _configure_logging(config)
+    configure_logging(config)
 
     orchestrator = Orchestrator(config)
     await orchestrator.start()

@@ -15,16 +15,13 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import uvicorn
 
+from oasisagent.bootstrap import configure_logging, load_file_secrets
 from oasisagent.cli import build_queue_parser, run_queue_command
 from oasisagent.config import ConfigError, load_config
 from oasisagent.orchestrator import Orchestrator
-
-if TYPE_CHECKING:
-    from oasisagent.config import OasisAgentConfig
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -40,45 +37,6 @@ def _build_parser() -> argparse.ArgumentParser:
     build_queue_parser(subparsers)
 
     return parser
-
-
-def _load_file_secrets() -> None:
-    """Load Docker/Swarm secrets from *_FILE env vars.
-
-    For each env var ending in ``_FILE``, read the file contents and
-    set the corresponding env var (without the ``_FILE`` suffix).
-    This is the standard Docker secret pattern: the orchestrator mounts
-    secrets as files at ``/run/secrets/``, and services read them via
-    ``*_FILE`` environment variables.
-    """
-    for key in list(os.environ):
-        if key.endswith("_FILE"):
-            file_path = os.environ[key]
-            target_key = key.removesuffix("_FILE")
-            try:
-                value = Path(file_path).read_text().strip()
-                os.environ[target_key] = value
-            except OSError:
-                logging.getLogger(__name__).debug(
-                    "Skipped %s: file %s not found", key, file_path,
-                )
-
-
-def _configure_logging(config: OasisAgentConfig) -> None:
-    """Set up logging from config. Suppresses noisy LiteLLM output."""
-    log_level = config.agent.log_level.value.upper()
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        force=True,
-    )
-    logging.getLogger().setLevel(log_level)
-
-    # Suppress noisy LiteLLM logs ("Provider List: ..." on every call)
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
-    import litellm
-    litellm.suppress_debug_info = True
 
 
 def _serve() -> None:
@@ -102,7 +60,7 @@ def _run_agent() -> None:
     debugging and backward compatibility. Production deployments
     should use ``oasisagent serve`` (the default).
     """
-    _load_file_secrets()
+    load_file_secrets()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -116,7 +74,7 @@ def _run_agent() -> None:
         logging.getLogger(__name__).error("Configuration error: %s", exc)
         sys.exit(1)
 
-    _configure_logging(config)
+    configure_logging(config)
 
     orchestrator = Orchestrator(config)
     asyncio.run(orchestrator.run())
