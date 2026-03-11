@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 160">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#0f172a"/>
@@ -9,63 +9,53 @@
       <stop offset="100%" style="stop-color:#818cf8"/>
     </linearGradient>
   </defs>
-  <rect width="800" height="200" rx="12" fill="url(#bg)"/>
-  <!-- Oasis icon: stylized palm/shield -->
-  <g transform="translate(60, 30)">
-    <!-- Shield outline -->
-    <path d="M40 10 L70 25 L70 65 Q70 95 40 110 Q10 95 10 65 L10 25 Z"
+  <rect width="800" height="160" rx="12" fill="url(#bg)"/>
+
+  <!-- Shield icon -->
+  <g transform="translate(40, 28)">
+    <path d="M40 8 L68 22 L68 58 Q68 86 40 100 Q12 86 12 58 L12 22 Z"
           fill="none" stroke="url(#accent)" stroke-width="2.5" opacity="0.9"/>
-    <!-- Signal/pulse lines inside shield -->
-    <path d="M28 50 L35 50 L38 38 L42 62 L45 45 L48 55 L52 50 L58 50"
+    <path d="M28 48 L34 48 L37 37 L41 59 L44 43 L47 53 L51 48 L56 48"
           fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    <!-- Small dot -->
-    <circle cx="40" cy="80" r="3" fill="#818cf8" opacity="0.8"/>
-    <!-- Radiating arcs -->
-    <path d="M30 80 Q30 72 40 68" fill="none" stroke="#818cf8" stroke-width="1.5" opacity="0.5"/>
-    <path d="M50 80 Q50 72 40 68" fill="none" stroke="#818cf8" stroke-width="1.5" opacity="0.5"/>
-    <path d="M24 84 Q22 70 40 62" fill="none" stroke="#818cf8" stroke-width="1.2" opacity="0.3"/>
-    <path d="M56 84 Q58 70 40 62" fill="none" stroke="#818cf8" stroke-width="1.2" opacity="0.3"/>
   </g>
+
   <!-- Title -->
-  <text x="140" y="90" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
-        font-size="52" font-weight="700" fill="#f8fafc" letter-spacing="-1">
+  <text x="130" y="72" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="48" font-weight="700" fill="#f8fafc" letter-spacing="-1">
     OasisAgent
   </text>
+
   <!-- Tagline -->
-  <text x="140" y="125" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
-        font-size="18" fill="#94a3b8" letter-spacing="0.5">
+  <text x="130" y="100" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="16" fill="#94a3b8" letter-spacing="0.5">
     Autonomous infrastructure ops for home labs
   </text>
-  <!-- Tier badges -->
-  <g transform="translate(140, 145)">
-    <rect x="0" y="0" width="56" height="24" rx="4" fill="#22d3ee" opacity="0.15"/>
-    <text x="28" y="16" font-family="ui-monospace, monospace" font-size="11"
-          fill="#22d3ee" text-anchor="middle" font-weight="600">T0</text>
-    <rect x="66" y="0" width="56" height="24" rx="4" fill="#818cf8" opacity="0.15"/>
-    <text x="94" y="16" font-family="ui-monospace, monospace" font-size="11"
-          fill="#818cf8" text-anchor="middle" font-weight="600">T1</text>
-    <rect x="132" y="0" width="56" height="24" rx="4" fill="#a78bfa" opacity="0.15"/>
-    <text x="160" y="16" font-family="ui-monospace, monospace" font-size="11"
-          fill="#a78bfa" text-anchor="middle" font-weight="600">T2</text>
-  </g>
-  <!-- Right side: flow diagram -->
-  <g transform="translate(500, 55)" font-family="ui-monospace, monospace" font-size="12" fill="#94a3b8">
-    <rect x="0" y="0" width="80" height="28" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-    <text x="40" y="18" text-anchor="middle" fill="#22d3ee">Detect</text>
-    <line x1="80" y1="14" x2="100" y2="14" stroke="#334155" stroke-width="1.5"/>
-    <polygon points="97,10 103,14 97,18" fill="#334155"/>
-    <rect x="103" y="0" width="80" height="28" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-    <text x="143" y="18" text-anchor="middle" fill="#818cf8">Classify</text>
-    <line x1="183" y1="14" x2="203" y2="14" stroke="#334155" stroke-width="1.5"/>
-    <polygon points="200,10 206,14 200,18" fill="#334155"/>
-    <rect x="206" y="0" width="80" height="28" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-    <text x="246" y="18" text-anchor="middle" fill="#a78bfa">Resolve</text>
+
+  <!-- Right side: compact flow -->
+  <g transform="translate(480, 38)" font-family="ui-monospace, monospace" font-size="11">
+    <rect x="0" y="0" width="72" height="26" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="36" y="17" text-anchor="middle" fill="#22d3ee">Detect</text>
+
+    <line x1="72" y1="13" x2="88" y2="13" stroke="#334155" stroke-width="1.5"/>
+    <polygon points="85,9 91,13 85,17" fill="#334155"/>
+
+    <rect x="91" y="0" width="72" height="26" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="127" y="17" text-anchor="middle" fill="#818cf8">Classify</text>
+
+    <line x1="163" y1="13" x2="179" y2="13" stroke="#334155" stroke-width="1.5"/>
+    <polygon points="176,9 182,13 176,17" fill="#334155"/>
+
+    <rect x="182" y="0" width="72" height="26" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="218" y="17" text-anchor="middle" fill="#a78bfa">Resolve</text>
+
     <!-- Second row -->
-    <rect x="0" y="45" width="80" height="28" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-    <text x="40" y="63" text-anchor="middle" fill="#64748b">Verify</text>
-    <line x1="80" y1="59" x2="100" y2="59" stroke="#334155" stroke-width="1.5"/>
-    <polygon points="97,55 103,59 97,63" fill="#334155"/>
-    <rect x="103" y="45" width="80" height="28" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-    <text x="143" y="63" text-anchor="middle" fill="#64748b">Audit</text>
+    <rect x="0" y="40" width="72" height="26" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="36" y="57" text-anchor="middle" fill="#64748b">Verify</text>
+
+    <line x1="72" y1="53" x2="88" y2="53" stroke="#334155" stroke-width="1.5"/>
+    <polygon points="85,49 91,53 85,57" fill="#334155"/>
+
+    <rect x="91" y="40" width="72" height="26" rx="4" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="127" y="57" text-anchor="middle" fill="#64748b">Audit</text>
   </g>
 </svg>
