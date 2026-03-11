@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from oasisagent.config import WebhookSourceConfig
 from oasisagent.ingestion.webhook import map_event, validate_auth
 
 logger = logging.getLogger(__name__)
@@ -57,8 +58,6 @@ async def receive_webhook(source: str, request: Request) -> JSONResponse:
         )
 
     # Build the typed config for auth and mapping
-    from oasisagent.config import WebhookSourceConfig
-
     config = WebhookSourceConfig.model_validate(source_row["config"])
 
     # Auth validation
@@ -96,7 +95,7 @@ async def receive_webhook(source: str, request: Request) -> JSONResponse:
         )
 
     try:
-        orchestrator._queue.put_nowait(event)
+        orchestrator.enqueue(event)
     except Exception:
         logger.exception("Failed to enqueue webhook event from %s", source)
         return JSONResponse(

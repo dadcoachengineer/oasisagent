@@ -9,10 +9,10 @@ from __future__ import annotations
 import os
 import re
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -252,6 +252,9 @@ class HaLogPollerConfig(BaseModel):
 # -- Ingestion: Webhook Receiver --------------------------------------------
 
 
+_SeverityLiteral = Literal["info", "warning", "error", "critical"]
+
+
 class WebhookEventMapping(BaseModel):
     """Maps a source event name to canonical event_type and severity."""
 
@@ -259,7 +262,7 @@ class WebhookEventMapping(BaseModel):
 
     source_event: str
     event_type: str
-    severity: str = "warning"
+    severity: _SeverityLiteral = "warning"
 
 
 class WebhookSourceConfig(BaseModel):
@@ -272,14 +275,21 @@ class WebhookSourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    auth_mode: str = "none"  # "none" | "header_secret" | "api_key"
+    auth_mode: Literal["none", "header_secret", "api_key"] = "none"
     auth_header: str = ""
     auth_secret: str = ""
     system: str = ""
     event_type_field: str = "eventType"
     entity_id_field: str = ""
-    default_severity: str = "warning"
+    default_severity: _SeverityLiteral = "warning"
     event_mappings: list[WebhookEventMapping] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_auth_secret(self) -> WebhookSourceConfig:
+        if self.auth_mode != "none" and not self.auth_secret:
+            msg = f"auth_secret is required when auth_mode is '{self.auth_mode}'"
+            raise ValueError(msg)
+        return self
 
 
 # -- Ingestion (top-level) --------------------------------------------------

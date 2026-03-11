@@ -23,6 +23,7 @@ def _mock_orchestrator() -> MagicMock:
     orch._errors = 0
     orch._queue = MagicMock()
     type(orch._queue).size = PropertyMock(return_value=0)
+    orch.enqueue = MagicMock()
     return orch
 
 
@@ -247,7 +248,7 @@ class TestEventMapping:
 
         # Verify the enqueued event
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.event_type == "health_issue"
         assert event.severity.value == "error"
         assert event.system == "radarr"
@@ -268,7 +269,7 @@ class TestEventMapping:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.event_type == "SomeUnknownEvent"
         assert event.severity.value == "info"
 
@@ -285,7 +286,7 @@ class TestEventMapping:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.entity_id == "Inception"
 
     async def test_entity_id_fallback(self, webhook_client: AsyncClient) -> None:
@@ -301,7 +302,7 @@ class TestEventMapping:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.entity_id == "fallback-src:Test"
 
     async def test_payload_preserved(self, webhook_client: AsyncClient) -> None:
@@ -317,7 +318,7 @@ class TestEventMapping:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.payload == payload
 
     async def test_dedup_key_set(self, webhook_client: AsyncClient) -> None:
@@ -331,7 +332,7 @@ class TestEventMapping:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.metadata.dedup_key.startswith("webhook:dedup-src:Alert:")
 
 
@@ -360,7 +361,7 @@ class TestEnqueue:
         })
         # Make put_nowait raise
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        orch._queue.put_nowait.side_effect = Exception("Queue full")
+        orch.enqueue.side_effect = Exception("Queue full")
 
         resp = await webhook_client.post(
             "/ingest/webhook/full-src",
@@ -396,7 +397,7 @@ class TestRealisticPayloads:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.event_type == "health_issue"
         assert event.severity.value == "error"
         assert event.system == "radarr"
@@ -425,7 +426,7 @@ class TestRealisticPayloads:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.event_type == "media_grab"
         assert event.entity_id == "Breaking Bad"
 
@@ -450,7 +451,7 @@ class TestRealisticPayloads:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.event_type == "media_play"
         assert event.entity_id == "The Matrix"
 
@@ -475,7 +476,7 @@ class TestRealisticPayloads:
         assert resp.status_code == 202
 
         orch = webhook_client._transport.app.state.orchestrator  # type: ignore[union-attr]
-        event = orch._queue.put_nowait.call_args[0][0]
+        event = orch.enqueue.call_args[0][0]
         assert event.event_type == "node_high_cpu"
         assert event.entity_id == "pve-01"
         assert event.system == "proxmox"

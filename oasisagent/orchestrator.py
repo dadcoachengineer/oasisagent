@@ -48,6 +48,7 @@ from oasisagent.metrics import observe_processing_time as _observe_processing_ti
 from oasisagent.models import (
     ActionResult,
     ActionStatus,
+    Event,
     Notification,
     RecommendedAction,
     RiskTier,
@@ -103,6 +104,18 @@ class Orchestrator:
         self._events_processed: int = 0
         self._actions_taken: int = 0
         self._errors: int = 0
+
+    def enqueue(self, event: Event) -> None:
+        """Submit an event for processing.
+
+        Raises:
+            RuntimeError: If the queue is not initialized.
+            asyncio.QueueFull: If the queue is at capacity.
+        """
+        if self._queue is None:
+            msg = "Orchestrator not started"
+            raise RuntimeError(msg)
+        self._queue.put_nowait(event)
 
     async def run(self) -> None:
         """Start all components and enter the main event loop.
