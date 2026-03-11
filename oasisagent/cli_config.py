@@ -139,24 +139,25 @@ def _validate_import_data(data: dict[str, Any]) -> None:
         msg = "Import file must contain a YAML mapping"
         raise ValueError(msg)
 
-    # Validate connector/service/notification types if present
-    for row in data.get("connectors", []):
-        if row["type"] not in CONNECTOR_TYPES:
-            valid = ", ".join(sorted(CONNECTOR_TYPES.keys()))
-            msg = f"Unknown connector type: {row['type']!r}. Valid: {valid}"
-            raise ValueError(msg)
-
-    for row in data.get("services", []):
-        if row["type"] not in CORE_SERVICE_TYPES:
-            valid = ", ".join(sorted(CORE_SERVICE_TYPES.keys()))
-            msg = f"Unknown service type: {row['type']!r}. Valid: {valid}"
-            raise ValueError(msg)
-
-    for row in data.get("notifications", []):
-        if row["type"] not in NOTIFICATION_TYPES:
-            valid = ", ".join(sorted(NOTIFICATION_TYPES.keys()))
-            msg = f"Unknown notification type: {row['type']!r}. Valid: {valid}"
-            raise ValueError(msg)
+    # Validate structure and types for each section
+    sections: list[tuple[str, dict[str, Any]]] = [
+        ("connectors", CONNECTOR_TYPES),
+        ("services", CORE_SERVICE_TYPES),
+        ("notifications", NOTIFICATION_TYPES),
+    ]
+    for section, registry in sections:
+        for i, row in enumerate(data.get(section, [])):
+            if not isinstance(row, dict):
+                msg = f"{section}[{i}]: expected a mapping, got {type(row).__name__}"
+                raise ValueError(msg)
+            for key in ("type", "name"):
+                if key not in row:
+                    msg = f"{section}[{i}]: missing required field '{key}'"
+                    raise ValueError(msg)
+            if row["type"] not in registry:
+                valid = ", ".join(sorted(registry.keys()))
+                msg = f"{section}[{i}]: unknown type {row['type']!r}. Valid: {valid}"
+                raise ValueError(msg)
 
 
 def _strip_export_placeholders(config: dict[str, Any]) -> dict[str, Any]:

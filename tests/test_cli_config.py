@@ -296,6 +296,42 @@ class TestImport:
 
         assert exit_code == 1
 
+    async def test_import_rejects_missing_type_key(self, tmp_path: Path) -> None:
+        key = Fernet.generate_key().decode()
+        (tmp_path / ".secret_key").write_text(key)
+
+        import_data = {
+            "connectors": [{"name": "no-type", "config": {}}],
+        }
+        import_file = tmp_path / "no_type.yaml"
+        import_file.write_text(yaml.dump(import_data))
+
+        from oasisagent.cli_config import _cmd_import
+
+        with patch.dict(os.environ, {"OASIS_DATA_DIR": str(tmp_path)}):
+            os.environ.pop("OASIS_SECRET_KEY", None)
+            exit_code = await _cmd_import(str(import_file))
+
+        assert exit_code == 1
+
+    async def test_import_rejects_missing_name_key(self, tmp_path: Path) -> None:
+        key = Fernet.generate_key().decode()
+        (tmp_path / ".secret_key").write_text(key)
+
+        import_data = {
+            "services": [{"type": "llm_options", "config": {}}],
+        }
+        import_file = tmp_path / "no_name.yaml"
+        import_file.write_text(yaml.dump(import_data))
+
+        from oasisagent.cli_config import _cmd_import
+
+        with patch.dict(os.environ, {"OASIS_DATA_DIR": str(tmp_path)}):
+            os.environ.pop("OASIS_SECRET_KEY", None)
+            exit_code = await _cmd_import(str(import_file))
+
+        assert exit_code == 1
+
     async def test_import_missing_file(self, tmp_path: Path) -> None:
         from oasisagent.cli_config import _cmd_import
 
