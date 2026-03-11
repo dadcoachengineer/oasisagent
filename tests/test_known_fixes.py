@@ -502,10 +502,14 @@ class TestRealFixFiles:
         registry = KnownFixRegistry()
         registry.load(Path("known_fixes"))
 
-        assert len(registry.fixes) >= 2
+        assert len(registry.fixes) >= 6
         fix_ids = {f.id for f in registry.fixes}
         assert "ha-deprecated-kelvin" in fix_ids
-        assert "ha-entity-unavailable-zwave" in fix_ids
+        assert "ha-zwave-coordinator-unavailable" in fix_ids
+        assert "ha-zwave-device-unavailable" in fix_ids
+        assert "ha-integration-failure-generic" in fix_ids
+        assert "ha-automation-error-generic" in fix_ids
+        assert "ha-entity-unavailable-generic" in fix_ids
 
     def test_kelvin_fix_matches_expected_event(self) -> None:
         registry = KnownFixRegistry()
@@ -513,8 +517,8 @@ class TestRealFixFiles:
 
         event = _make_event(
             system="homeassistant",
-            event_type="automation_error",
-            payload={"error": "kelvin deprecated in favor of color_temp_kelvin"},
+            event_type="deprecation_warning",
+            payload={"message": "Got `kelvin` argument which is deprecated"},
         )
         result = registry.match(event)
 
