@@ -1,7 +1,7 @@
 {% extends "base_minimal.html" %}
 {% block title %}Setup Wizard — OasisAgent{% endblock %}
 {% block content %}
-<div class="bg-white rounded-lg shadow-md p-8 max-w-lg mx-auto" x-data="{ step: 1 }">
+<div class="bg-white rounded-lg shadow-md p-8 max-w-lg mx-auto" x-data="{ step: {{ step | default(1) }} }">
     <div class="text-center mb-6">
         <h1 class="text-2xl font-bold text-gray-900">Welcome to OasisAgent</h1>
         <p class="text-sm text-gray-500 mt-1">Let's get your agent configured</p>
