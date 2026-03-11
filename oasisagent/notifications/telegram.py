@@ -111,7 +111,8 @@ class TelegramChannel(InteractiveNotificationChannel):
             raise
 
     async def stop(self) -> None:
-        """Close the bot session."""
+        """Close the bot session. Tears down listener first if running."""
+        await self.stop_listener()
         if self._bot is not None:
             await self._bot.session.close()
             self._bot = None
