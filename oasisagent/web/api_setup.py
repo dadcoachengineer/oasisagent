@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import bcrypt
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from oasisagent.db.config_store import ConfigStore  # noqa: TC001 — used at runtime
+from oasisagent.ui.auth import hash_password
 
 router = APIRouter(prefix="/setup", tags=["setup"])
 
@@ -100,20 +100,18 @@ async def create_admin(request: Request, body: AdminCreate) -> dict[str, Any]:
     await _require_setup_mode(request)
     store = _get_store(request)
 
-    password_hash = bcrypt.hashpw(
-        body.password.encode(), bcrypt.gensalt(),
-    ).decode()
+    pw_hash = hash_password(body.password)
     user_id = await store.create_user(
         username=body.username,
-        password_hash=password_hash,
-        is_admin=True,
+        password_hash=pw_hash,
+        role="admin",
         totp_secret=body.totp_secret,
     )
 
     return {
         "id": user_id,
         "username": body.username,
-        "is_admin": True,
+        "role": "admin",
         "message": "Admin account created. Proceed to core services setup.",
     }
 

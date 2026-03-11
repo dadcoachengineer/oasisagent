@@ -1,9 +1,9 @@
 """FastAPI application factory — single process for web UI, API, and webhooks.
 
 ARCHITECTURE.md §17.1 defines the single-process design:
-- ``/`` — Web UI (placeholder until v0.3.1)
+- ``/ui/`` — Web admin UI (HTMX + Jinja2)
 - ``/api/v1/`` — REST API
-- ``/ingest/webhook/`` — Webhook receiver (placeholder until #51)
+- ``/ingest/webhook/`` — Webhook receiver
 - ``/healthz`` — Health check
 - ``/metrics`` — Prometheus metrics
 """
@@ -21,8 +21,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
+from oasisagent.ui.auth import derive_jwt_key
+from oasisagent.ui.router import ui_router
 from oasisagent.web.api import router as api_router
 from oasisagent.web.api_config import (
     connectors_router,
@@ -30,13 +34,18 @@ from oasisagent.web.api_config import (
     services_router,
 )
 from oasisagent.web.api_setup import router as setup_router
-from oasisagent.web.middleware import setup_guard_middleware
+from oasisagent.web.middleware import setup_guard_middleware, sliding_window_middleware
 from oasisagent.web.webhook import router as webhook_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
+
+# Template and static file paths
+_UI_DIR = Path(__file__).parent.parent / "ui"
+_TEMPLATES_DIR = _UI_DIR / "templates"
+_STATIC_DIR = _UI_DIR / "static"
 
 
 def _get_version() -> str:
@@ -96,8 +105,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     loop_task = asyncio.create_task(orchestrator.run_loop(), name="orchestrator-loop")
     app.state.orchestrator = orchestrator
     app.state.config_store = store
+    app.state.crypto = crypto
     app.state.db = db
     app.state.start_time = time.monotonic()
+    app.state.jwt_signing_key = derive_jwt_key(secret_key)
 
     yield
 
@@ -117,17 +128,29 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # --- Middleware ---
+    # --- Jinja2 templates ---
+    templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    app.state.templates = templates
+
+    # --- Middleware (outermost first) ---
     app.middleware("http")(setup_guard_middleware)
+    app.middleware("http")(sliding_window_middleware)
+
+    # --- Static files ---
+    app.mount("/ui/static", StaticFiles(directory=str(_STATIC_DIR)), name="ui-static")
 
     # --- Routes ---
 
+    # REST API
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(setup_router, prefix="/api/v1")
     app.include_router(connectors_router, prefix="/api/v1")
     app.include_router(services_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")
     app.include_router(webhook_router, prefix="/ingest/webhook")
+
+    # Web UI
+    app.include_router(ui_router, prefix="/ui")
 
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:
@@ -145,15 +168,9 @@ def create_app() -> FastAPI:
         body = generate_latest(REGISTRY)
         return Response(content=body, media_type=CONTENT_TYPE_LATEST)
 
-    @app.get("/", response_class=HTMLResponse, tags=["ui"])
-    async def index() -> str:
-        """Placeholder UI — replaced by HTMX dashboard in v0.3.1."""
-        return (
-            "<!DOCTYPE html><html><head><title>OasisAgent</title></head>"
-            "<body><h1>OasisAgent</h1>"
-            f"<p>Version {_get_version()}</p>"
-            "<p>Web admin UI coming in v0.3.1.</p>"
-            "</body></html>"
-        )
+    @app.get("/", tags=["ui"])
+    async def index() -> RedirectResponse:
+        """Redirect root to the web UI dashboard."""
+        return RedirectResponse(url="/ui/dashboard", status_code=303)
 
     return app

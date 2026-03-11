@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Approval Queue — OasisAgent{% endblock %}
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Approval Queue</h1>
+    <p class="text-sm text-gray-500">Actions awaiting operator approval</p>
+</div>
+
+{% if pending %}
+<div class="space-y-4">
+    {% for action in pending %}
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-900 font-medium">{{ action.operation }}</p>
+        <p class="text-xs text-gray-500">{{ action.entity_id }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+    <p class="text-gray-500">No pending approvals.</p>
+</div>
+{% endif %}
+{% endblock %}
