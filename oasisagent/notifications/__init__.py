@@ -5,6 +5,7 @@ from oasisagent.notifications.dispatcher import NotificationDispatcher
 from oasisagent.notifications.email import EmailNotificationChannel
 from oasisagent.notifications.interactive import InteractiveNotificationChannel
 from oasisagent.notifications.mqtt import MqttNotificationChannel
+from oasisagent.notifications.telegram import TelegramChannel
 from oasisagent.notifications.webhook import WebhookNotificationChannel
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "MqttNotificationChannel",
     "NotificationChannel",
     "NotificationDispatcher",
+    "TelegramChannel",
     "WebhookNotificationChannel",
 ]
