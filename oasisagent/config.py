@@ -479,6 +479,25 @@ class ProxmoxHandlerConfig(BaseModel):
     verify_ssl: bool = False
 
 
+class PortainerHandlerConfig(BaseModel):
+    """Portainer handler configuration.
+
+    Proxies Docker operations through the Portainer REST API, which
+    routes requests to a specific environment (endpoint) via
+    ``/api/endpoints/{endpoint_id}/docker/...``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://localhost:9443"
+    api_key: str = ""
+    endpoint_id: Annotated[int, Field(ge=1)] = 1
+    verify_ssl: bool = False
+    verify_timeout: Annotated[int, Field(ge=1)] = 30
+    verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
+
+
 class HandlersConfig(BaseModel):
     """All handler configurations."""
 
@@ -486,6 +505,7 @@ class HandlersConfig(BaseModel):
 
     homeassistant: HaHandlerConfig = Field(default_factory=HaHandlerConfig)
     docker: DockerHandlerConfig = Field(default_factory=DockerHandlerConfig)
+    portainer: PortainerHandlerConfig = Field(default_factory=PortainerHandlerConfig)
     proxmox: ProxmoxHandlerConfig = Field(default_factory=ProxmoxHandlerConfig)
 
 

@@ -31,6 +31,7 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    PortainerHandlerConfig,
     ProxmoxHandlerConfig,
     WebhookNotificationConfig,
     WebhookSourceConfig,
@@ -95,6 +96,10 @@ CORE_SERVICE_TYPES: dict[str, TypeMeta] = {
     ),
     "docker_handler": TypeMeta(
         model=DockerHandlerConfig,
+    ),
+    "portainer_handler": TypeMeta(
+        model=PortainerHandlerConfig,
+        secret_fields=frozenset({"api_key"}),
     ),
     "proxmox_handler": TypeMeta(
         model=ProxmoxHandlerConfig,
