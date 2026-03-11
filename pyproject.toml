@@ -31,6 +31,8 @@ dependencies = [
     "aiosmtplib>=3.0",
     "prometheus_client>=0.20",
     "influxdb-client[async]>=1.36",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.scripts]
@@ -43,6 +45,7 @@ dev = [
     "pytest-cov>=4.0",
     "python-dotenv>=1.0",
     "ruff>=0.4",
+    "httpx>=0.27",
 ]
 
 [tool.pytest.ini_options]
