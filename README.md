@@ -93,23 +93,46 @@ Multiple adapters produce the same canonical event model:
 
 All settings are passed as **environment variables**. The `config.yaml` baked into the Docker image uses `${VAR}` interpolation to read them at startup.
 
+**Required** — agent will not start without these:
+
 ```bash
-# .env — set these for your environment
 HA_TOKEN=your_ha_long_lived_access_token
-HA_URL=https://homeassistant.local:8123
-HA_WS_URL=wss://homeassistant.local/api/websocket
-MQTT_BROKER=mqtt://mqtt.local:1883
-MQTT_USER=oasisagent
 MQTT_PASS=your_mqtt_password
-TRIAGE_LLM_BASE_URL=https://openrouter.ai/api/v1
-TRIAGE_LLM_MODEL=meta-llama/llama-3.1-8b-instruct
-TRIAGE_LLM_API_KEY=your_openrouter_key
 REASONING_LLM_API_KEY=your_cloud_llm_key
 INFLUXDB_TOKEN=your_influxdb_token
+```
+
+**Optional** — sensible defaults are provided:
+
+```bash
+# Home Assistant
+HA_URL=http://localhost:8123
+HA_WS_URL=ws://localhost:8123/api/websocket
+
+# MQTT
+MQTT_BROKER=mqtt://localhost:1883
+MQTT_USER=oasisagent
+
+# LLM: T1 Triage (defaults to local Ollama)
+TRIAGE_LLM_BASE_URL=http://localhost:11434/v1
+TRIAGE_LLM_MODEL=qwen2.5:7b
+TRIAGE_LLM_API_KEY=not-needed
+TRIAGE_LLM_TIMEOUT=5
+
+# LLM: T2 Reasoning
+REASONING_LLM_BASE_URL=https://api.anthropic.com
+REASONING_LLM_MODEL=claude-sonnet-4-5-20250929
+
+# InfluxDB
+INFLUX_URL=http://localhost:8086
+INFLUX_ORG=myorg
+INFLUX_BUCKET=oasisagent
+
+# Safety — starts in dry-run mode (log decisions, don't execute)
 DRY_RUN=true
 ```
 
-Every variable has a sensible default (see [`.env.example`](.env.example)). Only `HA_TOKEN`, `MQTT_PASS`, `REASONING_LLM_API_KEY`, and `INFLUXDB_TOKEN` are required. For advanced config options (log patterns, guardrails tuning, circuit breaker thresholds), see [`config.example.yaml`](config.example.yaml).
+See [`.env.example`](.env.example) for the full reference. For advanced config options (log patterns, guardrails tuning, circuit breaker thresholds), see [`config.example.yaml`](config.example.yaml).
 
 ### Upcoming (v0.3.0+)
 
