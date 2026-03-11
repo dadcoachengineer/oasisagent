@@ -1,50 +1,73 @@
-# OasisAgent Docker Compose
+# OasisAgent Docker Compose / Swarm Stack
 #
-# Usage:
-#   docker compose up                        → agent only (default)
-#   docker compose --profile monitoring up   → agent + bundled InfluxDB
+# Works with both:
+#   docker compose up -d                              → single node
+#   docker stack deploy -c docker-compose.yml oasis   → Swarm cluster
 #
-# Prerequisites:
-#   - Copy config.example.yaml → config.yaml and customize
-#   - Copy .env.example → .env and fill in secrets
-#   - Create known_fixes/ directory with your T0 YAML files
+# Configuration:
+#   All settings are passed as environment variables. The config.yaml baked
+#   into the image uses ${VAR} interpolation to read these values at startup.
+#   Copy .env.example → .env and fill in your values, or set them in your
+#   Swarm orchestrator (Portainer, etc.).
+#
+# Bundled InfluxDB (optional, single-node only):
+#   docker compose --profile monitoring up -d
+
+version: "3.8"
 
 services:
-  oasisagent:
-    build: .
-    container_name: oasisagent
-    restart: unless-stopped
-    # .env provides secrets as environment variables.
-    # config.yaml references them via ${VAR} syntax (e.g., ${HA_TOKEN}, ${MQTT_PASS}).
-    # Docker Compose loads .env automatically — no manual export needed.
-    env_file:
-      - .env
-    # Override any config.yaml value via env vars. For example, to change the
-    # HA URL without editing config.yaml, add HA_URL=... to your .env file
-    # and reference it in config.yaml as: url: ${HA_URL:-http://localhost:8123}
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./known_fixes:/app/known_fixes:ro
-      # Uncomment for Docker handler (container monitoring + restart)
-      # - /var/run/docker.sock:/var/run/docker.sock:ro
-    # For home lab setups where HA, EMQX, and InfluxDB are on the local network,
-    # host networking is the simplest option — no port mapping or extra_hosts needed:
-    # network_mode: host
-    #
-    # Alternative: bridge networking with explicit host mappings:
-    # extra_hosts:
-    #   - "homeassistant:192.168.1.120"
-    #   - "emqx:192.168.1.120"
-    #   - "influxdb:192.168.1.120"
+  agent:
+    image: ghcr.io/dadcoachengineer/oasisagent:${OASIS_VERSION:-latest}
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 5
+        window: 120s
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
+    environment:
+      HA_TOKEN: ${HA_TOKEN}
+      HA_URL: ${HA_URL:-http://localhost:8123}
+      HA_WS_URL: ${HA_WS_URL:-ws://localhost:8123/api/websocket}
+      MQTT_BROKER: ${MQTT_BROKER:-mqtt://localhost:1883}
+      MQTT_USER: ${MQTT_USER:-oasisagent}
+      MQTT_PASS: ${MQTT_PASS}
+      TRIAGE_LLM_BASE_URL: ${TRIAGE_LLM_BASE_URL:-http://localhost:11434/v1}
+      TRIAGE_LLM_MODEL: ${TRIAGE_LLM_MODEL:-qwen2.5:7b}
+      TRIAGE_LLM_API_KEY: ${TRIAGE_LLM_API_KEY:-not-needed}
+      TRIAGE_LLM_TIMEOUT: ${TRIAGE_LLM_TIMEOUT:-5}
+      REASONING_LLM_API_KEY: ${REASONING_LLM_API_KEY}
+      REASONING_LLM_BASE_URL: ${REASONING_LLM_BASE_URL:-https://api.anthropic.com}
+      REASONING_LLM_MODEL: ${REASONING_LLM_MODEL:-claude-sonnet-4-5-20250929}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUX_URL: ${INFLUX_URL:-http://localhost:8086}
+      INFLUX_ORG: ${INFLUX_ORG:-myorg}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-oasisagent}
+      DRY_RUN: ${DRY_RUN:-true}
+    networks:
+      - oasis
+    ports:
+      - target: 9090
+        published: 9090
+        protocol: tcp
+        mode: ingress
 
-  # Bundled InfluxDB for audit logging.
-  # Activate with: docker compose --profile monitoring up
-  # If you already run InfluxDB elsewhere, skip this and point
-  # config.yaml → audit.influxdb.url at your existing instance.
+  # Bundled InfluxDB for audit logging (single-node only).
+  # Activate with: docker compose --profile monitoring up -d
+  # If you already run InfluxDB, skip this and set INFLUX_URL + INFLUXDB_TOKEN
+  # to point at your existing instance.
   influxdb:
     image: influxdb:2-alpine
     profiles: ["monitoring"]
-    container_name: oasisagent-influxdb
     restart: unless-stopped
     ports:
       - "8086:8086"
@@ -57,6 +80,13 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_INIT_ORG:-myorg}
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_INIT_BUCKET:-oasisagent}
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN}
+    networks:
+      - oasis
+
+networks:
+  oasis:
+    driver: overlay
+    attachable: true
 
 volumes:
   influxdb-data:
