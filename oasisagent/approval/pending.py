@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+class ApprovalDecision(StrEnum):
+    """Decision an operator makes on a pending action via an interactive channel."""
+
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class PendingStatus(StrEnum):
     """Lifecycle status of a pending action."""
 
