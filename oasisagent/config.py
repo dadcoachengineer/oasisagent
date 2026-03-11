@@ -249,6 +249,39 @@ class HaLogPollerConfig(BaseModel):
     dedup_window: Annotated[int, Field(ge=0)] = 300
 
 
+# -- Ingestion: Webhook Receiver --------------------------------------------
+
+
+class WebhookEventMapping(BaseModel):
+    """Maps a source event name to canonical event_type and severity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_event: str
+    event_type: str
+    severity: str = "warning"
+
+
+class WebhookSourceConfig(BaseModel):
+    """Per-source webhook receiver configuration.
+
+    Stored as a connector in SQLite. The connector ``name`` becomes the
+    URL slug: ``POST /ingest/webhook/{name}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    auth_mode: str = "none"  # "none" | "header_secret" | "api_key"
+    auth_header: str = ""
+    auth_secret: str = ""
+    system: str = ""
+    event_type_field: str = "eventType"
+    entity_id_field: str = ""
+    default_severity: str = "warning"
+    event_mappings: list[WebhookEventMapping] = Field(default_factory=list)
+
+
 # -- Ingestion (top-level) --------------------------------------------------
 
 
