@@ -1,8 +1,9 @@
 """Entry point for running OasisAgent as a module: python -m oasisagent.
 
 Sub-command routing:
-    oasisagent              Start the agent (default)
-    oasisagent run          Start the agent (explicit)
+    oasisagent              Start the web server (default)
+    oasisagent serve        Start the web server (explicit)
+    oasisagent run          Start the agent without web server (legacy)
     oasisagent queue ...    Approval queue CLI commands
 """
 
@@ -14,10 +15,16 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import uvicorn
 
 from oasisagent.cli import build_queue_parser, run_queue_command
 from oasisagent.config import ConfigError, load_config
 from oasisagent.orchestrator import Orchestrator
+
+if TYPE_CHECKING:
+    from oasisagent.config import OasisAgentConfig
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -28,7 +35,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("run", help="Start the agent (default)")
+    subparsers.add_parser("serve", help="Start the web server (default)")
+    subparsers.add_parser("run", help="Start the agent without web server (legacy)")
     build_queue_parser(subparsers)
 
     return parser
@@ -56,8 +64,44 @@ def _load_file_secrets() -> None:
                 )
 
 
+def _configure_logging(config: OasisAgentConfig) -> None:
+    """Set up logging from config. Suppresses noisy LiteLLM output."""
+    log_level = config.agent.log_level.value.upper()
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+    logging.getLogger().setLevel(log_level)
+
+    # Suppress noisy LiteLLM logs ("Provider List: ..." on every call)
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
+    import litellm
+    litellm.suppress_debug_info = True
+
+
+def _serve() -> None:
+    """Start the FastAPI web server with uvicorn."""
+    port = int(os.environ.get("OASIS_PORT", "8080"))
+    log_level = os.environ.get("OASIS_LOG_LEVEL", "info").lower()
+
+    uvicorn.run(
+        "oasisagent.web.app:create_app",
+        factory=True,
+        host="0.0.0.0",
+        port=port,
+        log_level=log_level,
+    )
+
+
 def _run_agent() -> None:
-    """Load config, create orchestrator, and run the event loop."""
+    """Load config, create orchestrator, and run the event loop (legacy).
+
+    This is the standalone mode without a web server. Kept for
+    debugging and backward compatibility. Production deployments
+    should use ``oasisagent serve`` (the default).
+    """
     _load_file_secrets()
 
     logging.basicConfig(
@@ -72,14 +116,7 @@ def _run_agent() -> None:
         logging.getLogger(__name__).error("Configuration error: %s", exc)
         sys.exit(1)
 
-    log_level = config.agent.log_level.value.upper()
-    logging.getLogger().setLevel(log_level)
-
-    # Suppress noisy LiteLLM logs ("Provider List: ..." on every call)
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
-    import litellm
-    litellm.suppress_debug_info = True
+    _configure_logging(config)
 
     orchestrator = Orchestrator(config)
     asyncio.run(orchestrator.run())
@@ -92,9 +129,11 @@ def main() -> None:
 
     if args.command == "queue":
         run_queue_command(args)
-    else:
-        # Default: run agent (no command or "run" command)
+    elif args.command == "run":
         _run_agent()
+    else:
+        # Default: serve (no command or "serve" command)
+        _serve()
 
 
 if __name__ == "__main__":

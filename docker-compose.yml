@@ -59,8 +59,8 @@ services:
     networks:
       - oasis
     ports:
-      - target: 9090
-        published: 9090
+      - target: 8080
+        published: 8080
         protocol: tcp
         mode: ingress
 
