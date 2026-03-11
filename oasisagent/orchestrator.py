@@ -36,6 +36,7 @@ from oasisagent.handlers.docker import DockerHandler
 from oasisagent.handlers.homeassistant import HomeAssistantHandler
 from oasisagent.ingestion.ha_log_poller import HaLogPollerAdapter
 from oasisagent.ingestion.ha_websocket import HaWebSocketAdapter
+from oasisagent.ingestion.http_poller import HttpPollerAdapter
 from oasisagent.ingestion.mqtt import MqttAdapter
 from oasisagent.llm.client import LLMClient
 from oasisagent.llm.reasoning import ReasoningService
@@ -274,6 +275,10 @@ class Orchestrator:
         if cfg.ingestion.ha_log_poller.enabled:
             self._adapters.append(
                 HaLogPollerAdapter(cfg.ingestion.ha_log_poller, self._queue)
+            )
+        if cfg.ingestion.http_poller_targets:
+            self._adapters.append(
+                HttpPollerAdapter(cfg.ingestion.http_poller_targets, self._queue)
             )
 
         # 15. Metrics server (Prometheus)

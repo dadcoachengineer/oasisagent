@@ -25,6 +25,7 @@ from oasisagent.config import (
     HaHandlerConfig,
     HaLogPollerConfig,
     HaWebSocketConfig,
+    HttpPollerTargetConfig,
     InfluxDbConfig,
     LlmEndpointConfig,
     LlmOptionsConfig,
@@ -64,6 +65,10 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "webhook_receiver": TypeMeta(
         model=WebhookSourceConfig,
         secret_fields=frozenset({"auth_secret"}),
+    ),
+    "http_poller": TypeMeta(
+        model=HttpPollerTargetConfig,
+        secret_fields=frozenset({"auth_password", "auth_value"}),
     ),
 }
 

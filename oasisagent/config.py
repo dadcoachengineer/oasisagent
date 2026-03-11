@@ -292,6 +292,66 @@ class WebhookSourceConfig(BaseModel):
         return self
 
 
+# -- Ingestion: HTTP Poller -------------------------------------------------
+
+
+class ExtractMapping(BaseModel):
+    """JMESPath extraction rules for ``mode=extract``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    event_type: str
+    severity_expr: str | None = None
+    payload_expr: str | None = None
+
+
+class ThresholdConfig(BaseModel):
+    """Threshold crossing rules for ``mode=threshold``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value_expr: str
+    warning: float
+    critical: float
+    entity_id: str
+    event_type: str = "threshold_exceeded"
+
+
+class HttpPollerTargetConfig(BaseModel):
+    """Per-target HTTP polling configuration.
+
+    Stored as a connector in SQLite. Supports three response modes:
+    ``health_check``, ``extract``, and ``threshold``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    url: str
+    system: str
+    mode: Literal["health_check", "extract", "threshold"] = "health_check"
+    interval: Annotated[int, Field(ge=5)] = 60
+    timeout: Annotated[int, Field(ge=1)] = 10
+    auth_mode: Literal["none", "basic", "token"] = "none"
+    auth_username: str = ""
+    auth_password: str = ""
+    auth_header: str = "Authorization"
+    auth_value: str = ""
+    extract: ExtractMapping | None = None
+    threshold: ThresholdConfig | None = None
+
+    @model_validator(mode="after")
+    def _check_mode_config(self) -> HttpPollerTargetConfig:
+        if self.mode == "extract" and self.extract is None:
+            msg = "extract config is required when mode is 'extract'"
+            raise ValueError(msg)
+        if self.mode == "threshold" and self.threshold is None:
+            msg = "threshold config is required when mode is 'threshold'"
+            raise ValueError(msg)
+        return self
+
+
 # -- Ingestion (top-level) --------------------------------------------------
 
 
@@ -303,6 +363,7 @@ class IngestionConfig(BaseModel):
     mqtt: MqttIngestionConfig = Field(default_factory=MqttIngestionConfig)
     ha_websocket: HaWebSocketConfig = Field(default_factory=HaWebSocketConfig)
     ha_log_poller: HaLogPollerConfig = Field(default_factory=HaLogPollerConfig)
+    http_poller_targets: list[HttpPollerTargetConfig] = Field(default_factory=list)
 
 
 # -- LLM -------------------------------------------------------------------

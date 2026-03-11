@@ -420,6 +420,11 @@ class ConfigStore:
         if "ha_log_poller" in by_type:
             kwargs["ha_log_poller"] = by_type["ha_log_poller"]["config"]
 
+        # HTTP poller supports multiple targets (one row per target)
+        poller_rows = [r for r in rows if r["type"] == "http_poller" and r["enabled"]]
+        if poller_rows:
+            kwargs["http_poller_targets"] = [r["config"] for r in poller_rows]
+
         return IngestionConfig.model_validate(kwargs) if kwargs else IngestionConfig()
 
     async def _load_llm(self) -> LlmConfig:
