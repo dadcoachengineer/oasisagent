@@ -5,6 +5,7 @@ Sub-command routing:
     oasisagent serve        Start the web server (explicit)
     oasisagent run          Start the agent without web server (legacy)
     oasisagent queue ...    Approval queue CLI commands
+    oasisagent config ...   Config import/export CLI commands
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import uvicorn
 
 from oasisagent.bootstrap import configure_logging, load_file_secrets
 from oasisagent.cli import build_queue_parser, run_queue_command
+from oasisagent.cli_config import build_config_parser, run_config_command
 from oasisagent.config import ConfigError, load_config
 from oasisagent.orchestrator import Orchestrator
 
@@ -35,6 +37,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("serve", help="Start the web server (default)")
     subparsers.add_parser("run", help="Start the agent without web server (legacy)")
     build_queue_parser(subparsers)
+    build_config_parser(subparsers)
 
     return parser
 
@@ -87,6 +90,8 @@ def main() -> None:
 
     if args.command == "queue":
         run_queue_command(args)
+    elif args.command == "config":
+        run_config_command(args)
     elif args.command == "run":
         _run_agent()
     else:
