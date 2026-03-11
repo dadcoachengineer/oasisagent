@@ -167,7 +167,7 @@ async def setup_totp_confirm(
     user_id = None
     if pending_token:
         try:
-            payload = pyjwt.decode(pending_token, signing_key, algorithms=[_JWT_ALGORITHM])
+            payload = pyjwt.decode(pending_token, signing_key, algorithms=[_JWT_ALGORITHM], options={"verify_sub": False})
             user_id = payload["sub"]
         except Exception:
             pass
