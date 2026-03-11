@@ -120,6 +120,11 @@ class ConfigStore:
 
     async def update_agent_config(self, updates: dict[str, Any]) -> AgentConfig:
         """Update agent config fields. Validates through Pydantic before saving."""
+        valid_fields = set(AgentConfig.model_fields)
+        if bad := set(updates) - valid_fields:
+            msg = f"Unknown fields: {bad}"
+            raise ValueError(msg)
+
         current = await self._load_agent_config()
         merged = {**current.model_dump(), **updates}
         validated = AgentConfig.model_validate(merged)
@@ -175,7 +180,7 @@ class ConfigStore:
             "updated_at": row["updated_at"],
         }
 
-    async def create_row(
+    async def _create_row(
         self, table: str, type_name: str, name: str, config: dict[str, Any],
         *, enabled: bool = True,
     ) -> int:
@@ -214,7 +219,7 @@ class ConfigStore:
         await self._db.commit()
         return cursor.lastrowid  # type: ignore[return-value]
 
-    async def update_row(
+    async def _update_row(
         self, table: str, row_id: int, updates: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Update a row in a typed table.
@@ -261,7 +266,7 @@ class ConfigStore:
         await self._db.commit()
         return await self._read_row(table, row_id)
 
-    async def delete_row(self, table: str, row_id: int) -> bool:
+    async def _delete_row(self, table: str, row_id: int) -> bool:
         """Delete a row by ID. Returns True if deleted, False if not found."""
         cursor = await self._db.execute(
             f"DELETE FROM {table} WHERE id = ?", (row_id,)
@@ -286,15 +291,15 @@ class ConfigStore:
         *, enabled: bool = True,
     ) -> int:
         """Create a connector."""
-        return await self.create_row("connectors", type_name, name, config, enabled=enabled)
+        return await self._create_row("connectors", type_name, name, config, enabled=enabled)
 
     async def update_connector(self, row_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
         """Update a connector."""
-        return await self.update_row("connectors", row_id, updates)
+        return await self._update_row("connectors", row_id, updates)
 
     async def delete_connector(self, row_id: int) -> bool:
         """Delete a connector."""
-        return await self.delete_row("connectors", row_id)
+        return await self._delete_row("connectors", row_id)
 
     async def list_services(self) -> list[dict[str, Any]]:
         """List all core services."""
@@ -309,15 +314,15 @@ class ConfigStore:
         *, enabled: bool = True,
     ) -> int:
         """Create a core service."""
-        return await self.create_row("core_services", type_name, name, config, enabled=enabled)
+        return await self._create_row("core_services", type_name, name, config, enabled=enabled)
 
     async def update_service(self, row_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
         """Update a core service."""
-        return await self.update_row("core_services", row_id, updates)
+        return await self._update_row("core_services", row_id, updates)
 
     async def delete_service(self, row_id: int) -> bool:
         """Delete a core service."""
-        return await self.delete_row("core_services", row_id)
+        return await self._delete_row("core_services", row_id)
 
     async def list_notifications(self) -> list[dict[str, Any]]:
         """List all notification channels."""
@@ -332,7 +337,7 @@ class ConfigStore:
         *, enabled: bool = True,
     ) -> int:
         """Create a notification channel."""
-        return await self.create_row(
+        return await self._create_row(
             "notification_channels", type_name, name, config, enabled=enabled,
         )
 
@@ -340,11 +345,11 @@ class ConfigStore:
         self, row_id: int, updates: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Update a notification channel."""
-        return await self.update_row("notification_channels", row_id, updates)
+        return await self._update_row("notification_channels", row_id, updates)
 
     async def delete_notification(self, row_id: int) -> bool:
         """Delete a notification channel."""
-        return await self.delete_row("notification_channels", row_id)
+        return await self._delete_row("notification_channels", row_id)
 
     # ------------------------------------------------------------------
     # Mask secrets for API responses

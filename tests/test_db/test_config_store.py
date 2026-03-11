@@ -251,3 +251,7 @@ class TestAgentConfig:
 
         config = await store.load_config()
         assert config.agent.name == "my-agent"
+
+    async def test_update_agent_config_rejects_unknown_fields(self, store: ConfigStore) -> None:
+        with pytest.raises(ValueError, match="Unknown fields"):
+            await store.update_agent_config({"bogus_field": "nope"})
