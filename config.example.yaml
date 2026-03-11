@@ -50,6 +50,70 @@ ingestion:
         event_type: auto
         severity: auto
 
+      # --- Zigbee2MQTT ---
+      - pattern: "zigbee2mqtt/bridge/state"
+        system: zigbee2mqtt
+        event_type: bridge_state
+        severity: auto
+      - pattern: "zigbee2mqtt/bridge/logging"
+        system: zigbee2mqtt
+        event_type: bridge_log
+        severity: auto
+      - pattern: "zigbee2mqtt/+/availability"
+        system: zigbee2mqtt
+        event_type: device_availability
+        severity: auto
+
+      # --- Frigate NVR ---
+      - pattern: "frigate/available"
+        system: frigate
+        event_type: service_availability
+        severity: auto
+      - pattern: "frigate/events"
+        system: frigate
+        event_type: detection_event
+        severity: info
+      - pattern: "frigate/stats"
+        system: frigate
+        event_type: stats
+        severity: auto
+
+      # --- ESPresense ---
+      - pattern: "espresense/rooms/+/status"
+        system: espresense
+        event_type: room_status
+        severity: auto
+      - pattern: "espresense/rooms/+/telemetry"
+        system: espresense
+        event_type: room_telemetry
+        severity: info
+
+      # --- Valetudo (robot vacuums) ---
+      - pattern: "valetudo/+/StatusStateAttribute/status"
+        system: valetudo
+        event_type: vacuum_status
+        severity: auto
+      - pattern: "valetudo/+/BatteryStateAttribute/level"
+        system: valetudo
+        event_type: vacuum_battery
+        severity: info
+      - pattern: "valetudo/+/events"
+        system: valetudo
+        event_type: vacuum_event
+        severity: auto
+
+      # --- WLED ---
+      - pattern: "wled/+/status"
+        system: wled
+        event_type: device_status
+        severity: auto
+
+      # --- BirdNET ---
+      - pattern: "birdnet/sightings"
+        system: birdnet
+        event_type: sighting
+        severity: info
+
   # Home Assistant WebSocket — real-time state changes and automation failures
   ha_websocket:
     enabled: true
@@ -188,6 +252,14 @@ handlers:
     # tls_key: /certs/key.pem
     verify_timeout: 30           # Seconds to wait after restart to verify container running
     verify_poll_interval: 2.0    # Seconds between verification polls
+
+  # Portainer — Docker management via Portainer REST API (Phase 3)
+  portainer:
+    enabled: false
+    url: https://localhost:9443
+    api_key: ${PORTAINER_API_KEY:-}
+    endpoint_id: 1               # Portainer environment ID
+    verify_ssl: false
 
   # Proxmox — VM/CT management (Phase 3)
   proxmox:
