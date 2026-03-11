@@ -369,6 +369,28 @@ class HttpPollerTargetConfig(BaseModel):
         return self
 
 
+# -- UniFi ------------------------------------------------------------------
+
+
+class UnifiAdapterConfig(BaseModel):
+    """UniFi Network controller polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://192.168.1.1"
+    username: str = ""
+    password: str = ""
+    site: str = "default"
+    verify_ssl: bool = False
+    is_udm: bool = True
+    poll_interval: int = 30
+    poll_alarms: bool = True
+    poll_health: bool = True
+    timeout: int = 10
+
+
+
 # -- Ingestion (top-level) --------------------------------------------------
 
 
@@ -381,6 +403,7 @@ class IngestionConfig(BaseModel):
     ha_websocket: HaWebSocketConfig = Field(default_factory=HaWebSocketConfig)
     ha_log_poller: HaLogPollerConfig = Field(default_factory=HaLogPollerConfig)
     http_poller_targets: list[HttpPollerTargetConfig] = Field(default_factory=list)
+    unifi: UnifiAdapterConfig = Field(default_factory=UnifiAdapterConfig)
 
 
 # -- LLM -------------------------------------------------------------------

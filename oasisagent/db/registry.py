@@ -34,6 +34,7 @@ from oasisagent.config import (
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
     TelegramNotificationConfig,
+    UnifiAdapterConfig,
     WebhookNotificationConfig,
     WebhookSourceConfig,
 )
@@ -71,6 +72,10 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "http_poller": TypeMeta(
         model=HttpPollerTargetConfig,
         secret_fields=frozenset({"auth_password", "auth_value"}),
+    ),
+    "unifi": TypeMeta(
+        model=UnifiAdapterConfig,
+        secret_fields=frozenset({"password"}),
     ),
 }
 

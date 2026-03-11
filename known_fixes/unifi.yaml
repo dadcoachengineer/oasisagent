@@ -1,0 +1,76 @@
+fixes:
+  - id: unifi-ap-disconnected
+    match:
+      system: unifi
+      event_type: device_disconnected
+    diagnosis: "UniFi device is offline — may need power cycle or firmware recovery"
+    action:
+      type: recommend
+      handler: unifi
+      operation: notify
+      details:
+        message: |
+          Device disconnected. Checklist:
+          1. Check PoE port on upstream switch
+          2. Verify physical cabling
+          3. Check switch port status in UniFi
+          4. If PoE switch port is up, device may need hardware replacement
+    risk_tier: recommend
+
+  - id: unifi-device-high-cpu
+    match:
+      system: unifi
+      event_type: device_high_cpu
+    diagnosis: "UniFi device CPU is critically high — may indicate firmware bug or excessive load"
+    action:
+      type: recommend
+      handler: unifi
+      operation: restart_device
+      details:
+        message: "Device CPU critical — recommend restart if sustained"
+    risk_tier: recommend
+
+  - id: unifi-device-high-memory
+    match:
+      system: unifi
+      event_type: device_high_mem
+    diagnosis: "UniFi device memory usage is critically high — possible memory leak or firmware bug"
+    action:
+      type: recommend
+      handler: unifi
+      operation: restart_device
+      details:
+        message: "Device memory critical — recommend restart"
+    risk_tier: recommend
+
+  - id: unifi-wan-failover
+    match:
+      system: unifi
+      event_type: wan_failover
+    diagnosis: "Primary WAN link failed over to secondary — ISP outage or modem issue"
+    action:
+      type: escalate
+      handler: unifi
+      operation: notify
+      details:
+        message: |
+          WAN failover detected. Steps:
+          1. Check ISP modem status and indicator lights
+          2. Verify modem to gateway cable connection
+          3. Test with direct connection to modem (bypass gateway)
+          4. Check ISP outage status page
+          5. If modem shows connected, check gateway WAN port
+    risk_tier: escalate
+
+  - id: unifi-alarm
+    match:
+      system: unifi
+      event_type: alarm
+    diagnosis: "UniFi alarm triggered — review the alarm details for impact assessment"
+    action:
+      type: recommend
+      handler: unifi
+      operation: notify
+      details:
+        message: "UniFi alarm detected — check controller for details"
+    risk_tier: recommend
