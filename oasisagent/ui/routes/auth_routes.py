@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import io
 from typing import TYPE_CHECKING
 
 import jwt as pyjwt
-import qrcode
-import qrcode.constants
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -22,6 +19,7 @@ from oasisagent.ui.auth import (
     generate_totp_secret,
     generate_totp_uri,
     hash_backup_codes,
+    make_qr_data_url,
     set_auth_cookies,
     verify_backup_code,
     verify_password,
@@ -49,17 +47,6 @@ def _get_store(request: Request) -> ConfigStore:
 
 def _get_signing_key(request: Request) -> str:
     return request.app.state.jwt_signing_key
-
-
-def _make_qr_data_url(uri: str) -> str:
-    """Generate a QR code as a data URL for embedding in HTML."""
-    qr = qrcode.make(uri, error_correction=qrcode.constants.ERROR_CORRECT_M)
-    buf = io.BytesIO()
-    qr.save(buf, format="PNG")
-    import base64
-
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    return f"data:image/png;base64,{b64}"
 
 
 # ---------------------------------------------------------------------------
@@ -161,9 +148,9 @@ async def login_submit(
 
         secret = generate_totp_secret()
         uri = generate_totp_uri(secret, user["username"])
-        qr_data_url = _make_qr_data_url(uri)
+        qr_data_url = make_qr_data_url(uri)
 
-        return templates.TemplateResponse(
+        response = templates.TemplateResponse(
             "auth/totp_enroll.html",
             {
                 "request": request,
@@ -176,6 +163,11 @@ async def login_submit(
                 "error": "",
             },
         )
+        response.set_cookie(
+            "oasis_pending_token", pending_token,
+            httponly=True, max_age=_PENDING_TOKEN_EXPIRY_SECONDS,
+        )
+        return response
 
     # Viewer with optional TOTP — or TOTP-enabled viewer — check TOTP if enrolled
     if has_totp:
@@ -283,12 +275,10 @@ async def login_totp_enroll_confirm(
     store = _get_store(request)
     signing_key = _get_signing_key(request)
 
-    # Get the pending token from the referer or a hidden field
-    # For security, we verify the TOTP code against the provided secret
     if not verify_totp(totp_secret, totp_code):
         # Re-render enrollment page with error
         uri = generate_totp_uri(totp_secret, "")
-        qr_data_url = _make_qr_data_url(uri)
+        qr_data_url = make_qr_data_url(uri)
         return templates.TemplateResponse(
             "auth/totp_enroll.html",
             {
@@ -302,25 +292,22 @@ async def login_totp_enroll_confirm(
             },
         )
 
-    # Find the user from the cookie or referer
-    # The user just authenticated with password, so we look for a pending cookie
+    # Identify the user from the pending token cookie
     pending_token = request.cookies.get("oasis_pending_token", "")
-    user = None
+    if not pending_token:
+        return templates.TemplateResponse(
+            "auth/login.html",
+            {"request": request, "error": "Session expired. Please sign in again.", "username": ""},
+            status_code=401,
+        )
 
-    if pending_token:
-        try:
-            payload = pyjwt.decode(pending_token, signing_key, algorithms=[_JWT_ALGORITHM])
-            user = await store.get_user_by_id(payload["sub"])
-        except Exception:
-            pass
-
-    # Fallback: find user by most recent unenrolled admin/operator
-    if not user:
-        users = await store.list_users()
-        for u in users:
-            if u["role"] in ("admin", "operator") and not u["totp_confirmed"]:
-                user = await store.get_user_by_id(u["id"])
-                break
+    try:
+        payload = pyjwt.decode(pending_token, signing_key, algorithms=[_JWT_ALGORITHM])
+        if payload.get("purpose") != "totp_enroll":
+            raise ValueError("Wrong token purpose")
+        user = await store.get_user_by_id(payload["sub"])
+    except Exception:
+        user = None
 
     if not user:
         return templates.TemplateResponse(
@@ -339,7 +326,7 @@ async def login_totp_enroll_confirm(
     })
 
     # Show backup codes page, then redirect to login
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         "auth/backup_codes.html",
         {
             "request": request,
@@ -347,6 +334,8 @@ async def login_totp_enroll_confirm(
             "next_url": "/ui/login",
         },
     )
+    response.delete_cookie("oasis_pending_token")
+    return response
 
 
 # ---------------------------------------------------------------------------

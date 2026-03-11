@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from fastapi.responses import JSONResponse, RedirectResponse
+
+from oasisagent.ui.auth import (
+    _COOKIE_NAME,
+    decode_token,
+    reissue_token,
+    set_auth_cookies,
+    should_reissue,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from fastapi import Request
     from starlette.responses import Response
+
+logger = logging.getLogger(__name__)
 
 # Paths that are always accessible, even during setup mode
 _SETUP_ALLOWED_PREFIXES = (
@@ -66,3 +77,37 @@ async def setup_guard_middleware(
         )
 
     return await call_next(request)
+
+
+async def sliding_window_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Reissue JWT tokens on authenticated requests to implement sliding window expiry.
+
+    Checks the current JWT cookie on each response. If the token is valid and
+    older than 5 minutes (but within the 4-hour max lifetime), reissues it with
+    a fresh 30-minute expiry window. This keeps active sessions alive while
+    enforcing the max lifetime.
+    """
+    response = await call_next(request)
+
+    token = request.cookies.get(_COOKIE_NAME)
+    if not token:
+        return response
+
+    signing_key = getattr(request.app.state, "jwt_signing_key", None)
+    if not signing_key:
+        return response
+
+    try:
+        payload = decode_token(token, signing_key)
+        if should_reissue(payload):
+            result = reissue_token(payload, signing_key)
+            if result:
+                new_token, new_csrf = result
+                set_auth_cookies(response, new_token, new_csrf)
+    except Exception:
+        pass  # Invalid/expired token — let the auth dependency handle it
+
+    return response

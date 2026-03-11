@@ -131,7 +131,7 @@ def create_access_token(
     csrf_token = secrets.token_hex(32)
     now = datetime.now(tz=UTC)
     payload = {
-        "sub": str(user_id),
+        "sub": user_id,
         "username": username,
         "role": role,
         "gen": jwt_generation,
@@ -139,7 +139,7 @@ def create_access_token(
         "iat": now.timestamp(),
         "exp": (now + timedelta(minutes=_JWT_INACTIVITY_MINUTES)).timestamp(),
     }
-    token = jwt.encode(payload, signing_key, algorithm=_JWT_ALGORITHM)
+    token = jwt.encode(payload, signing_key, algorithm=_JWT_ALGORITHM, headers={"typ": "JWT"})
     return token, csrf_token
 
 
@@ -150,7 +150,10 @@ def decode_token(token: str, signing_key: str) -> TokenPayload:
         HTTPException: On expired, invalid, or malformed tokens.
     """
     try:
-        payload = jwt.decode(token, signing_key, algorithms=[_JWT_ALGORITHM])
+        payload = jwt.decode(
+            token, signing_key, algorithms=[_JWT_ALGORITHM],
+            options={"verify_sub": False},
+        )
         return TokenPayload.model_validate(payload)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Session expired") from None
@@ -193,7 +196,7 @@ def reissue_token(
 
     csrf_token = secrets.token_hex(32)
     new_payload = {
-        "sub": str(payload.sub),
+        "sub": payload.sub,
         "username": payload.username,
         "role": payload.role,
         "gen": payload.gen,
@@ -201,7 +204,7 @@ def reissue_token(
         "iat": payload.iat,  # preserve original issue time
         "exp": (datetime.now(tz=UTC) + timedelta(minutes=_JWT_INACTIVITY_MINUTES)).timestamp(),
     }
-    token = jwt.encode(new_payload, signing_key, algorithm=_JWT_ALGORITHM)
+    token = jwt.encode(new_payload, signing_key, algorithm=_JWT_ALGORITHM, headers={"typ": "JWT"})
     return token, csrf_token
 
 
@@ -247,6 +250,21 @@ def generate_totp_uri(secret: str, username: str) -> str:
 def verify_totp(secret: str, code: str) -> bool:
     """Verify a TOTP code (±1 window for clock skew)."""
     return pyotp.TOTP(secret).verify(code, valid_window=1)
+
+
+def make_qr_data_url(uri: str) -> str:
+    """Generate a QR code as a base64 data URL for embedding in HTML."""
+    import base64
+    import io
+
+    import qrcode
+    import qrcode.constants
+
+    qr = qrcode.make(uri, error_correction=qrcode.constants.ERROR_CORRECT_M)
+    buf = io.BytesIO()
+    qr.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return f"data:image/png;base64,{b64}"
 
 
 # ---------------------------------------------------------------------------

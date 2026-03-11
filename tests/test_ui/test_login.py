@@ -83,6 +83,8 @@ class TestLoginPage:
         )
         assert resp.status_code == 200
         assert "Two-Factor Authentication" in resp.text or "Set Up" in resp.text
+        # M1 fix: pending_token cookie must be set for enrollment flow
+        assert "oasis_pending_token" in resp.cookies
 
     async def test_login_admin_with_totp_shows_verify(
         self, setup_client: AsyncClient,

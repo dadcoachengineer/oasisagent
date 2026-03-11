@@ -34,7 +34,7 @@ from oasisagent.web.api_config import (
     services_router,
 )
 from oasisagent.web.api_setup import router as setup_router
-from oasisagent.web.middleware import setup_guard_middleware
+from oasisagent.web.middleware import setup_guard_middleware, sliding_window_middleware
 from oasisagent.web.webhook import router as webhook_router
 
 if TYPE_CHECKING:
@@ -132,8 +132,9 @@ def create_app() -> FastAPI:
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     app.state.templates = templates
 
-    # --- Middleware ---
+    # --- Middleware (outermost first) ---
     app.middleware("http")(setup_guard_middleware)
+    app.middleware("http")(sliding_window_middleware)
 
     # --- Static files ---
     app.mount("/ui/static", StaticFiles(directory=str(_STATIC_DIR)), name="ui-static")

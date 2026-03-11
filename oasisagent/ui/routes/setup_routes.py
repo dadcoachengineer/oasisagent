@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import io
 from typing import TYPE_CHECKING
 
 import jwt as pyjwt
-import qrcode
-import qrcode.constants
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -18,6 +15,7 @@ from oasisagent.ui.auth import (
     generate_totp_uri,
     hash_backup_codes,
     hash_password,
+    make_qr_data_url,
     verify_totp,
 )
 
@@ -39,17 +37,6 @@ def _get_store(request: Request) -> ConfigStore:
 
 def _get_signing_key(request: Request) -> str:
     return request.app.state.jwt_signing_key
-
-
-def _make_qr_data_url(uri: str) -> str:
-    """Generate a QR code as a data URL for embedding in HTML."""
-    import base64
-
-    qr = qrcode.make(uri, error_correction=qrcode.constants.ERROR_CORRECT_M)
-    buf = io.BytesIO()
-    qr.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    return f"data:image/png;base64,{b64}"
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +102,7 @@ async def setup_create_admin(
     # Generate TOTP secret and redirect to enrollment page
     secret = generate_totp_secret()
     uri = generate_totp_uri(secret, username.strip())
-    qr_data_url = _make_qr_data_url(uri)
+    qr_data_url = make_qr_data_url(uri)
 
     # Create a pending token so we can identify the user during enrollment
     import time
@@ -158,7 +145,7 @@ async def setup_totp_confirm(
 
     if not verify_totp(totp_secret, totp_code):
         uri = generate_totp_uri(totp_secret, "admin")
-        qr_data_url = _make_qr_data_url(uri)
+        qr_data_url = make_qr_data_url(uri)
 
         pending_token = request.cookies.get("oasis_pending_token", "")
         return templates.TemplateResponse(
