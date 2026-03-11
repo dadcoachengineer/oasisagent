@@ -29,6 +29,8 @@ from oasisagent.web.api_config import (
     notifications_router,
     services_router,
 )
+from oasisagent.web.api_setup import router as setup_router
+from oasisagent.web.middleware import setup_guard_middleware
 from oasisagent.web.webhook import router as webhook_router
 
 if TYPE_CHECKING:
@@ -115,9 +117,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # --- Middleware ---
+    app.middleware("http")(setup_guard_middleware)
+
     # --- Routes ---
 
     app.include_router(api_router, prefix="/api/v1")
+    app.include_router(setup_router, prefix="/api/v1")
     app.include_router(connectors_router, prefix="/api/v1")
     app.include_router(services_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")

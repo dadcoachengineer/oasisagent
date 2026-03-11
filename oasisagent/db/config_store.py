@@ -457,3 +457,57 @@ class ConfigStore:
             kwargs["webhook"] = by_type["webhook"]["config"]
 
         return NotificationsConfig.model_validate(kwargs) if kwargs else NotificationsConfig()
+
+    # ------------------------------------------------------------------
+    # User management
+    # ------------------------------------------------------------------
+
+    async def has_admin(self) -> bool:
+        """Return True if at least one admin user exists."""
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM users WHERE is_admin = 1"
+        )
+        row = await cursor.fetchone()
+        return bool(row and row[0] > 0)
+
+    async def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        *,
+        is_admin: bool = False,
+        totp_secret: str | None = None,
+    ) -> int:
+        """Create a user row. Returns the new user ID.
+
+        The caller is responsible for hashing the password before calling
+        this method — the store does not handle plaintext passwords.
+
+        Raises:
+            sqlite3.IntegrityError: If the username already exists.
+        """
+        encrypted_totp = self._crypto.encrypt({"totp_secret": totp_secret}) if totp_secret else None
+        cursor = await self._db.execute(
+            "INSERT INTO users (username, password_hash, is_admin, totp_secret) "
+            "VALUES (?, ?, ?, ?)",
+            (username, password_hash, int(is_admin), encrypted_totp),
+        )
+        await self._db.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        """Look up a user by username. Returns None if not found."""
+        cursor = await self._db.execute(
+            "SELECT id, username, password_hash, is_admin, created_at FROM users WHERE username = ?",
+            (username,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "password_hash": row["password_hash"],
+            "is_admin": bool(row["is_admin"]),
+            "created_at": row["created_at"],
+        }
