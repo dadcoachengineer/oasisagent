@@ -36,6 +36,7 @@ from oasisagent.handlers.docker import DockerHandler
 from oasisagent.handlers.homeassistant import HomeAssistantHandler
 from oasisagent.ingestion.ha_log_poller import HaLogPollerAdapter
 from oasisagent.ingestion.ha_websocket import HaWebSocketAdapter
+from oasisagent.ingestion.http_poller import HttpPollerAdapter
 from oasisagent.ingestion.mqtt import MqttAdapter
 from oasisagent.llm.client import LLMClient
 from oasisagent.llm.reasoning import ReasoningService
@@ -48,6 +49,7 @@ from oasisagent.metrics import observe_processing_time as _observe_processing_ti
 from oasisagent.models import (
     ActionResult,
     ActionStatus,
+    Event,
     Notification,
     RecommendedAction,
     RiskTier,
@@ -104,20 +106,51 @@ class Orchestrator:
         self._actions_taken: int = 0
         self._errors: int = 0
 
+    def enqueue(self, event: Event) -> None:
+        """Submit an event for processing.
+
+        Raises:
+            RuntimeError: If the queue is not initialized.
+            asyncio.QueueFull: If the queue is at capacity.
+        """
+        if self._queue is None:
+            msg = "Orchestrator not started"
+            raise RuntimeError(msg)
+        self._queue.put_nowait(event)
+
     async def run(self) -> None:
         """Start all components and enter the main event loop.
 
-        Blocks until shutdown signal. This is the application entry point.
+        Blocks until shutdown signal. This is the standalone entry point
+        (``oasisagent run``). Under FastAPI, use ``start()`` / ``run_loop()``
+        / ``stop()`` instead — the lifespan manages the lifecycle.
+        """
+        await self.start()
+        self._install_signal_handlers()
+        try:
+            await self.run_loop()
+        finally:
+            await self.stop()
+
+    async def start(self) -> None:
+        """Build and start all components without entering the event loop.
+
+        Call this from FastAPI lifespan startup. Does NOT install signal
+        handlers — under uvicorn, signal handling belongs to uvicorn.
         """
         self._build_components()
         await self._start_components()
-        self._install_signal_handlers()
+        logger.info("OasisAgent started")
 
-        logger.info("OasisAgent started — entering event loop")
+    async def run_loop(self) -> None:
+        """Run the main event processing loop.
 
+        Blocks until ``_shutting_down`` is set or the task is cancelled.
+        Call this as a background task from FastAPI lifespan.
+        """
+        logger.info("Entering event loop")
         try:
             while not self._shutting_down:
-                # Sweep expired pending actions each tick
                 self._expire_stale_actions()
 
                 try:
@@ -131,15 +164,18 @@ class Orchestrator:
                 self._queue.task_done()
         except asyncio.CancelledError:
             pass
-        finally:
-            await self._shutdown()
 
-    async def shutdown(self) -> None:
-        """Graceful shutdown. Called by signal handler or externally."""
+    async def stop(self) -> None:
+        """Signal shutdown and tear down all components.
+
+        Safe to call multiple times. Called by FastAPI lifespan shutdown
+        or by ``run()`` in standalone mode.
+        """
         if self._shutting_down:
             return
         self._shutting_down = True
         logger.info("Shutdown requested")
+        await self._shutdown()
 
     # -------------------------------------------------------------------
     # Component construction
@@ -200,6 +236,16 @@ class Orchestrator:
         if cfg.handlers.docker.enabled:
             docker = DockerHandler(cfg.handlers.docker)
             self._handlers[docker.name()] = docker
+        if cfg.handlers.portainer.enabled:
+            from oasisagent.handlers.portainer import PortainerHandler
+
+            portainer = PortainerHandler(cfg.handlers.portainer)
+            self._handlers[portainer.name()] = portainer
+        if cfg.handlers.proxmox.enabled:
+            from oasisagent.handlers.proxmox import ProxmoxHandler
+
+            proxmox = ProxmoxHandler(cfg.handlers.proxmox)
+            self._handlers[proxmox.name()] = proxmox
 
         # 10. Audit writer
         self._audit = AuditWriter(cfg.audit)
@@ -239,6 +285,10 @@ class Orchestrator:
         if cfg.ingestion.ha_log_poller.enabled:
             self._adapters.append(
                 HaLogPollerAdapter(cfg.ingestion.ha_log_poller, self._queue)
+            )
+        if cfg.ingestion.http_poller_targets:
+            self._adapters.append(
+                HttpPollerAdapter(cfg.ingestion.http_poller_targets, self._queue)
             )
 
         # 15. Metrics server (Prometheus)

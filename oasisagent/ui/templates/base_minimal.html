@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}OasisAgent{% endblock %}</title>
+    <meta name="csrf-token" content="{{ csrf_token | default('') }}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="/ui/static/oasis.css">
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.body.addEventListener('htmx:configRequest', function(e) {
+                var csrf = document.querySelector('meta[name="csrf-token"]');
+                if (csrf && csrf.content) {
+                    e.detail.headers['X-CSRF-Token'] = csrf.content;
+                }
+            });
+        });
+    </script>
+</head>
+<body class="h-full flex items-center justify-center">
+    <div class="w-full max-w-md px-4">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

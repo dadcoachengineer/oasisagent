@@ -1,4 +1,4 @@
-"""Tests for Docker secret file loading (_load_file_secrets)."""
+"""Tests for Docker secret file loading (load_file_secrets)."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from unittest.mock import patch
 if TYPE_CHECKING:
     from pathlib import Path
 
-from oasisagent.__main__ import _load_file_secrets
+from oasisagent.bootstrap import load_file_secrets
 
 
 class TestLoadFileSecrets:
-    """Tests for _load_file_secrets()."""
+    """Tests for load_file_secrets()."""
 
     def test_reads_file_and_sets_env_var(self, tmp_path: Path):
         """_FILE env var loads file contents into the base env var."""
@@ -22,7 +22,7 @@ class TestLoadFileSecrets:
 
         env = {"MY_VAR_FILE": str(secret_file)}
         with patch.dict(os.environ, env, clear=True):
-            _load_file_secrets()
+            load_file_secrets()
             assert os.environ["MY_VAR"] == "s3cret_value"
 
     def test_strips_whitespace(self, tmp_path: Path):
@@ -32,14 +32,14 @@ class TestLoadFileSecrets:
 
         env = {"HA_TOKEN_FILE": str(secret_file)}
         with patch.dict(os.environ, env, clear=True):
-            _load_file_secrets()
+            load_file_secrets()
             assert os.environ["HA_TOKEN"] == "token123"
 
     def test_missing_file_skipped(self):
         """Non-existent file is silently skipped."""
         env = {"SOME_KEY_FILE": "/nonexistent/path/secret"}
         with patch.dict(os.environ, env, clear=True):
-            _load_file_secrets()
+            load_file_secrets()
             assert "SOME_KEY" not in os.environ
 
     def test_does_not_affect_non_file_vars(self, tmp_path: Path):
@@ -49,7 +49,7 @@ class TestLoadFileSecrets:
 
         env = {"NORMAL_VAR": "keep_me", "OTHER_FILE": str(secret_file)}
         with patch.dict(os.environ, env, clear=True):
-            _load_file_secrets()
+            load_file_secrets()
             assert os.environ["NORMAL_VAR"] == "keep_me"
             assert os.environ["OTHER"] == "value"
 
@@ -62,7 +62,7 @@ class TestLoadFileSecrets:
 
         env = {"A_FILE": str(f1), "B_FILE": str(f2)}
         with patch.dict(os.environ, env, clear=True):
-            _load_file_secrets()
+            load_file_secrets()
             assert os.environ["A"] == "val_a"
             assert os.environ["B"] == "val_b"
 
@@ -73,7 +73,7 @@ class TestLoadFileSecrets:
 
         env = {"MY_KEY": "original", "MY_KEY_FILE": str(secret_file)}
         with patch.dict(os.environ, env, clear=True):
-            _load_file_secrets()
+            load_file_secrets()
             assert os.environ["MY_KEY"] == "from_file"
 
     def test_empty_file_sets_empty_string(self, tmp_path: Path):
@@ -83,5 +83,5 @@ class TestLoadFileSecrets:
 
         env = {"TOKEN_FILE": str(secret_file)}
         with patch.dict(os.environ, env, clear=True):
-            _load_file_secrets()
+            load_file_secrets()
             assert os.environ["TOKEN"] == ""

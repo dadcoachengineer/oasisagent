@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}OasisAgent{% endblock %}</title>
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="/ui/static/oasis.css">
+    <script>
+        // Inject CSRF token into all HTMX requests
+        document.addEventListener('DOMContentLoaded', function() {
+            document.body.addEventListener('htmx:configRequest', function(e) {
+                var csrf = document.querySelector('meta[name="csrf-token"]');
+                if (csrf) {
+                    e.detail.headers['X-CSRF-Token'] = csrf.content;
+                }
+            });
+        });
+    </script>
+</head>
+<body class="h-full" x-data="{ sidebarOpen: true, toast: null }"
+      @toast-success.window="toast = { type: 'success', message: $event.detail.message }; setTimeout(() => toast = null, 4000)"
+      @toast-error.window="toast = { type: 'error', message: $event.detail.message }; setTimeout(() => toast = null, 6000)">
+
+{% block layout %}
+<div class="flex h-full">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0" x-show="sidebarOpen">
+        <div class="p-4 border-b border-gray-700">
+            <h1 class="text-lg font-bold text-white tracking-wide">OasisAgent</h1>
+            <p class="text-xs text-gray-500 mt-1">v{{ version }}</p>
+        </div>
+        <nav class="flex-1 p-3 space-y-1">
+            {% set nav_items = [
+                ("/ui/dashboard", "Dashboard", "viewer"),
+                ("/ui/connectors", "Connectors", "viewer"),
+                ("/ui/services", "Services", "viewer"),
+                ("/ui/notifications", "Notifications", "viewer"),
+                ("/ui/approvals", "Approvals", "operator"),
+                ("/ui/events", "Events", "viewer"),
+                ("/ui/known-fixes", "Known Fixes", "viewer"),
+                ("/ui/users", "Users", "admin"),
+            ] %}
+            {% for href, label, min_role in nav_items %}
+            {% if (min_role == "viewer") or
+                  (min_role == "operator" and current_user.role in ("admin", "operator")) or
+                  (min_role == "admin" and current_user.role == "admin") %}
+            <a href="{{ href }}"
+               class="block px-3 py-2 rounded text-sm {% if request.url.path.startswith(href) %}bg-gray-800 text-white{% else %}hover:bg-gray-800 hover:text-white{% endif %}">
+                {{ label }}
+            </a>
+            {% endif %}
+            {% endfor %}
+        </nav>
+        <div class="p-3 border-t border-gray-700 text-xs">
+            <div class="flex items-center justify-between">
+                <span>{{ current_user.username }}</span>
+                <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">{{ current_user.role }}</span>
+            </div>
+            <form method="post" action="/ui/logout" class="mt-2">
+                <button type="submit" class="text-gray-500 hover:text-gray-300 text-xs">Sign out</button>
+            </form>
+        </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="flex-1 overflow-auto">
+        <div class="p-6 max-w-7xl mx-auto">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+</div>
+{% endblock %}
+
+<!-- Toast notifications -->
+<div class="fixed top-4 right-4 z-50" x-show="toast" x-transition x-cloak>
+    <div class="rounded-lg shadow-lg px-4 py-3 text-sm text-white"
+         :class="toast?.type === 'error' ? 'bg-red-600' : 'bg-green-600'">
+        <span x-text="toast?.message"></span>
+    </div>
+</div>
+
+</body>
+</html>

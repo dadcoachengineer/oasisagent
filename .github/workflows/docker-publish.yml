@@ -2,6 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
+    branches: [develop]
     tags:
       - 'v*'
 
@@ -40,6 +41,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/develop' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
