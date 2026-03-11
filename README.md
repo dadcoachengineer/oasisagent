@@ -43,38 +43,16 @@ All enforced in deterministic code — never in LLM prompts.
 
 ## Quick Start
 
-### Docker (simplest — v0.3.0+)
-
-```bash
-docker run -d \
-  --name oasisagent \
-  -p 8080:8080 \
-  -v oasis_data:/data \
-  ghcr.io/dadcoachengineer/oasisagent:latest
-```
-
-Open `http://localhost:8080` → setup wizard guides you through admin account, MQTT/InfluxDB connections, and your first integration. No config files needed.
-
-### Docker Compose
-
 ```bash
 git clone https://github.com/dadcoachengineer/oasisagent.git
 cd oasisagent
+cp config.example.yaml config.yaml
+cp .env.example .env
+# Edit .env with your HA token, MQTT credentials, LLM keys, etc.
 docker compose up -d
-# Open http://localhost:8080
 ```
 
-### Docker Swarm / Portainer
-
-```bash
-docker service create \
-  --name oasisagent \
-  -p 8080:8080 \
-  --mount type=volume,source=oasis_data,target=/data \
-  ghcr.io/dadcoachengineer/oasisagent:latest
-```
-
-> See [Deployment Guide](#deployment-options) below for all options.
+The `config.yaml` uses `${VAR}` syntax to pull secrets from environment variables. Docker Compose loads them from the `.env` file automatically. See [Deployment Options](#deployment-options) for Docker Swarm, Portainer, and from-source setups.
 
 ### Prerequisites
 
@@ -112,7 +90,39 @@ Multiple adapters produce the same canonical event model:
 
 ## Configuration
 
-OasisAgent uses a **UI-first configuration model** *(v0.3.0+)*. Bootstrap with 4 environment variables, then configure everything else through the web admin UI.
+### Current Release (v0.2.x)
+
+OasisAgent uses a **`config.yaml` file** with `${VAR}` environment variable interpolation for secrets. This keeps your configuration in one readable file while keeping secrets out of version control.
+
+```yaml
+# config.yaml — secrets reference env vars, everything else is plain YAML
+ingestion:
+  mqtt:
+    broker: mqtt://mqtt.example.com:1883
+    username: ${MQTT_USER}
+    password: ${MQTT_PASS}
+  ha_websocket:
+    url: ws://homeassistant.local:8123/api/websocket
+    token: ${HA_TOKEN}
+
+llm:
+  triage:
+    base_url: ${TRIAGE_LLM_BASE_URL:-http://localhost:11434/v1}
+    model: ${TRIAGE_LLM_MODEL:-qwen2.5:7b}
+    api_key: ${TRIAGE_LLM_API_KEY:-not-needed}
+```
+
+**Setup**:
+
+1. Copy [`config.example.yaml`](config.example.yaml) → `config.yaml` — customize endpoints, topics, and options
+2. Copy [`.env.example`](.env.example) → `.env` — fill in tokens and API keys
+3. Docker Compose loads `.env` automatically; Docker Swarm uses secrets (see [Deployment Options](#deployment-options))
+
+See [`config.example.yaml`](config.example.yaml) for the full reference with every option documented.
+
+### Upcoming (v0.3.0+)
+
+v0.3.0 adds a **UI-first configuration model**. Bootstrap with 4 environment variables, then configure everything else through the web admin UI:
 
 | Layer | What | Where |
 |-------|------|-------|
@@ -120,57 +130,78 @@ OasisAgent uses a **UI-first configuration model** *(v0.3.0+)*. Bootstrap with 4
 | **Runtime** | Integrations, services, notifications, scanners | SQLite (secrets encrypted at rest) — managed via web UI |
 | **Content** | Known fixes, prompt templates | YAML files on disk |
 
-**Bootstrap env vars**:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OASIS_PORT` | `8080` | Listen port (web UI + API + webhooks) |
-| `OASIS_DATA_DIR` | `/data` | SQLite database + data directory |
-| `OASIS_SECRET_KEY` | *(auto-generated)* | Fernet key for encrypting secrets at rest |
-| `OASIS_LOG_LEVEL` | `info` | Logging level |
-
-On first run, a setup wizard walks you through admin account creation, core service connections (MQTT, InfluxDB), and your first integration.
-
-> **Current release (v0.2.x)**: Uses `config.yaml` with `${VAR}` env var interpolation. See [`config.example.yaml`](config.example.yaml). The v0.3.0 release adds config import/export to migrate existing YAML configs to the new model.
+Existing `config.yaml` files can be imported into the new model via `oasisagent config import config.yaml`.
 
 ## Deployment Options
 
 ### Option 1: Docker Compose
 
-Best for single-node setups.
+Best for single-node setups. The `.env` file supplies secrets to `config.yaml` automatically.
 
 ```bash
+cp config.example.yaml config.yaml   # customize for your environment
+cp .env.example .env                  # fill in HA_TOKEN, MQTT_PASS, etc.
 docker compose up -d
-# Open http://localhost:8080 → setup wizard
 ```
 
-### Option 2: Docker Swarm / Portainer
-
-Best for multi-node clusters. Only 4 env vars needed — everything else is configured through the web UI.
-
-| Variable | Required | Default |
-|----------|----------|---------|
-| `OASIS_PORT` | No | `8080` |
-| `OASIS_DATA_DIR` | No | `/data` |
-| `OASIS_SECRET_KEY` | No | *(auto-generated)* |
-| `OASIS_LOG_LEVEL` | No | `info` |
-
-For headless/automated deployments, seed the database from a config file:
+To include a bundled InfluxDB for audit logging:
 
 ```bash
-docker run --rm -v oasis_data:/data \
-  ghcr.io/dadcoachengineer/oasisagent:latest \
-  oasisagent config import seed.yaml
+docker compose --profile monitoring up -d
 ```
 
-### Option 3: From Source
+### Option 2: Docker Swarm
+
+Best for multi-node clusters. Uses Docker secrets for credentials and Docker configs for `config.yaml`.
+
+```bash
+# Create secrets
+echo "your_ha_token" | docker secret create oasis_ha_token -
+echo "your_mqtt_pass" | docker secret create oasis_mqtt_pass -
+echo "your_llm_key" | docker secret create oasis_reasoning_llm_key -
+echo "your_influxdb_token" | docker secret create oasis_influxdb_token -
+
+# Create config from your customized config.yaml
+docker config create oasis_config config.yaml
+
+# Deploy
+docker stack deploy -c docker-stack.yml oasisagent
+```
+
+See [`docker-stack.yml`](docker-stack.yml) for the full stack definition with resource limits and update policy.
+
+### Option 3: Portainer
+
+For Portainer-managed Swarm clusters where config is baked into the image. All settings are passed as environment variables — no config file mount needed.
+
+Set these env vars in the Portainer stack UI:
+
+| Variable | Required | Example |
+|----------|----------|---------|
+| `HA_TOKEN` | Yes | *(your HA long-lived access token)* |
+| `HA_URL` | No | `https://oasis.example.com` |
+| `HA_WS_URL` | No | `wss://oasis.example.com/api/websocket` |
+| `MQTT_BROKER` | No | `mqtt://mqtt.example.com:1883` |
+| `MQTT_USER` | No | `oasisagent` |
+| `MQTT_PASS` | Yes | *(your MQTT password)* |
+| `TRIAGE_LLM_BASE_URL` | No | `https://openrouter.ai/api/v1` |
+| `TRIAGE_LLM_MODEL` | No | `meta-llama/llama-3.1-8b-instruct` |
+| `TRIAGE_LLM_API_KEY` | No | *(your OpenRouter key)* |
+| `REASONING_LLM_API_KEY` | Yes | *(your cloud LLM API key)* |
+| `INFLUXDB_TOKEN` | Yes | *(your InfluxDB token)* |
+| `DRY_RUN` | No | `true` |
+
+See [`docker-stack.yml`](docker-stack.yml) for a base stack definition. For Portainer, create a stack from this file and override secrets with environment variables in the Portainer UI.
+
+### Option 4: From Source
 
 ```bash
 git clone https://github.com/dadcoachengineer/oasisagent.git
 cd oasisagent
 pip install -e ".[dev]"
+cp config.example.yaml config.yaml && cp .env.example .env
+# Edit .env, then:
 oasisagent
-# Open http://localhost:8080
 ```
 
 ## Observability
