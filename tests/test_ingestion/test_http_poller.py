@@ -71,6 +71,18 @@ class TestConfigValidation:
         assert target.threshold is not None
         assert target.threshold.critical == 95.0
 
+    def test_threshold_critical_must_exceed_warning(self) -> None:
+        with pytest.raises(ValidationError, match="critical.*must be greater than warning"):
+            _make_target(
+                mode="threshold",
+                threshold={
+                    "value_expr": "cpu",
+                    "warning": 95.0,
+                    "critical": 80.0,
+                    "entity_id": "node-1",
+                },
+            )
+
     def test_health_check_no_extra_config_needed(self) -> None:
         target = _make_target()
         assert target.mode == "health_check"
@@ -445,6 +457,14 @@ class TestAuthConfig:
     def test_no_auth_default(self) -> None:
         target = _make_target()
         assert target.auth_mode == "none"
+
+    def test_basic_auth_missing_credentials(self) -> None:
+        with pytest.raises(ValidationError, match="auth_username and auth_password required"):
+            _make_target(auth_mode="basic")
+
+    def test_token_auth_missing_value(self) -> None:
+        with pytest.raises(ValidationError, match="auth_value required"):
+            _make_target(auth_mode="token")
 
 
 # ---------------------------------------------------------------------------

@@ -317,6 +317,13 @@ class ThresholdConfig(BaseModel):
     entity_id: str
     event_type: str = "threshold_exceeded"
 
+    @model_validator(mode="after")
+    def _check_threshold_order(self) -> ThresholdConfig:
+        if self.critical <= self.warning:
+            msg = f"critical ({self.critical}) must be greater than warning ({self.warning})"
+            raise ValueError(msg)
+        return self
+
 
 class HttpPollerTargetConfig(BaseModel):
     """Per-target HTTP polling configuration.
@@ -348,6 +355,16 @@ class HttpPollerTargetConfig(BaseModel):
             raise ValueError(msg)
         if self.mode == "threshold" and self.threshold is None:
             msg = "threshold config is required when mode is 'threshold'"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _check_auth_credentials(self) -> HttpPollerTargetConfig:
+        if self.auth_mode == "basic" and not (self.auth_username and self.auth_password):
+            msg = "auth_username and auth_password required when auth_mode is 'basic'"
+            raise ValueError(msg)
+        if self.auth_mode == "token" and not self.auth_value:
+            msg = "auth_value required when auth_mode is 'token'"
             raise ValueError(msg)
         return self
 

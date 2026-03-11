@@ -192,7 +192,12 @@ class HttpPollerAdapter(IngestAdapter):
     def _handle_extract(
         self, target: HttpPollerTargetConfig, body: dict[str, Any],
     ) -> None:
-        """Apply JMESPath expressions to build an Event from the response."""
+        """Apply JMESPath expressions to build an Event from the response.
+
+        Unlike health_check and threshold modes, extract emits on every poll
+        (no dedup). This is intentional — extract targets typically serve
+        metrics or status endpoints where each response is a distinct data point.
+        """
         extract = target.extract
         if extract is None:
             return
