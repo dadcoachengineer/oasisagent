@@ -33,6 +33,8 @@ dependencies = [
     "influxdb-client[async]>=1.36",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "aiosqlite>=0.20",
+    "cryptography>=41.0",
 ]
 
 [project.scripts]
@@ -76,7 +78,7 @@ allow-star-arg-any = true
 suppress-none-returning = true
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["TCH002"]  # pytest must be imported at runtime for fixtures/parametrize
+"tests/**/*.py" = ["TCH002", "TC003"]  # pytest requires runtime imports for fixtures
 
 [tool.ruff.lint.isort]
 known-first-party = ["oasisagent"]
