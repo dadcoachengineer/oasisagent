@@ -14,12 +14,18 @@ services:
     build: .
     container_name: oasisagent
     restart: unless-stopped
+    # .env provides secrets as environment variables.
+    # config.yaml references them via ${VAR} syntax (e.g., ${HA_TOKEN}, ${MQTT_PASS}).
+    # Docker Compose loads .env automatically — no manual export needed.
     env_file:
       - .env
+    # Override any config.yaml value via env vars. For example, to change the
+    # HA URL without editing config.yaml, add HA_URL=... to your .env file
+    # and reference it in config.yaml as: url: ${HA_URL:-http://localhost:8123}
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./known_fixes:/app/known_fixes:ro
-      # Phase 2: Uncomment for Docker handler
+      # Uncomment for Docker handler (container monitoring + restart)
       # - /var/run/docker.sock:/var/run/docker.sock:ro
     # For home lab setups where HA, EMQX, and InfluxDB are on the local network,
     # host networking is the simplest option — no port mapping or extra_hosts needed:
