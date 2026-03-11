@@ -17,6 +17,10 @@
 
 OasisAgent bridges the gap between **monitoring** (you know something broke) and **resolution** (it's fixed). It sits alongside your existing stack — not inside it — and closes that gap automatically for known issues, and with intelligent diagnosis for novel ones.
 
+<p align="center">
+  <img src="docs/pipeline.svg" alt="OasisAgent data and analytics pipeline" width="800"/>
+</p>
+
 ## Three-Tier Reasoning
 
 | Tier | What it does | Latency | Cost |
