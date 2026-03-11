@@ -1,14 +1,12 @@
 """Run-loop tests for the HA log poller ingestion adapter.
 
-Tests start(), poll loop, HTTP error handling, and auth failure.
+Tests start(), WebSocket reconnection, and auth failure handling.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import aiohttp
+from unittest.mock import AsyncMock, patch
 
 from oasisagent.config import HaLogPollerConfig, LogPattern
 from oasisagent.engine.queue import EventQueue
@@ -39,44 +37,35 @@ def _make_config(**overrides: Any) -> HaLogPollerConfig:
 
 
 # ---------------------------------------------------------------------------
-# start() — one poll, one event
+# start() — one poll cycle, one event
 # ---------------------------------------------------------------------------
 
 
 class TestLogPollerStartOnePoll:
-    async def test_poll_produces_event(self) -> None:
-        """One successful poll with a matching log line produces an event."""
+    async def test_connect_and_poll_produces_event(self) -> None:
+        """One successful WebSocket poll with a matching entry produces an event."""
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(_make_config(), queue)
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.text = AsyncMock(
-            return_value="Error setting up integration 'zwave_js'\n"
-        )
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_response)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
         poll_count = 0
 
-        with patch("oasisagent.ingestion.ha_log_poller.aiohttp.ClientSession") as mock_cls:
-            mock_cls.return_value = mock_session
+        async def _fake_connect_and_poll() -> None:
+            nonlocal poll_count
+            poll_count += 1
+            # Simulate processing a matching entry
+            adapter._process_entries([{
+                "name": "homeassistant.components.zwave_js",
+                "message": "Error setting up integration 'zwave_js'",
+                "level": "ERROR",
+                "timestamp": 1741624926.123,
+                "count": 1,
+                "first_occurred": 1741624926.123,
+                "source": ["components/zwave_js/__init__.py", 100],
+            }])
+            adapter._stopping = True
 
-            original_poll = adapter._poll
-
-            async def _poll_then_stop() -> None:
-                nonlocal poll_count
-                await original_poll()
-                poll_count += 1
-                await adapter.stop()
-
-            adapter._poll = _poll_then_stop  # type: ignore[method-assign]
-            await adapter.start()
+        adapter._connect_and_poll = _fake_connect_and_poll  # type: ignore[method-assign]
+        await adapter.start()
 
         assert poll_count == 1
         assert queue.size == 1
@@ -91,63 +80,83 @@ class TestLogPollerStartOnePoll:
 
 
 class TestLogPollerAuthFailure:
-    async def test_401_stops_adapter(self) -> None:
-        """HTTP 401 is treated as fatal — adapter should return, not retry."""
+    async def test_auth_failure_stops_adapter(self) -> None:
+        """WebSocket auth failure is fatal — adapter should return, not retry."""
+        from oasisagent.ingestion.ha_log_poller import _AuthError
+
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(_make_config(), queue)
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=aiohttp.ClientResponseError(
-                request_info=MagicMock(),
-                history=(),
-                status=401,
-                message="Unauthorized",
-            )
-        )
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=False)
+        async def _fake_connect_and_poll() -> None:
+            raise _AuthError("bad token")
 
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=mock_response)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        adapter._connect_and_poll = _fake_connect_and_poll  # type: ignore[method-assign]
+        await adapter.start()
 
-        with patch("oasisagent.ingestion.ha_log_poller.aiohttp.ClientSession") as mock_cls:
-            mock_cls.return_value = mock_session
-            await adapter.start()
-
+        assert adapter._stopping is True
         assert await adapter.healthy() is False
 
 
 # ---------------------------------------------------------------------------
-# start() — transient HTTP error retries
+# start() — transient WebSocket error retries
 # ---------------------------------------------------------------------------
 
 
 class TestLogPollerTransientError:
-    async def test_500_retries_next_interval(self) -> None:
-        """HTTP 500 logs a warning and retries on next interval."""
+    async def test_connection_error_retries(self) -> None:
+        """WebSocket connection error triggers backoff and retry."""
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(_make_config(poll_interval=1), queue)
 
         call_count = 0
 
-        async def _poll_that_fails_twice() -> None:
+        async def _fake_connect_and_poll() -> None:
             nonlocal call_count
             call_count += 1
             if call_count >= 2:
-                await adapter.stop()
-            raise aiohttp.ClientResponseError(
-                request_info=MagicMock(),
-                history=(),
-                status=500,
-                message="Internal Server Error",
-            )
+                adapter._stopping = True
+            raise TimeoutError("connection timed out")
 
-        adapter._poll = _poll_that_fails_twice  # type: ignore[method-assign]
-        await adapter.start()
+        adapter._connect_and_poll = _fake_connect_and_poll  # type: ignore[method-assign]
+
+        # Patch backoff to avoid real delays
+        with patch.object(adapter._backoff, "wait", new_callable=AsyncMock):
+            await adapter.start()
 
         assert call_count >= 2
-        # stop() sets _connected = False
+        assert await adapter.healthy() is False
+
+    async def test_handshake_error_retries(self) -> None:
+        """WSServerHandshakeError triggers backoff and retry."""
+        import aiohttp
+
+        queue = EventQueue(max_size=10)
+        adapter = HaLogPollerAdapter(_make_config(poll_interval=1), queue)
+
+        call_count = 0
+
+        async def _fake_connect_and_poll() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                adapter._stopping = True
+            raise aiohttp.WSServerHandshakeError(
+                request_info=aiohttp.RequestInfo(
+                    url="ws://localhost:8123/api/websocket",
+                    method="GET",
+                    headers={},  # type: ignore[arg-type]
+                    real_url="ws://localhost:8123/api/websocket",
+                ),
+                history=(),
+                status=403,
+                message="Forbidden",
+                headers={},  # type: ignore[arg-type]
+            )
+
+        adapter._connect_and_poll = _fake_connect_and_poll  # type: ignore[method-assign]
+
+        with patch.object(adapter._backoff, "wait", new_callable=AsyncMock):
+            await adapter.start()
+
+        assert call_count >= 2
         assert await adapter.healthy() is False
