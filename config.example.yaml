@@ -33,7 +33,7 @@ ingestion:
   # MQTT subscriber — connects to any MQTT broker (EMQX, Mosquitto, etc.)
   mqtt:
     enabled: true
-    broker: mqtt://localhost:1883
+    broker: ${MQTT_BROKER_URL:-mqtt://localhost:1883}
     username: ${MQTT_USER}
     password: ${MQTT_PASS}
     client_id: oasis-agent
@@ -53,7 +53,7 @@ ingestion:
   # Home Assistant WebSocket — real-time state changes and automation failures
   ha_websocket:
     enabled: true
-    url: ws://localhost:8123/api/websocket
+    url: ${HA_WS_URL:-ws://localhost:8123/api/websocket}
     token: ${HA_TOKEN}
     subscriptions:
       # State change monitoring — fires when entities transition to bad states
@@ -74,7 +74,7 @@ ingestion:
   # Home Assistant Log Poller — pattern-match against HA error logs
   ha_log_poller:
     enabled: true
-    url: http://localhost:8123
+    url: ${HA_URL:-http://localhost:8123}
     token: ${HA_TOKEN}
     poll_interval: 30            # Seconds between polls
     dedup_window: 300            # Same error within this window = one event
@@ -137,7 +137,7 @@ llm:
   #   api_key: ${TRIAGE_LLM_API_KEY}
   #   timeout: 15
   triage:
-    base_url: http://localhost:11434/v1    # Ollama default
+    base_url: ${OLLAMA_BASE_URL:-http://localhost:11434/v1}    # Ollama default
     model: qwen2.5:7b
     api_key: ${TRIAGE_LLM_API_KEY:-not-needed}
     timeout: 5                   # Seconds — local models should respond fast
@@ -170,7 +170,7 @@ handlers:
   # Home Assistant — automation errors, state monitoring, integration restarts
   homeassistant:
     enabled: true
-    url: http://localhost:8123
+    url: ${HA_URL:-http://localhost:8123}
     token: ${HA_TOKEN}
     verify_timeout: 30           # Seconds to wait after action to verify effect
     verify_poll_interval: 2.0    # Seconds between verification polls
@@ -192,7 +192,7 @@ handlers:
   # Proxmox — VM/CT management (Phase 3)
   proxmox:
     enabled: false
-    url: https://localhost:8006
+    url: ${PROXMOX_URL:-https://localhost:8006}
     user: ${PROXMOX_USER}
     token_name: ${PROXMOX_TOKEN_NAME}
     token_value: ${PROXMOX_TOKEN_VALUE}
@@ -237,7 +237,7 @@ guardrails:
 audit:
   influxdb:
     enabled: true
-    url: http://localhost:8086
+    url: ${INFLUXDB_URL:-http://localhost:8086}
     token: ${INFLUXDB_TOKEN}
     org: myorg
     bucket: oasisagent
@@ -253,7 +253,7 @@ notifications:
   # MQTT notifications — publishes to a configurable topic
   mqtt:
     enabled: true
-    broker: mqtt://localhost:1883
+    broker: ${MQTT_BROKER_URL:-mqtt://localhost:1883}
     topic_prefix: oasis/notifications
     username: ${MQTT_USER}
     password: ${MQTT_PASS}
@@ -261,7 +261,7 @@ notifications:
   # Email notifications (SMTP)
   email:
     enabled: false
-    smtp_host: localhost
+    smtp_host: ${SMTP_HOST:-localhost}
     smtp_port: 587
     username: "${SMTP_USER:-}"
     password: "${SMTP_PASS:-}"
