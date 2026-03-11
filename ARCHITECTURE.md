@@ -202,21 +202,25 @@ class IngestAdapter(ABC):
   ```
 
 #### Home Assistant Log Poller
-- Polls HA's `/api/error_log` endpoint or reads log file directly
-- Pattern-matches log entries against known error signatures
-- Deduplicates based on error fingerprint + time window
+- Connects to HA via WebSocket and sends the `system_log/list` command to fetch structured log entries (the REST `/api/error_log` endpoint was removed in newer HA versions)
+- Authenticates using the same long-lived access token as the HA WebSocket adapter
+- Receives structured JSON entries with `name`, `message`, `level`, `timestamp`, `count`, `first_occurred`, and `source` fields
+- Pattern-matches entries against configured regex patterns (matched against `"component: message"` combined text)
+- Severity is derived from HA's native log level (`CRITICAL`, `ERROR`, `WARNING`, `INFO`, `DEBUG`), not the pattern's configured severity
+- Deduplicates based on error fingerprint (event_type + component + message) within a configurable time window
+- Reconnects with exponential backoff on connection failures; auth failures are fatal (adapter stops)
 - Config:
   ```yaml
   ingestion:
     ha_log_poller:
       enabled: true
-      url: http://192.168.1.120:8123
+      url: http://192.168.1.120:8123   # http:// → ws://, https:// → wss:// automatically
       token: ${HA_TOKEN}
-      poll_interval: 30          # seconds
+      poll_interval: 30          # seconds between system_log/list requests
       patterns:
         - regex: "Error setting up integration '(.+)'"
           event_type: integration_failure
-          severity: error
+          severity: error         # NOTE: severity from HA log level takes precedence
         - regex: "(.+) is unavailable"
           event_type: state_unavailable
           severity: warning
@@ -533,7 +537,7 @@ Operations:
 - `call_service` — Generic HA service call (with guardrail validation)
 - `get_entity_state` — Read entity state for context
 - `get_automation_config` — Read automation YAML for diagnosis context
-- `get_error_log` — Fetch recent error log entries
+- `get_error_log` — Fetch recent error log entries via WebSocket `system_log/list`
 
 Config:
 ```yaml
