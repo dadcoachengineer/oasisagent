@@ -39,7 +39,7 @@ async def client(tmp_path: Path) -> AsyncClient:
     store = ConfigStore(db, crypto)
 
     # Create an admin user so the setup guard middleware allows requests through
-    await store.create_user("admin", "hashed_password", is_admin=True)
+    await store.create_user("admin", "hashed_password", role="admin")
 
     app = create_app()
     app.state.orchestrator = _mock_orchestrator()

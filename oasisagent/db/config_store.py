@@ -504,7 +504,7 @@ class ConfigStore:
         if self._has_admin_cache:
             return True
         cursor = await self._db.execute(
-            "SELECT COUNT(*) FROM users WHERE is_admin = 1"
+            "SELECT COUNT(*) FROM users WHERE role = 'admin'"
         )
         row = await cursor.fetchone()
         result = bool(row and row[0] > 0)
@@ -517,8 +517,10 @@ class ConfigStore:
         username: str,
         password_hash: str,
         *,
-        is_admin: bool = False,
+        role: str = "viewer",
         totp_secret: str | None = None,
+        totp_confirmed: bool = False,
+        backup_codes_hash: list[str] | None = None,
     ) -> int:
         """Create a user row. Returns the new user ID.
 
@@ -527,12 +529,35 @@ class ConfigStore:
 
         Raises:
             sqlite3.IntegrityError: If the username already exists.
+            ValueError: If the role is invalid.
         """
-        encrypted_totp = self._crypto.encrypt({"totp_secret": totp_secret}) if totp_secret else None
+        from oasisagent.ui.auth import VALID_ROLES
+
+        if role not in VALID_ROLES:
+            msg = f"Invalid role: {role}. Must be one of {VALID_ROLES}"
+            raise ValueError(msg)
+
+        encrypted_totp = (
+            self._crypto.encrypt({"totp_secret": totp_secret})
+            if totp_secret
+            else None
+        )
+        backup_json = (
+            json.dumps(backup_codes_hash)
+            if backup_codes_hash
+            else None
+        )
         cursor = await self._db.execute(
-            "INSERT INTO users (username, password_hash, is_admin, totp_secret) "
-            "VALUES (?, ?, ?, ?)",
-            (username, password_hash, int(is_admin), encrypted_totp),
+            "INSERT INTO users (username, password_hash, role, totp_secret, "
+            "totp_confirmed, backup_codes_hash) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                username,
+                password_hash,
+                role,
+                encrypted_totp,
+                int(totp_confirmed),
+                backup_json,
+            ),
         )
         await self._commit()
         return cursor.lastrowid  # type: ignore[return-value]
@@ -540,7 +565,9 @@ class ConfigStore:
     async def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         """Look up a user by username. Returns None if not found."""
         cursor = await self._db.execute(
-            "SELECT id, username, password_hash, is_admin, created_at "
+            "SELECT id, username, password_hash, role, jwt_generation, "
+            "totp_secret, totp_confirmed, backup_codes_hash, "
+            "failed_attempts, locked_until, created_at "
             "FROM users WHERE username = ?",
             (username,),
         )
@@ -551,6 +578,180 @@ class ConfigStore:
             "id": row["id"],
             "username": row["username"],
             "password_hash": row["password_hash"],
-            "is_admin": bool(row["is_admin"]),
+            "role": row["role"],
+            "jwt_generation": row["jwt_generation"],
+            "totp_secret": row["totp_secret"],
+            "totp_confirmed": bool(row["totp_confirmed"]),
+            "backup_codes_hash": (
+                json.loads(row["backup_codes_hash"])
+                if row["backup_codes_hash"]
+                else []
+            ),
+            "failed_attempts": row["failed_attempts"],
+            "locked_until": row["locked_until"],
             "created_at": row["created_at"],
         }
+
+    async def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
+        """Look up a user by ID. Returns None if not found."""
+        cursor = await self._db.execute(
+            "SELECT id, username, password_hash, role, jwt_generation, "
+            "totp_secret, totp_confirmed, backup_codes_hash, "
+            "failed_attempts, locked_until, created_at "
+            "FROM users WHERE id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "password_hash": row["password_hash"],
+            "role": row["role"],
+            "jwt_generation": row["jwt_generation"],
+            "totp_secret": row["totp_secret"],
+            "totp_confirmed": bool(row["totp_confirmed"]),
+            "backup_codes_hash": (
+                json.loads(row["backup_codes_hash"])
+                if row["backup_codes_hash"]
+                else []
+            ),
+            "failed_attempts": row["failed_attempts"],
+            "locked_until": row["locked_until"],
+            "created_at": row["created_at"],
+        }
+
+    async def list_users(self) -> list[dict[str, Any]]:
+        """List all users (without password hashes or TOTP secrets)."""
+        cursor = await self._db.execute(
+            "SELECT id, username, role, totp_confirmed, created_at FROM users"
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "username": row["username"],
+                "role": row["role"],
+                "totp_confirmed": bool(row["totp_confirmed"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    async def update_user(
+        self, user_id: int, updates: dict[str, Any],
+    ) -> bool:
+        """Update user fields. Returns True if the user was found and updated.
+
+        Supported fields: username, password_hash, role, jwt_generation,
+        totp_secret, totp_confirmed, backup_codes_hash, failed_attempts,
+        locked_until.
+        """
+        valid_fields = {
+            "username", "password_hash", "role", "jwt_generation",
+            "totp_secret", "totp_confirmed", "backup_codes_hash",
+            "failed_attempts", "locked_until",
+        }
+        if bad := set(updates) - valid_fields:
+            msg = f"Unknown user fields: {bad}"
+            raise ValueError(msg)
+
+        if not updates:
+            return True
+
+        # Encrypt TOTP secret if being updated
+        if "totp_secret" in updates:
+            secret = updates["totp_secret"]
+            updates["totp_secret"] = (
+                self._crypto.encrypt({"totp_secret": secret})
+                if secret
+                else None
+            )
+
+        # Serialize backup codes hash list
+        if "backup_codes_hash" in updates:
+            codes = updates["backup_codes_hash"]
+            updates["backup_codes_hash"] = json.dumps(codes) if codes else None
+
+        sets = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values())
+        values.append(user_id)
+
+        cursor = await self._db.execute(
+            f"UPDATE users SET {sets}, updated_at = datetime('now') WHERE id = ?",
+            values,
+        )
+        await self._commit()
+        return cursor.rowcount > 0
+
+    async def delete_user(self, user_id: int) -> bool:
+        """Delete a user by ID. Refuses to delete the last admin.
+
+        Returns True if deleted, False if not found.
+
+        Raises:
+            ValueError: If deleting would remove the last admin.
+        """
+        # Check if this is the last admin
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return False
+
+        if user["role"] == "admin":
+            cursor = await self._db.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin'"
+            )
+            row = await cursor.fetchone()
+            if row and row[0] <= 1:
+                msg = "Cannot delete the last admin user"
+                raise ValueError(msg)
+
+        cursor = await self._db.execute(
+            "DELETE FROM users WHERE id = ?", (user_id,)
+        )
+        await self._commit()
+        return cursor.rowcount > 0
+
+    async def get_user_totp_secret(self, user_id: int) -> str | None:
+        """Decrypt and return the TOTP secret for a user."""
+        cursor = await self._db.execute(
+            "SELECT totp_secret FROM users WHERE id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        if not row or not row["totp_secret"]:
+            return None
+        decrypted = self._crypto.decrypt(row["totp_secret"])
+        return decrypted.get("totp_secret")
+
+    async def increment_failed_attempts(self, user_id: int) -> int:
+        """Increment failed login attempts and return the new count."""
+        await self._db.execute(
+            "UPDATE users SET failed_attempts = failed_attempts + 1, "
+            "updated_at = datetime('now') WHERE id = ?",
+            (user_id,),
+        )
+        await self._commit()
+        cursor = await self._db.execute(
+            "SELECT failed_attempts FROM users WHERE id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row["failed_attempts"] if row else 0
+
+    async def reset_failed_attempts(self, user_id: int) -> None:
+        """Reset failed login attempts and clear lockout."""
+        await self._db.execute(
+            "UPDATE users SET failed_attempts = 0, locked_until = NULL, "
+            "updated_at = datetime('now') WHERE id = ?",
+            (user_id,),
+        )
+        await self._commit()
+
+    async def set_lockout(self, user_id: int, locked_until: str) -> None:
+        """Set the account lockout timestamp."""
+        await self._db.execute(
+            "UPDATE users SET locked_until = ?, "
+            "updated_at = datetime('now') WHERE id = ?",
+            (locked_until, user_id),
+        )
+        await self._commit()

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Known Fixes — OasisAgent{% endblock %}
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Known Fixes</h1>
+    <p class="text-sm text-gray-500">{{ fixes | length }} fixes loaded from YAML registry</p>
+</div>
+
+{% if fixes %}
+<div class="space-y-3">
+    {% for fix in fixes %}
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="flex items-center justify-between mb-2">
+            <span class="font-mono text-sm font-medium text-gray-900">{{ fix.id }}</span>
+            <span class="px-2 py-0.5 rounded text-xs
+                {% if fix.risk_tier == 'escalate' %}bg-red-100 text-red-700
+                {% elif fix.risk_tier == 'recommend' %}bg-amber-100 text-amber-700
+                {% else %}bg-green-100 text-green-700{% endif %}">
+                {{ fix.risk_tier }}
+            </span>
+        </div>
+        <p class="text-sm text-gray-600">{{ fix.diagnosis }}</p>
+        {% if fix.match %}
+        <div class="mt-2 text-xs text-gray-400">
+            Match: system={{ fix.match.system | default("*") }}
+            {% if fix.match.event_type %}, event_type={{ fix.match.event_type }}{% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+    <p class="text-gray-500">No known fixes loaded. Check known_fixes_dir in agent config.</p>
+</div>
+{% endif %}
+{% endblock %}

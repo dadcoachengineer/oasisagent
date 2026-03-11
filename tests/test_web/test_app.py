@@ -93,16 +93,11 @@ class TestWebhookNoStore:
 # ---------------------------------------------------------------------------
 
 
-class TestUIPlaceholder:
-    async def test_index_returns_html(self, client: AsyncClient) -> None:
-        resp = await client.get("/")
-        assert resp.status_code == 200
-        assert "text/html" in resp.headers["content-type"]
-        assert "OasisAgent" in resp.text
-
-    async def test_index_mentions_version(self, client: AsyncClient) -> None:
-        resp = await client.get("/")
-        assert _get_version() in resp.text
+class TestRootRedirect:
+    async def test_root_redirects_to_dashboard(self, client: AsyncClient) -> None:
+        resp = await client.get("/", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/ui/dashboard"
 
 
 # ---------------------------------------------------------------------------

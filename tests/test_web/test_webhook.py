@@ -36,7 +36,7 @@ async def webhook_client(tmp_path: Path) -> AsyncClient:
     store = ConfigStore(db, crypto)
 
     # Create admin so middleware allows requests through
-    await store.create_user("admin", "hashed", is_admin=True)
+    await store.create_user("admin", "hashed", role="admin")
 
     app = create_app()
     app.state.config_store = store

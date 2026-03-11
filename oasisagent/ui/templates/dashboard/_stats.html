@@ -1,0 +1,45 @@
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">Events Processed</p>
+        <p class="text-2xl font-bold text-gray-900">{{ stats.events_processed | default(0) }}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">Actions Taken</p>
+        <p class="text-2xl font-bold text-gray-900">{{ stats.actions_taken | default(0) }}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">Errors</p>
+        <p class="text-2xl font-bold {{ 'text-red-600' if stats.errors else 'text-gray-900' }}">
+            {{ stats.errors | default(0) }}
+        </p>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">Queue Depth</p>
+        <p class="text-2xl font-bold text-gray-900">{{ stats.queue_depth | default(0) }}</p>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500 mb-2">Pending Approvals</p>
+        <p class="text-2xl font-bold {{ 'text-amber-600' if stats.pending_approvals else 'text-gray-900' }}">
+            {{ stats.pending_approvals | default(0) }}
+        </p>
+        {% if stats.pending_approvals %}
+        <a href="/ui/approvals" class="text-xs text-blue-600 hover:underline mt-1 inline-block">View queue</a>
+        {% endif %}
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500 mb-2">Circuit Breaker</p>
+        <p class="text-sm font-medium
+            {% if stats.circuit_breaker_state == 'open' %}text-red-600
+            {% elif stats.circuit_breaker_state == 'half_open' %}text-amber-600
+            {% else %}text-green-600{% endif %}">
+            {{ stats.circuit_breaker_state | default("closed") | upper }}
+        </p>
+    </div>
+</div>
+
+<div class="mt-4 text-right">
+    <p class="text-xs text-gray-400">Uptime: {{ stats.uptime | default("—") }}</p>
+</div>

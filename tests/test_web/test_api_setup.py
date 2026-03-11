@@ -86,7 +86,7 @@ class TestAdminCreation:
         assert resp.status_code == 201
         data = resp.json()
         assert data["username"] == "admin"
-        assert data["is_admin"] is True
+        assert data["role"] == "admin"
         assert "id" in data
 
     async def test_create_admin_with_totp(self, setup_client: AsyncClient) -> None:
@@ -274,8 +274,9 @@ class TestSetupGuardMiddleware:
         assert resp.status_code == 200
 
     async def test_allows_root(self, setup_client: AsyncClient) -> None:
-        resp = await setup_client.get("/")
-        assert resp.status_code == 200
+        resp = await setup_client.get("/", follow_redirects=False)
+        # Root redirects to /ui/dashboard, which during setup redirects to /ui/setup
+        assert resp.status_code == 303
 
     async def test_allows_docs(self, setup_client: AsyncClient) -> None:
         resp = await setup_client.get("/docs")

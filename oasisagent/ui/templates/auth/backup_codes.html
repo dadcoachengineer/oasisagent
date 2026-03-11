@@ -1,0 +1,30 @@
+{% extends "base_minimal.html" %}
+{% block title %}Backup Codes — OasisAgent{% endblock %}
+{% block content %}
+<div class="bg-white rounded-lg shadow-md p-8">
+    <div class="text-center mb-6">
+        <h1 class="text-xl font-bold text-gray-900">Save Your Backup Codes</h1>
+        <p class="text-sm text-red-600 font-medium mt-1">
+            These codes will only be shown once. Save them now.
+        </p>
+    </div>
+
+    <div class="bg-gray-50 rounded border p-4 mb-4">
+        <div class="grid grid-cols-2 gap-2">
+            {% for code in backup_codes %}
+            <div class="font-mono text-sm text-center py-1 bg-white rounded border">{{ code }}</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <p class="text-xs text-gray-500 mb-4">
+        Each code can be used once to sign in if you lose access to your authenticator app.
+        Store them in a safe place (e.g., password manager).
+    </p>
+
+    <a href="{{ next_url }}"
+       class="block w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 font-medium text-center">
+        I've saved these codes — Continue
+    </a>
+</div>
+{% endblock %}
