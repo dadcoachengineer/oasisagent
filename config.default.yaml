@@ -65,14 +65,33 @@ ingestion:
     poll_interval: 30
     dedup_window: 300
     patterns:
+      # Integration setup failures
       - regex: "Error setting up integration '(.+)'"
         event_type: integration_failure
         severity: error
+      # Automation execution errors (HA uses per-entity loggers)
+      - regex: "Error while executing automation automation\\.([^:]+)"
+        event_type: automation_error
+        severity: error
+      # Script/action execution errors within automations
+      - regex: "Error executing script.+for (\\w+) at pos"
+        event_type: automation_error
+        severity: error
+      # Template rendering errors
+      - regex: "Template variable error: (.+)"
+        event_type: template_error
+        severity: error
+      # Service deprecation warnings (e.g., kelvin → color_temp_kelvin)
+      - regex: "Got `(.+)` argument.+which is deprecated"
+        event_type: deprecation_warning
+        severity: warning
+      # Configuration validation errors
+      - regex: "Invalid config for \\[([^\\]]+)\\]"
+        event_type: config_error
+        severity: error
+      # Entity unavailability
       - regex: "(.+) is unavailable"
         event_type: state_unavailable
-        severity: warning
-      - regex: "Deprecated .+ used in (.+)"
-        event_type: deprecation_warning
         severity: warning
 
 llm:

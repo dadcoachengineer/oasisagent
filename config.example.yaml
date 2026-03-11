@@ -79,15 +79,48 @@ ingestion:
     poll_interval: 30            # Seconds between polls
     dedup_window: 300            # Same error within this window = one event
     patterns:
-      # Each pattern matches a log line regex and produces an event
+      # Each pattern matches against "component_name: message" from system_log/list.
+      # First match wins per entry. Capture group 1 becomes the event's entity_id.
+      # Severity here is a fallback — HA's native log level takes precedence.
+
+      # Integration setup failures (e.g., zwave_js, mqtt, hue)
       - regex: "Error setting up integration '(.+)'"
         event_type: integration_failure
         severity: error
+
+      # Automation execution errors
+      # HA logs: "Error while executing automation automation.<id>: <details>"
+      - regex: "Error while executing automation automation\\.([^:]+)"
+        event_type: automation_error
+        severity: error
+
+      # Script/action errors within automations (service calls, conditions)
+      # HA logs: "<Alias>: Error executing script. Error for call_service at pos N: <details>"
+      - regex: "Error executing script.+for (\\w+) at pos"
+        event_type: automation_error
+        severity: error
+
+      # Template rendering errors in automations and scripts
+      # HA logs: "Template variable error: 'dict object' has no attribute '...'"
+      - regex: "Template variable error: (.+)"
+        event_type: template_error
+        severity: error
+
+      # Service parameter deprecation warnings (e.g., kelvin → color_temp_kelvin)
+      # HA logs: "Got `kelvin` argument in `turn_on` service, which is deprecated..."
+      - regex: "Got `(.+)` argument.+which is deprecated"
+        event_type: deprecation_warning
+        severity: warning
+
+      # Configuration/schema validation errors
+      # HA logs: "Invalid config for [automation]: not a valid value..."
+      - regex: "Invalid config for \\[([^\\]]+)\\]"
+        event_type: config_error
+        severity: error
+
+      # Entity unavailability (generic catch-all)
       - regex: "(.+) is unavailable"
         event_type: state_unavailable
-        severity: warning
-      - regex: "Deprecated .+ used in (.+)"
-        event_type: deprecation_warning
         severity: warning
 
 # -----------------------------------------------------------------------------

@@ -438,3 +438,183 @@ class TestFetchSystemLog:
         result = await adapter._fetch_system_log(ws)
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Real HA log pattern matching
+# ---------------------------------------------------------------------------
+
+# All seven default patterns from config.default.yaml
+_DEFAULT_PATTERNS = [
+    LogPattern(
+        regex=r"Error setting up integration '(.+)'",
+        event_type="integration_failure",
+        severity="error",
+    ),
+    LogPattern(
+        regex=r"Error while executing automation automation\.([^:]+)",
+        event_type="automation_error",
+        severity="error",
+    ),
+    LogPattern(
+        regex=r"Error executing script.+for (\w+) at pos",
+        event_type="automation_error",
+        severity="error",
+    ),
+    LogPattern(
+        regex=r"Template variable error: (.+)",
+        event_type="template_error",
+        severity="error",
+    ),
+    LogPattern(
+        regex=r"Got `(.+)` argument.+which is deprecated",
+        event_type="deprecation_warning",
+        severity="warning",
+    ),
+    LogPattern(
+        regex=r"Invalid config for \[([^\]]+)\]",
+        event_type="config_error",
+        severity="error",
+    ),
+    LogPattern(
+        regex=r"(.+) is unavailable",
+        event_type="state_unavailable",
+        severity="warning",
+    ),
+]
+
+
+class TestDefaultPatterns:
+    """Tests that default patterns match real HA system log entries."""
+
+    def _make_adapter(self) -> tuple[HaLogPollerAdapter, EventQueue]:
+        queue = EventQueue(max_size=10)
+        adapter = HaLogPollerAdapter(
+            _make_config(patterns=_DEFAULT_PATTERNS), queue
+        )
+        return adapter, queue
+
+    def test_automation_execution_error(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.components.automation.living_room_lights",
+            message="Error while executing automation automation.living_room_lights: "
+                    "service not found",
+            level="ERROR",
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "automation_error"
+        assert event.entity_id == "living_room_lights"
+
+    def test_automation_error_with_colon_in_details(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.components.automation.night_mode",
+            message="Error while executing automation automation.night_mode: "
+                    "Error for call_service at pos 2: device unavailable",
+            level="ERROR",
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "automation_error"
+        assert event.entity_id == "night_mode"
+
+    def test_script_execution_error_service_call(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.components.automation.dimmer",
+            message="Living Room Dimmer: Error executing script. "
+                    "Error for call_service at pos 2: Failed to send request",
+            level="ERROR",
+            source=["helpers/script.py", 1792],
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "automation_error"
+        assert event.entity_id == "call_service"
+
+    def test_template_variable_error(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.helpers.template",
+            message="Template variable error: 'dict object' has no attribute 'payload_json'",
+            level="ERROR",
+            source=["helpers/template.py", 456],
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "template_error"
+
+    def test_deprecated_kelvin_parameter(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.components.light",
+            message="Got `kelvin` argument in `turn_on` service, which is deprecated "
+                    "and will break in Home Assistant 2026.1, please use "
+                    "`color_temp_kelvin` argument",
+            level="WARNING",
+            source=["components/light/__init__.py", 331],
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "deprecation_warning"
+        assert event.entity_id == "kelvin"
+        assert event.severity == Severity.WARNING
+
+    def test_deprecated_color_temp_parameter(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.components.light",
+            message="Got `color_temp` argument in `turn_on` service, which is deprecated "
+                    "and will break in Home Assistant 2026.1, please use "
+                    "`color_temp_kelvin` argument",
+            level="WARNING",
+            source=["components/light/__init__.py", 331],
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "deprecation_warning"
+        assert event.entity_id == "color_temp"
+
+    def test_invalid_config(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.config",
+            message="Invalid config for [automation]: not a valid value for "
+                    "dictionary value @ data['type']. Got None",
+            level="ERROR",
+            source=["config.py", 464],
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "config_error"
+        assert event.entity_id == "automation"
+
+    def test_integration_failure_still_works(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry()])
+        assert queue.size == 1
+        assert queue.drain()[0].event_type == "integration_failure"
+
+    def test_entity_unavailable_still_works(self) -> None:
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.components.sensor",
+            message="sensor.outdoor_temp is unavailable",
+            level="WARNING",
+        )])
+        assert queue.size == 1
+        assert queue.drain()[0].event_type == "state_unavailable"
+
+    def test_message_as_list_matches_automation_error(self) -> None:
+        """HA sometimes returns message as a list of strings."""
+        adapter, queue = self._make_adapter()
+        adapter._process_entries([_make_log_entry(
+            name="homeassistant.components.automation.garage_door",
+            message=["Error while executing automation", "automation.garage_door: timeout"],
+            level="ERROR",
+        )])
+        assert queue.size == 1
+        event = queue.drain()[0]
+        assert event.event_type == "automation_error"
