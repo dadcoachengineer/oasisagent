@@ -128,35 +128,41 @@ async def setup_core_services(
     multiple times — uses the fixed names ``mqtt-primary`` and
     ``influxdb-primary`` with upsert-like behavior (deletes existing
     before creating).
+
+    Note: intentionally does NOT call ``_require_setup_mode``.
+    Re-configuring core services post-setup is a valid operation
+    (e.g. operator changes broker address). The setup guard middleware
+    already controls access during setup mode.
     """
     store = _get_store(request)
 
-    # MQTT connector
-    existing_connectors = await store.list_connectors()
-    for c in existing_connectors:
-        if c["name"] == "mqtt-primary":
-            await store.delete_connector(c["id"])
+    async with store.transaction():
+        # MQTT connector
+        existing_connectors = await store.list_connectors()
+        for c in existing_connectors:
+            if c["name"] == "mqtt-primary":
+                await store.delete_connector(c["id"])
 
-    mqtt_config: dict[str, Any] = {
-        "broker": body.mqtt_broker,
-        "username": body.mqtt_username,
-        "password": body.mqtt_password,
-    }
-    mqtt_id = await store.create_connector("mqtt", "mqtt-primary", mqtt_config)
+        mqtt_config: dict[str, Any] = {
+            "broker": body.mqtt_broker,
+            "username": body.mqtt_username,
+            "password": body.mqtt_password,
+        }
+        mqtt_id = await store.create_connector("mqtt", "mqtt-primary", mqtt_config)
 
-    # InfluxDB service
-    existing_services = await store.list_services()
-    for s in existing_services:
-        if s["name"] == "influxdb-primary":
-            await store.delete_service(s["id"])
+        # InfluxDB service
+        existing_services = await store.list_services()
+        for s in existing_services:
+            if s["name"] == "influxdb-primary":
+                await store.delete_service(s["id"])
 
-    influx_config: dict[str, Any] = {
-        "url": body.influxdb_url,
-        "token": body.influxdb_token,
-        "org": body.influxdb_org,
-        "bucket": body.influxdb_bucket,
-    }
-    influx_id = await store.create_service("influxdb", "influxdb-primary", influx_config)
+        influx_config: dict[str, Any] = {
+            "url": body.influxdb_url,
+            "token": body.influxdb_token,
+            "org": body.influxdb_org,
+            "bucket": body.influxdb_bucket,
+        }
+        influx_id = await store.create_service("influxdb", "influxdb-primary", influx_config)
 
     return {
         "mqtt_connector_id": mqtt_id,
