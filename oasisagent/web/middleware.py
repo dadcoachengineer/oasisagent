@@ -48,6 +48,9 @@ async def setup_guard_middleware(
     - API setup endpoints are allowed through
     - Health/metrics are allowed through
     - All other paths redirect to setup (UI) or return 403 (API)
+
+    Post-setup: redirects unauthenticated UI requests to the login page
+    instead of returning raw JSON 401 errors.
     """
     # Check if the config store is available (not during tests with mocked state)
     store = getattr(request.app.state, "config_store", None)
@@ -76,7 +79,17 @@ async def setup_guard_middleware(
             },
         )
 
-    return await call_next(request)
+    response = await call_next(request)
+
+    # Redirect unauthenticated UI requests to login instead of showing JSON 401
+    if (
+        response.status_code == 401
+        and path.startswith("/ui/")
+        and "hx-request" not in request.headers
+    ):
+        return RedirectResponse(url="/ui/login", status_code=303)
+
+    return response
 
 
 async def sliding_window_middleware(
