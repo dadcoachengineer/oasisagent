@@ -62,3 +62,43 @@ fixes:
       details:
         message: "Container crash loop detected — escalating for human review"
     risk_tier: escalate
+
+  - id: docker-volume-mount-failed
+    match:
+      system: docker
+      event_type: container_start_error
+      payload_contains: "mount"
+    diagnosis: "Container failed to start due to a volume mount error — path missing, permissions, or stale NFS mount"
+    action:
+      type: recommend
+      handler: docker
+      operation: notify
+      details:
+        message: |
+          Volume mount failure. Diagnostic checklist:
+          1. Verify the host path exists and has correct permissions
+          2. Check if NFS/CIFS mounts are available (showmount, mount)
+          3. Look for stale mounts that need remounting
+          4. Verify SELinux/AppArmor labels if applicable
+          5. Check Docker volume driver logs for errors
+    risk_tier: recommend
+
+  - id: docker-image-pull-failed
+    match:
+      system: docker
+      event_type: image_pull_error
+    diagnosis: "Docker image pull failed — registry unreachable, auth error, or image not found"
+    action:
+      type: recommend
+      handler: docker
+      operation: notify
+      details:
+        message: |
+          Image pull failure. Diagnostic checklist:
+          1. Verify registry connectivity (ping, curl the registry URL)
+          2. Check registry authentication credentials (docker login)
+          3. Confirm the image name and tag exist in the registry
+          4. Check for rate limiting (Docker Hub: 100 pulls/6h for anonymous)
+          5. Review DNS resolution for the registry hostname
+          6. Check disk space — pulls fail if /var/lib/docker is full
+    risk_tier: recommend

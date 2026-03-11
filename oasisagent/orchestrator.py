@@ -236,6 +236,11 @@ class Orchestrator:
         if cfg.handlers.docker.enabled:
             docker = DockerHandler(cfg.handlers.docker)
             self._handlers[docker.name()] = docker
+        if cfg.handlers.portainer.enabled:
+            from oasisagent.handlers.portainer import PortainerHandler
+
+            portainer = PortainerHandler(cfg.handlers.portainer)
+            self._handlers[portainer.name()] = portainer
         if cfg.handlers.proxmox.enabled:
             from oasisagent.handlers.proxmox import ProxmoxHandler
 
