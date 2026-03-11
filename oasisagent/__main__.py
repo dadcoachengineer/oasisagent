@@ -75,6 +75,12 @@ def _run_agent() -> None:
     log_level = config.agent.log_level.value.upper()
     logging.getLogger().setLevel(log_level)
 
+    # Suppress noisy LiteLLM logs ("Provider List: ..." on every call)
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
+    import litellm
+    litellm.suppress_debug_info = True
+
     orchestrator = Orchestrator(config)
     asyncio.run(orchestrator.run())
 
