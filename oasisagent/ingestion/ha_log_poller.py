@@ -56,6 +56,7 @@ class HaLogPollerAdapter(IngestAdapter):
         self._connected = False
         self._stopping = False
         self._backoff = ExponentialBackoff(name="ha_log_poller")
+        self._msg_id = 0
         self._seen: dict[str, float] = {}  # fingerprint -> timestamp
         self._compiled_patterns: list[tuple[re.Pattern[str], LogPattern]] = []
 
