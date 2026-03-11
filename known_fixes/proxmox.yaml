@@ -1,2 +1,208 @@
-# Known fixes for Proxmox VM/CT failures (Phase 3).
-fixes: []
+# Known fixes for Proxmox VE / PBS failures.
+# Evaluated by the T0 match engine — first match wins.
+# See ARCHITECTURE.md §5 for match semantics.
+#
+# Pattern: escalation ladder per fault type
+#   1. Infrastructure/cluster-level matches (highest urgency)
+#   2. Single VM/CT or storage matches (diagnostic checklist, notify)
+#   3. Correlated groups are handled by T1/T2 reasoning, not T0
+
+fixes:
+
+  # =========================================================================
+  # Node and cluster — highest urgency
+  # =========================================================================
+
+  - id: pve-node-unreachable
+    match:
+      system: proxmox
+      event_type: node_unreachable
+    diagnosis: "Proxmox node is unreachable — possible network partition, node crash, or power failure"
+    action:
+      type: escalate
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          Proxmox node unreachable. Escalation steps:
+          1. Check physical connectivity (IPMI/iDRAC if available)
+          2. Verify network switch port and VLAN config
+          3. Check cluster quorum status — if quorum lost, no HA failover
+          4. Check if other nodes can reach the target (cluster network vs mgmt)
+          5. If node is confirmed down, HA will fence and migrate services
+    risk_tier: escalate
+
+  - id: pve-ha-fence
+    match:
+      system: proxmox
+      event_type: ha_fence
+    diagnosis: "Proxmox HA fencing triggered — a node was isolated and its services will be migrated"
+    action:
+      type: escalate
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          HA fencing event detected. Investigation steps:
+          1. Identify which node was fenced and why (network, crash, hang)
+          2. Check if fenced services migrated successfully to surviving nodes
+          3. Verify cluster quorum is restored
+          4. Investigate root cause before bringing fenced node back online
+          5. Check corosync/pve-ha-crm logs for fencing details
+    risk_tier: escalate
+
+  # =========================================================================
+  # VM/CT state — locked, unexpected stop
+  # =========================================================================
+
+  - id: pve-vm-locked
+    match:
+      system: proxmox
+      event_type: vm_locked
+    diagnosis: "VM/CT is locked — a previous operation (backup, snapshot, migrate) did not release the lock"
+    action:
+      type: recommend
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          VM is locked. Diagnostic checklist:
+          1. Check running tasks — a backup or migration may still be in progress
+          2. If no task is running, the lock is stale from a crashed operation
+          3. Identify the lock type (backup, migrate, snapshot, rollback)
+          4. Stale locks can be removed: qm unlock <vmid> (or pct unlock for CTs)
+          5. If lock is from a failed migration, check source and target node task logs
+    risk_tier: recommend
+
+  # =========================================================================
+  # Storage — ZFS, thin provisioning
+  # =========================================================================
+
+  - id: pve-zfs-scrub-errors
+    match:
+      system: proxmox
+      event_type: zfs_scrub_error
+    diagnosis: "ZFS scrub found errors — possible disk degradation or silent data corruption"
+    action:
+      type: escalate
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          ZFS scrub errors detected. Escalation steps:
+          1. Run 'zpool status' to identify which pool and vdev are affected
+          2. Check for correctable vs uncorrectable errors (data loss risk)
+          3. Review SMART data for the affected disk(s): smartctl -a /dev/sdX
+          4. If redundancy exists (mirror/raidz), replace the failing disk
+          5. If no redundancy, backup immediately and plan disk replacement
+          6. Schedule more frequent scrubs until the issue is resolved
+    risk_tier: escalate
+
+  - id: pve-storage-thin-provision
+    match:
+      system: proxmox
+      event_type: storage_threshold
+      payload_contains: "thin"
+    diagnosis: "Thin-provisioned storage is running low — VMs may pause if backing store runs out"
+    action:
+      type: recommend
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          Thin-provisioned storage nearing capacity. Actions:
+          1. Check actual vs allocated usage: pvesm status
+          2. Identify VMs with large unused allocations (fstrim/discard)
+          3. Run fstrim inside guests to reclaim unused blocks
+          4. Consider enabling discard mount option in guest fstab
+          5. Add capacity or migrate VMs to a larger datastore
+          6. Set up monitoring threshold alerts before hitting 100%
+    risk_tier: recommend
+
+  # =========================================================================
+  # Backup failures
+  # =========================================================================
+
+  - id: pve-backup-failed
+    match:
+      system: proxmox
+      event_type: backup_failed
+    diagnosis: "Proxmox backup job (vzdump) failed — data protection gap"
+    action:
+      type: recommend
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          Backup failure detected. Diagnostic checklist:
+          1. Check the task log for the specific error (storage full, timeout, lock)
+          2. Verify backup storage has sufficient free space
+          3. Check if the target VM was locked or migrating during backup
+          4. Review vzdump configuration (compression, bandwidth limit, mode)
+          5. For PBS targets, check PBS datastore health and connectivity
+          6. Re-run the backup manually to confirm it completes
+    risk_tier: recommend
+
+  # =========================================================================
+  # Proxmox Backup Server (PBS)
+  # =========================================================================
+
+  - id: pbs-verification-failed
+    match:
+      system: proxmox
+      event_type: pbs_verify_failed
+    diagnosis: "PBS backup verification failed — backup integrity cannot be confirmed"
+    action:
+      type: recommend
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          PBS verification failure. Diagnostic checklist:
+          1. Check the verification task log for specific chunk/file errors
+          2. Run a manual verify: proxmox-backup-client verify <snapshot>
+          3. If chunks are corrupt, check underlying disk health (SMART)
+          4. Verify network integrity between PVE and PBS (checksum errors in transit)
+          5. Re-run the backup from source — do not rely on the unverified copy
+          6. Check PBS datastore filesystem for errors
+    risk_tier: recommend
+
+  - id: pbs-datastore-full
+    match:
+      system: proxmox
+      event_type: pbs_datastore_full
+    diagnosis: "PBS datastore is full or critically low on space — new backups will fail"
+    action:
+      type: escalate
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          PBS datastore space critically low. Immediate actions:
+          1. Check current usage: proxmox-backup-manager datastore list
+          2. Run garbage collection if not recently completed
+          3. Review and tighten prune schedules (keep-last, keep-daily, etc.)
+          4. Identify and remove orphaned/unneeded backup groups
+          5. Add disk capacity or migrate to a larger datastore
+          6. Consider deduplication efficiency — high churn VMs use more space
+    risk_tier: escalate
+
+  - id: pbs-gc-running-long
+    match:
+      system: proxmox
+      event_type: pbs_gc_long
+    diagnosis: "PBS garbage collection is running unusually long — may indicate datastore issues"
+    action:
+      type: recommend
+      handler: proxmox
+      operation: notify
+      details:
+        message: |
+          PBS garbage collection running long. Diagnostic checklist:
+          1. Check current GC task progress in PBS UI or task log
+          2. Large datastores with many snapshots take longer — this may be normal
+          3. Check for I/O bottlenecks on the backing storage (iostat, iotop)
+          4. Verify no other heavy tasks (verify, backup) are competing for I/O
+          5. If GC consistently takes too long, consider splitting into smaller datastores
+          6. Check PBS version — newer versions have GC performance improvements
+    risk_tier: recommend

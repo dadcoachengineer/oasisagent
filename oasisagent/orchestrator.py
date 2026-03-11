@@ -236,6 +236,11 @@ class Orchestrator:
         if cfg.handlers.docker.enabled:
             docker = DockerHandler(cfg.handlers.docker)
             self._handlers[docker.name()] = docker
+        if cfg.handlers.proxmox.enabled:
+            from oasisagent.handlers.proxmox import ProxmoxHandler
+
+            proxmox = ProxmoxHandler(cfg.handlers.proxmox)
+            self._handlers[proxmox.name()] = proxmox
 
         # 10. Audit writer
         self._audit = AuditWriter(cfg.audit)
