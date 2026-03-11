@@ -908,7 +908,7 @@ class TestKnownFixes:
 
         import yaml
 
-        fixes_path = Path(__file__).parent.parent / "known_fixes" / "proxmox.yaml"
+        fixes_path = Path(__file__).parent.parent.parent / "known_fixes" / "proxmox.yaml"
         with fixes_path.open() as f:
             data = yaml.safe_load(f)
 
@@ -933,7 +933,7 @@ class TestKnownFixes:
 
         import yaml
 
-        fixes_path = Path(__file__).parent.parent / "known_fixes" / "proxmox.yaml"
+        fixes_path = Path(__file__).parent.parent.parent / "known_fixes" / "proxmox.yaml"
         with fixes_path.open() as f:
             data = yaml.safe_load(f)
 
@@ -950,7 +950,7 @@ class TestKnownFixes:
 
         import yaml
 
-        fixes_path = Path(__file__).parent.parent / "known_fixes" / "proxmox.yaml"
+        fixes_path = Path(__file__).parent.parent.parent / "known_fixes" / "proxmox.yaml"
         with fixes_path.open() as f:
             data = yaml.safe_load(f)
 
