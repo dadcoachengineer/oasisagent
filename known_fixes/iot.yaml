@@ -213,7 +213,7 @@ fixes:
   # ESPHome / ESPresense — device health
   # =========================================================================
 
-  - id: esphome-device-offline
+  - id: espresense-node-offline
     match:
       system: espresense
       event_type: room_status

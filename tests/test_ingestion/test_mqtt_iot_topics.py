@@ -387,7 +387,7 @@ class TestKnownFixes:
             "wled-wifi-weak",
             "valetudo-error-state",
             "valetudo-consumable-expired",
-            "esphome-device-offline",
+            "espresense-node-offline",
         }
         assert expected_ids == fix_ids
 
