@@ -302,9 +302,9 @@ class TestIntegration:
 
         event = _make_event(
             system="homeassistant",
-            event_type="automation_error",
-            entity_id="automation.kitchen",
-            payload={"error": "kelvin deprecated"},
+            event_type="deprecation_warning",
+            entity_id="kelvin",
+            payload={"message": "Got `kelvin` argument which is deprecated"},
         )
 
         result = await engine.process_event(event)

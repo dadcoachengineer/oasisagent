@@ -1,12 +1,24 @@
 # Known fixes for Home Assistant failures.
 # Evaluated by the T0 match engine — first match wins.
 # See ARCHITECTURE.md §5 for match semantics.
+#
+# Pattern: escalation ladder per fault type
+#   1. Infrastructure/coordinator match (most specific, highest urgency)
+#   2. Single component match (diagnostic checklist, notify)
+#   3. Correlated groups are handled by T1/T2 reasoning, not T0
+#
+# Order matters — most specific patterns first within each category.
 
 fixes:
+
+  # =========================================================================
+  # Deprecation warnings — actionable, well-known migrations
+  # =========================================================================
+
   - id: ha-deprecated-kelvin
     match:
       system: homeassistant
-      event_type: automation_error
+      event_type: deprecation_warning
       payload_contains: "kelvin"
     diagnosis: "HA deprecated 'kelvin' parameter in favor of 'color_temp_kelvin'"
     action:
@@ -14,20 +26,318 @@ fixes:
       handler: homeassistant
       operation: notify
       details:
-        message: "Replace 'kelvin' with 'color_temp_kelvin' in automation config"
+        message: "Replace 'kelvin' with 'color_temp_kelvin' in automation/script config. See HA 2024.x release notes."
     risk_tier: recommend
 
-  - id: ha-entity-unavailable-zwave
+  - id: ha-deprecated-color-temp
+    match:
+      system: homeassistant
+      event_type: deprecation_warning
+      payload_contains: "color_temp"
+    diagnosis: "HA deprecated 'color_temp' parameter in favor of 'color_temp_kelvin'"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: "Replace 'color_temp' with 'color_temp_kelvin' in automation/script config. See HA 2024.x release notes."
+    risk_tier: recommend
+
+  - id: ha-deprecated-generic
+    match:
+      system: homeassistant
+      event_type: deprecation_warning
+    diagnosis: "Deprecated parameter or API usage detected — will break in a future HA release"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: "Review the deprecation warning and update config before the breaking release. Check HA release notes for migration guidance."
+    risk_tier: recommend
+
+  # =========================================================================
+  # Z-Wave — coordinator first, then single device
+  # =========================================================================
+
+  - id: ha-zwave-coordinator-unavailable
+    match:
+      system: homeassistant
+      event_type: state_unavailable
+      entity_id_pattern: "sensor.z_wave_js_*"
+    diagnosis: "Z-Wave JS coordinator entity is unavailable — likely USB controller disconnect, driver crash, or host-level issue"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Z-Wave coordinator is down. Escalation steps:
+          1. Check USB controller physical connection
+          2. Verify Z-Wave JS add-on/container is running
+          3. Check dmesg/host logs for USB disconnect events
+          4. If confirmed running, restart Z-Wave JS integration
+          5. If persists, power-cycle the USB controller
+    risk_tier: escalate
+
+  - id: ha-zwave-device-unavailable
     match:
       system: homeassistant
       event_type: state_unavailable
       entity_id_pattern: "*.zwave_*"
       min_duration: 300
-    diagnosis: "Z-Wave entity unavailable for >5 min, likely controller issue"
+    diagnosis: "Single Z-Wave device unavailable for >5 min — likely device-level, not controller"
     action:
       type: recommend
       handler: homeassistant
-      operation: restart_integration
+      operation: notify
       details:
-        integration: zwave_js
+        message: |
+          Z-Wave device unavailable. Diagnostic checklist:
+          1. Check device battery level (if battery-powered)
+          2. Verify device is within Z-Wave mesh range
+          3. Check for recent firmware updates on the device
+          4. Try waking the device manually (button press)
+          5. Check Z-Wave network map for dead routes
+          6. If multiple devices drop, check coordinator health instead
+    risk_tier: recommend
+
+  # =========================================================================
+  # Zigbee — coordinator first, then single device
+  # =========================================================================
+
+  - id: ha-zigbee-coordinator-unavailable
+    match:
+      system: homeassistant
+      event_type: state_unavailable
+      entity_id_pattern: "sensor.zigbee_*coordinator*"
+    diagnosis: "Zigbee coordinator entity is unavailable — likely USB disconnect, ZHA/Z2M crash, or radio conflict"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Zigbee coordinator is down. Escalation steps:
+          1. Check USB coordinator physical connection
+          2. Verify ZHA or Zigbee2MQTT add-on/container is running
+          3. Check for USB conflict with Z-Wave (if both on same host)
+          4. Check dmesg/host logs for USB disconnect events
+          5. If confirmed running, restart Zigbee integration
+          6. If persists, power-cycle the coordinator stick
+    risk_tier: escalate
+
+  - id: ha-zigbee-device-unavailable
+    match:
+      system: homeassistant
+      event_type: state_unavailable
+      entity_id_pattern: "*.zha_*"
+      min_duration: 300
+    diagnosis: "Single Zigbee device unavailable for >5 min — likely device-level, not coordinator"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Zigbee device unavailable. Diagnostic checklist:
+          1. Check device battery level (if battery-powered)
+          2. Verify device is within Zigbee mesh range (add routers if needed)
+          3. Check if device needs re-pairing after firmware update
+          4. Try triggering the device manually to wake it
+          5. If multiple devices drop, check coordinator health instead
+    risk_tier: recommend
+
+  # =========================================================================
+  # Integration setup failures — specific integrations first
+  # =========================================================================
+
+  - id: ha-integration-failure-zwave
+    match:
+      system: homeassistant
+      event_type: integration_failure
+      payload_contains: "zwave_js"
+    diagnosis: "Z-Wave JS integration failed to set up — controller may be disconnected or busy"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Z-Wave JS integration failed. Escalation steps:
+          1. Check USB controller physical connection
+          2. Verify Z-Wave JS server/add-on is running and healthy
+          3. Check if another process has locked the serial port
+          4. Review HA logs for specific error details
+          5. Restart the Z-Wave JS integration from Settings > Integrations
+    risk_tier: escalate
+
+  - id: ha-integration-failure-mqtt
+    match:
+      system: homeassistant
+      event_type: integration_failure
+      payload_contains: "mqtt"
+    diagnosis: "MQTT integration failed to set up — broker may be unreachable"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          MQTT integration failed. Diagnostic checklist:
+          1. Verify MQTT broker is running and accepting connections
+          2. Check broker hostname/IP and port are correct in HA config
+          3. Verify credentials (username/password) are valid
+          4. Check for TLS certificate issues if using encrypted connection
+          5. Look for broker resource exhaustion (too many connections, disk full)
+    risk_tier: recommend
+
+  - id: ha-integration-failure-generic
+    match:
+      system: homeassistant
+      event_type: integration_failure
+    diagnosis: "Integration failed to set up — check connectivity and credentials"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Integration setup failed. Diagnostic checklist:
+          1. Verify the target service/device is online and reachable
+          2. Check credentials and API keys are valid and not expired
+          3. Review HA logs for the specific error message
+          4. Check if the integration has a known issue on the HA GitHub
+          5. Try removing and re-adding the integration from Settings
+    risk_tier: recommend
+
+  # =========================================================================
+  # Automation errors — specific patterns first, then generic
+  # =========================================================================
+
+  - id: ha-automation-service-not-found
+    match:
+      system: homeassistant
+      event_type: automation_error
+      payload_contains: "Service not found"
+    diagnosis: "Automation references a service that doesn't exist — likely renamed, removed, or integration not loaded"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Automation calls a non-existent service. Diagnostic checklist:
+          1. Check if the integration providing the service is loaded
+          2. Verify service name hasn't changed in a recent HA update
+          3. Check Developer Tools > Services to confirm available services
+          4. Update automation YAML with the correct service name
+    risk_tier: recommend
+
+  - id: ha-automation-device-unavailable
+    match:
+      system: homeassistant
+      event_type: automation_error
+      payload_contains: "unavailable"
+    diagnosis: "Automation failed because a target device/entity is unavailable"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Automation target is unavailable. Diagnostic checklist:
+          1. Check if the target device is powered on and connected
+          2. Verify the entity exists and hasn't been renamed
+          3. Add availability checks to the automation conditions
+          4. Consider using 'continue_on_error: true' for non-critical actions
+    risk_tier: recommend
+
+  - id: ha-automation-error-generic
+    match:
+      system: homeassistant
+      event_type: automation_error
+    diagnosis: "Automation execution error — review the automation config and target entities"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Automation failed. Diagnostic checklist:
+          1. Check HA logs for the full error trace
+          2. Verify all entities referenced in the automation exist
+          3. Test service calls manually in Developer Tools
+          4. Check if the error correlates with a recent HA update
+          5. Review automation YAML for syntax or logic errors
+    risk_tier: recommend
+
+  # =========================================================================
+  # Template errors
+  # =========================================================================
+
+  - id: ha-template-error
+    match:
+      system: homeassistant
+      event_type: template_error
+    diagnosis: "Template rendering error — likely referencing a missing attribute, entity, or variable"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Template error detected. Diagnostic checklist:
+          1. Check if the referenced entity/attribute exists
+          2. Add 'default' filters to handle missing values (e.g., state_attr(...) | default(''))
+          3. Use 'is defined' checks for optional trigger variables
+          4. Test the template in Developer Tools > Templates
+          5. Check if an entity was renamed or removed recently
+    risk_tier: recommend
+
+  # =========================================================================
+  # Configuration errors
+  # =========================================================================
+
+  - id: ha-config-error
+    match:
+      system: homeassistant
+      event_type: config_error
+    diagnosis: "Configuration validation error — YAML schema violation"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Invalid configuration detected. Diagnostic checklist:
+          1. Run HA config check: Settings > System > Restart (three-dot menu > Check config)
+          2. Review the YAML file mentioned in the error for syntax issues
+          3. Check for missing required fields or incorrect value types
+          4. Verify indentation (YAML is whitespace-sensitive)
+          5. Compare against HA documentation for the affected integration
+    risk_tier: recommend
+
+  # =========================================================================
+  # Generic entity unavailability — catch-all (must be last)
+  # =========================================================================
+
+  - id: ha-entity-unavailable-generic
+    match:
+      system: homeassistant
+      event_type: state_unavailable
+      min_duration: 300
+    diagnosis: "Entity unavailable for >5 min — check device connectivity and integration health"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Entity unavailable. Diagnostic checklist:
+          1. Check if the device/service providing this entity is online
+          2. Verify the integration is loaded (Settings > Integrations)
+          3. Check network connectivity to the device
+          4. If multiple entities from the same integration are down, the integration may need a restart
+          5. Review HA logs for related errors
     risk_tier: recommend
