@@ -5,6 +5,7 @@ from oasisagent.handlers.docker import DockerHandler
 from oasisagent.handlers.homeassistant import HomeAssistantHandler
 from oasisagent.handlers.portainer import PortainerHandler
 from oasisagent.handlers.proxmox import ProxmoxHandler
+from oasisagent.handlers.unifi import UnifiHandler
 
 __all__ = [
     "DockerHandler",
@@ -12,4 +13,5 @@ __all__ = [
     "HomeAssistantHandler",
     "PortainerHandler",
     "ProxmoxHandler",
+    "UnifiHandler",
 ]

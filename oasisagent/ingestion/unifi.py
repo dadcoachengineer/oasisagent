@@ -26,9 +26,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Thresholds for resource alerts
-_CPU_THRESHOLD = 90.0
-_MEMORY_THRESHOLD = 90.0
 
 
 class UnifiAdapter(IngestAdapter):
@@ -201,12 +198,12 @@ class UnifiAdapter(IngestAdapter):
             sys_stats = device.get("system-stats", {})
             self._check_resource(
                 mac, device_name, "cpu",
-                sys_stats.get("cpu"), _CPU_THRESHOLD,
+                sys_stats.get("cpu"), self._config.cpu_threshold,
                 self._device_cpu_alert,
             )
             self._check_resource(
                 mac, device_name, "mem",
-                sys_stats.get("mem"), _MEMORY_THRESHOLD,
+                sys_stats.get("mem"), self._config.memory_threshold,
                 self._device_mem_alert,
             )
 
@@ -302,6 +299,10 @@ class UnifiAdapter(IngestAdapter):
                     dedup_key=f"unifi:alarm:{alarm_id}",
                 ),
             ))
+
+        # Evict cleared/archived alarms to prevent unbounded growth
+        current_ids = {a.get("_id", "") for a in alarms} - {""}
+        self._seen_alarms &= current_ids
 
     # -----------------------------------------------------------------
     # Health polling
