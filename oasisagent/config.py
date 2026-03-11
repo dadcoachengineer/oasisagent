@@ -609,6 +609,17 @@ class WebhookNotificationConfig(BaseModel):
     urls: list[str] = Field(default_factory=list)
 
 
+class TelegramNotificationConfig(BaseModel):
+    """Telegram bot notification channel configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    bot_token: str = ""
+    chat_id: str = ""
+    parse_mode: str = "HTML"
+
+
 class NotificationsConfig(BaseModel):
     """All notification channel configurations."""
 
@@ -617,6 +628,7 @@ class NotificationsConfig(BaseModel):
     mqtt: MqttNotificationConfig = Field(default_factory=MqttNotificationConfig)
     email: EmailNotificationConfig = Field(default_factory=EmailNotificationConfig)
     webhook: WebhookNotificationConfig = Field(default_factory=WebhookNotificationConfig)
+    telegram: TelegramNotificationConfig = Field(default_factory=TelegramNotificationConfig)
 
 
 # -- Top-level config -------------------------------------------------------

@@ -33,6 +33,7 @@ from oasisagent.config import (
     MqttNotificationConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
+    TelegramNotificationConfig,
     WebhookNotificationConfig,
     WebhookSourceConfig,
 )
@@ -133,6 +134,10 @@ NOTIFICATION_TYPES: dict[str, TypeMeta] = {
     ),
     "webhook": TypeMeta(
         model=WebhookNotificationConfig,
+    ),
+    "telegram": TypeMeta(
+        model=TelegramNotificationConfig,
+        secret_fields=frozenset({"bot_token"}),
     ),
 }
 
