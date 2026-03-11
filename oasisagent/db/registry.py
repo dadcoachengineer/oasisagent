@@ -32,6 +32,7 @@ from oasisagent.config import (
     MqttNotificationConfig,
     ProxmoxHandlerConfig,
     WebhookNotificationConfig,
+    WebhookSourceConfig,
 )
 
 
@@ -59,6 +60,10 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "ha_log_poller": TypeMeta(
         model=HaLogPollerConfig,
         secret_fields=frozenset({"token"}),
+    ),
+    "webhook_receiver": TypeMeta(
+        model=WebhookSourceConfig,
+        secret_fields=frozenset({"auth_secret"}),
     ),
 }
 

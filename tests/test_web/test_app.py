@@ -78,22 +78,14 @@ class TestAPIStatus:
 
 
 # ---------------------------------------------------------------------------
-# Webhook placeholder
+# Webhook (no config store → 503)
 # ---------------------------------------------------------------------------
 
 
-class TestWebhookPlaceholder:
-    async def test_webhook_returns_501(self, client: AsyncClient) -> None:
-        resp = await client.post("/ingest/webhook/radarr")
-        assert resp.status_code == 501
-        data = resp.json()
-        assert data["source"] == "radarr"
-
-    async def test_webhook_different_sources(self, client: AsyncClient) -> None:
-        for source in ["sonarr", "proxmox", "plex"]:
-            resp = await client.post(f"/ingest/webhook/{source}")
-            assert resp.status_code == 501
-            assert resp.json()["source"] == source
+class TestWebhookNoStore:
+    async def test_webhook_without_store_returns_503(self, client: AsyncClient) -> None:
+        resp = await client.post("/ingest/webhook/radarr", json={"eventType": "Test"})
+        assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------

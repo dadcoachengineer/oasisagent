@@ -9,10 +9,10 @@ from __future__ import annotations
 import os
 import re
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -247,6 +247,49 @@ class HaLogPollerConfig(BaseModel):
     poll_interval: Annotated[int, Field(ge=1)] = 30
     patterns: list[LogPattern] = Field(default_factory=list)
     dedup_window: Annotated[int, Field(ge=0)] = 300
+
+
+# -- Ingestion: Webhook Receiver --------------------------------------------
+
+
+_SeverityLiteral = Literal["info", "warning", "error", "critical"]
+
+
+class WebhookEventMapping(BaseModel):
+    """Maps a source event name to canonical event_type and severity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_event: str
+    event_type: str
+    severity: _SeverityLiteral = "warning"
+
+
+class WebhookSourceConfig(BaseModel):
+    """Per-source webhook receiver configuration.
+
+    Stored as a connector in SQLite. The connector ``name`` becomes the
+    URL slug: ``POST /ingest/webhook/{name}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    auth_mode: Literal["none", "header_secret", "api_key"] = "none"
+    auth_header: str = ""
+    auth_secret: str = ""
+    system: str = ""
+    event_type_field: str = "eventType"
+    entity_id_field: str = ""
+    default_severity: _SeverityLiteral = "warning"
+    event_mappings: list[WebhookEventMapping] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_auth_secret(self) -> WebhookSourceConfig:
+        if self.auth_mode != "none" and not self.auth_secret:
+            msg = f"auth_secret is required when auth_mode is '{self.auth_mode}'"
+            raise ValueError(msg)
+        return self
 
 
 # -- Ingestion (top-level) --------------------------------------------------
