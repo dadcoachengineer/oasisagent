@@ -153,6 +153,8 @@ class UptimeKumaClient:
             cert_days = data.get("monitor_cert_days_remaining")
             cert_valid = data.get("monitor_cert_is_valid")
 
+            # Prometheus gauge values are always text. int(float(str(v)))
+            # handles both integer ("1") and float ("1.0") representations.
             result.append(MonitorMetrics(
                 name=name,
                 monitor_type=str(data.get("monitor_type", "")),
@@ -160,9 +162,15 @@ class UptimeKumaClient:
                 hostname=str(data.get("monitor_hostname", "")),
                 port=str(data.get("monitor_port", "")),
                 status=int(float(str(status_raw))),
-                response_time_ms=float(str(response_time)) if response_time is not None else None,
-                cert_days_remaining=int(float(str(cert_days))) if cert_days is not None else None,
-                cert_is_valid=int(float(str(cert_valid))) == 1 if cert_valid is not None else None,
+                response_time_ms=(
+                    float(str(response_time)) if response_time is not None else None
+                ),
+                cert_days_remaining=(
+                    int(float(str(cert_days))) if cert_days is not None else None
+                ),
+                cert_is_valid=(
+                    int(float(str(cert_valid))) == 1 if cert_valid is not None else None
+                ),
             ))
 
         return result
