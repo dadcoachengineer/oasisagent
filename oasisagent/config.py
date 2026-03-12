@@ -567,6 +567,22 @@ class UnifiHandlerConfig(BaseModel):
     verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
 
 
+class CloudflareHandlerConfig(BaseModel):
+    """Cloudflare handler configuration.
+
+    Executes actions against the Cloudflare API: purge cache,
+    block/unblock IPs via firewall rules, gather zone context.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    api_token: str = ""
+    zone_id: str = ""
+    account_id: str = ""
+    timeout: int = 30
+
+
 class HandlersConfig(BaseModel):
     """All handler configurations."""
 
@@ -577,6 +593,9 @@ class HandlersConfig(BaseModel):
     portainer: PortainerHandlerConfig = Field(default_factory=PortainerHandlerConfig)
     proxmox: ProxmoxHandlerConfig = Field(default_factory=ProxmoxHandlerConfig)
     unifi: UnifiHandlerConfig = Field(default_factory=UnifiHandlerConfig)
+    cloudflare: CloudflareHandlerConfig = Field(
+        default_factory=CloudflareHandlerConfig,
+    )
 
 
 # -- Guardrails -------------------------------------------------------------
