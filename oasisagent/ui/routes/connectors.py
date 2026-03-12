@@ -504,6 +504,179 @@ _build_ui_crud(
     delete_method="delete_connector",
 )
 
+# ---------------------------------------------------------------------------
+# Scanner config page (standalone — registered BEFORE services factory
+# so /services/scanners matches before /services/{row_id})
+# ---------------------------------------------------------------------------
+
+
+def _find_scanner_row(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Find the scanner row in core_services."""
+    return next((r for r in rows if r["type"] == "scanner"), None)
+
+
+def _default_scanner_config() -> dict[str, Any]:
+    """Return the default scanner config as a plain dict."""
+    from oasisagent.config import ScannerConfig
+    return ScannerConfig().model_dump()
+
+
+async def _handler_enabled(store: ConfigStore, handler_type: str) -> bool:
+    """Check whether a handler service is enabled in the store."""
+    rows = await store.list_services()
+    row = next((r for r in rows if r["type"] == handler_type), None)
+    return bool(row and row.get("enabled"))
+
+
+def _parse_scanner_form(form_data: dict[str, Any]) -> dict[str, Any]:
+    """Parse the scanner form into a ScannerConfig-shaped dict."""
+
+    def _list_str(key: str) -> list[str]:
+        text = (form_data.get(key) or "").strip()
+        if not text:
+            return []
+        return [line.strip() for line in text.split("\n") if line.strip()]
+
+    def _int(key: str, default: int) -> int:
+        raw = (form_data.get(key) or "").strip()
+        return int(raw) if raw else default
+
+    return {
+        "enabled": "enabled" in form_data,
+        "interval": _int("interval", 900),
+        "certificate_expiry": {
+            "enabled": "cert_enabled" in form_data,
+            "endpoints": _list_str("cert_endpoints"),
+            "warning_days": _int("cert_warning_days", 30),
+            "critical_days": _int("cert_critical_days", 7),
+            "interval": _int("cert_interval", 900),
+        },
+        "disk_space": {
+            "enabled": "disk_enabled" in form_data,
+            "paths": _list_str("disk_paths"),
+            "warning_threshold_pct": _int("disk_warning_pct", 85),
+            "critical_threshold_pct": _int("disk_critical_pct", 95),
+            "interval": _int("disk_interval", 900),
+        },
+        "ha_health": {
+            "enabled": "ha_enabled" in form_data,
+            "interval": _int("ha_interval", 900),
+        },
+        "docker_health": {
+            "enabled": "docker_enabled" in form_data,
+            "ignore_containers": _list_str("docker_ignore"),
+            "interval": _int("docker_interval", 900),
+        },
+    }
+
+
+@router.get("/services/scanners", response_class=HTMLResponse, name="scanner_config")
+async def scanner_page(
+    request: Request,
+    current_user: TokenPayload = Depends(require_admin),
+) -> HTMLResponse:
+    store = _get_store(request)
+    templates = _get_templates(request)
+
+    rows = await store.list_services()
+    scanner_row = _find_scanner_row(rows)
+    config = scanner_row["config"] if scanner_row else _default_scanner_config()
+
+    ha_enabled = await _handler_enabled(store, "ha_handler")
+    docker_enabled = await _handler_enabled(store, "docker_handler")
+
+    return templates.TemplateResponse(
+        "services/scanners.html",
+        {
+            **_base_context(request, current_user),
+            "config": config,
+            "ha_handler_enabled": ha_enabled,
+            "docker_handler_enabled": docker_enabled,
+            "errors": [],
+            "saved": False,
+        },
+    )
+
+
+@router.post("/services/scanners", response_class=HTMLResponse, name="scanner_save")
+async def scanner_save(
+    request: Request,
+    current_user: TokenPayload = Depends(require_admin),
+) -> HTMLResponse:
+    store = _get_store(request)
+    templates = _get_templates(request)
+
+    form = await request.form()
+    form_data = dict(form)
+    scanner_config = _parse_scanner_form(form_data)
+
+    rows = await store.list_services()
+    scanner_row = _find_scanner_row(rows)
+
+    try:
+        if scanner_row:
+            # Update existing scanner row — replace entire config
+            enabled = scanner_config.pop("enabled")
+            await store.update_service(
+                scanner_row["id"],
+                {"enabled": enabled, "config": scanner_config},
+            )
+        else:
+            # Create scanner row with enabled flag
+            enabled = scanner_config.pop("enabled")
+            await store.create_service(
+                "scanner", "scanner", scanner_config, enabled=enabled,
+            )
+    except (ValueError, ValidationError) as exc:
+        errors = (
+            _form_errors_from_validation(exc)
+            if isinstance(exc, ValidationError)
+            else [str(exc)]
+        )
+        # Re-render with errors — put enabled back for display
+        scanner_config["enabled"] = form_data.get("enabled") is not None
+        ha_enabled = await _handler_enabled(store, "ha_handler")
+        docker_enabled = await _handler_enabled(store, "docker_handler")
+        return templates.TemplateResponse(
+            "services/scanners.html",
+            {
+                **_base_context(request, current_user),
+                "config": scanner_config,
+                "ha_handler_enabled": ha_enabled,
+                "docker_handler_enabled": docker_enabled,
+                "errors": errors,
+                "saved": False,
+            },
+            status_code=422,
+        )
+
+    # Success — re-render with saved message
+    rows = await store.list_services()
+    scanner_row = _find_scanner_row(rows)
+    config = scanner_row["config"] if scanner_row else _default_scanner_config()
+
+    ha_enabled = await _handler_enabled(store, "ha_handler")
+    docker_enabled = await _handler_enabled(store, "docker_handler")
+
+    return templates.TemplateResponse(
+        "services/scanners.html",
+        {
+            **_base_context(request, current_user),
+            "config": config,
+            "ha_handler_enabled": ha_enabled,
+            "docker_handler_enabled": docker_enabled,
+            "errors": [],
+            "saved": True,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Services + Notifications CRUD (after scanner routes for correct matching)
+# ---------------------------------------------------------------------------
+
 _build_ui_crud(
     url_prefix="services",
     table="core_services",

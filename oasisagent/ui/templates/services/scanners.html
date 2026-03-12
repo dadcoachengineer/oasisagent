@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% block title %}Scanner Configuration — OasisAgent{% endblock %}
+{% block content %}
+<div class="mb-6">
+    <a href="/ui/services" class="text-sm text-gray-500 hover:text-gray-700">&larr; Back to Services</a>
+    <h1 class="text-2xl font-bold text-gray-900 mt-2">Scanner Configuration</h1>
+    <p class="text-sm text-gray-500 mt-1">Preventive scanning for certificates, disk space, HA integrations, and Docker containers</p>
+</div>
+
+{% if errors %}
+<div class="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
+    <h3 class="text-sm font-medium text-red-800">Validation errors</h3>
+    <ul class="mt-2 text-sm text-red-700 list-disc pl-5 space-y-1">
+        {% for err in errors %}
+        <li>{{ err }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if saved %}
+<div class="mb-4 bg-green-50 border border-green-200 rounded-lg p-4">
+    <p class="text-sm text-green-800">Scanner configuration saved.</p>
+</div>
+{% endif %}
+
+<form method="post" action="/ui/services/scanners"
+      hx-post="/ui/services/scanners"
+      hx-target="body"
+      class="space-y-6 max-w-3xl"
+      x-data="scannerForm()">
+
+    {# Global settings #}
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-gray-900">Global Settings</h2>
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="enabled"
+                       {% if config.enabled %}checked{% endif %}
+                       class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Enable Scanner</span>
+            </label>
+        </div>
+        <div class="mt-4">
+            <label for="interval" class="block text-sm font-medium text-gray-700">Default Interval (seconds)</label>
+            <input type="number" id="interval" name="interval"
+                   value="{{ config.interval | default(900, true) }}"
+                   min="60" required
+                   class="mt-1 block w-48 rounded border-gray-300 shadow-sm text-sm
+                          focus:ring-blue-500 focus:border-blue-500
+                          border px-3 py-2">
+            <p class="mt-1 text-xs text-gray-400">Minimum 60 seconds. Individual scanners can override.</p>
+        </div>
+    </div>
+
+    {# Certificate Expiry #}
+    <div class="bg-white rounded-lg shadow" x-data="{ open: {{ 'true' if config.certificate_expiry.enabled else 'false' }} }">
+        <button type="button" @click="open = !open"
+                class="w-full flex items-center justify-between p-6 text-left">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold text-gray-900">Certificate Expiry</h2>
+                {% if config.certificate_expiry.enabled %}
+                <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">Enabled</span>
+                {% endif %}
+            </div>
+            <svg :class="open ? 'rotate-180' : ''" class="w-5 h-5 text-gray-400 transition-transform"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </button>
+        <div x-show="open" x-collapse class="px-6 pb-6 space-y-4 border-t border-gray-100">
+            <label class="flex items-center gap-2 cursor-pointer mt-4">
+                <input type="checkbox" name="cert_enabled"
+                       {% if config.certificate_expiry.enabled %}checked{% endif %}
+                       class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Enable certificate expiry scanning</span>
+            </label>
+            <div>
+                <label for="cert_endpoints" class="block text-sm font-medium text-gray-700">Endpoints</label>
+                <textarea id="cert_endpoints" name="cert_endpoints" rows="4"
+                          class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm font-mono
+                                 focus:ring-blue-500 focus:border-blue-500
+                                 border px-3 py-2"
+                          placeholder="One endpoint per line (host:port or host)">{{ (config.certificate_expiry.endpoints or []) | join('\n') }}</textarea>
+                <p class="mt-1 text-xs text-gray-400">e.g. example.com:443 or example.com (defaults to port 443)</p>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label for="cert_warning_days" class="block text-sm font-medium text-gray-700">Warning (days)</label>
+                    <input type="number" id="cert_warning_days" name="cert_warning_days"
+                           value="{{ config.certificate_expiry.warning_days | default(30, true) }}"
+                           min="1"
+                           class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                                  focus:ring-blue-500 focus:border-blue-500
+                                  border px-3 py-2">
+                </div>
+                <div>
+                    <label for="cert_critical_days" class="block text-sm font-medium text-gray-700">Critical (days)</label>
+                    <input type="number" id="cert_critical_days" name="cert_critical_days"
+                           value="{{ config.certificate_expiry.critical_days | default(7, true) }}"
+                           min="1"
+                           class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                                  focus:ring-blue-500 focus:border-blue-500
+                                  border px-3 py-2">
+                </div>
+            </div>
+            <div>
+                <label for="cert_interval" class="block text-sm font-medium text-gray-700">Interval Override (seconds)</label>
+                <input type="number" id="cert_interval" name="cert_interval"
+                       value="{{ config.certificate_expiry.interval | default(900, true) }}"
+                       min="60"
+                       class="mt-1 block w-48 rounded border-gray-300 shadow-sm text-sm
+                              focus:ring-blue-500 focus:border-blue-500
+                              border px-3 py-2">
+                <p class="mt-1 text-xs text-gray-400">Leave at default to use global interval</p>
+            </div>
+        </div>
+    </div>
+
+    {# Disk Space #}
+    <div class="bg-white rounded-lg shadow" x-data="{ open: {{ 'true' if config.disk_space.enabled else 'false' }} }">
+        <button type="button" @click="open = !open"
+                class="w-full flex items-center justify-between p-6 text-left">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold text-gray-900">Disk Space</h2>
+                {% if config.disk_space.enabled %}
+                <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">Enabled</span>
+                {% endif %}
+            </div>
+            <svg :class="open ? 'rotate-180' : ''" class="w-5 h-5 text-gray-400 transition-transform"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+        </button>
+        <div x-show="open" x-collapse class="px-6 pb-6 space-y-4 border-t border-gray-100">
+            <label class="flex items-center gap-2 cursor-pointer mt-4">
+                <input type="checkbox" name="disk_enabled"
+                       {% if config.disk_space.enabled %}checked{% endif %}
+                       class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Enable disk space scanning</span>
+            </label>
+            <div>
+                <label for="disk_paths" class="block text-sm font-medium text-gray-700">Paths to Monitor</label>
+                <textarea id="disk_paths" name="disk_paths" rows="3"
+                          class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm font-mono
+                                 focus:ring-blue-500 focus:border-blue-500
+                                 border px-3 py-2"
+                          placeholder="One path per line">{{ (config.disk_space.paths or []) | join('\n') }}</textarea>
+                <p class="mt-1 text-xs text-gray-400">e.g. / or /data or /var/log</p>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label for="disk_warning_pct" class="block text-sm font-medium text-gray-700">Warning (%)</label>
+                    <input type="number" id="disk_warning_pct" name="disk_warning_pct"
+                           value="{{ config.disk_space.warning_threshold_pct | default(85, true) }}"
+                           min="1" max="100"
+                           class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                                  focus:ring-blue-500 focus:border-blue-500
+                                  border px-3 py-2">
+                </div>
+                <div>
+                    <label for="disk_critical_pct" class="block text-sm font-medium text-gray-700">Critical (%)</label>
+                    <input type="number" id="disk_critical_pct" name="disk_critical_pct"
+                           value="{{ config.disk_space.critical_threshold_pct | default(95, true) }}"
+                           min="1" max="100"
+                           class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                                  focus:ring-blue-500 focus:border-blue-500
+                                  border px-3 py-2">
+                </div>
+            </div>
+            <div>
+                <label for="disk_interval" class="block text-sm font-medium text-gray-700">Interval Override (seconds)</label>
+                <input type="number" id="disk_interval" name="disk_interval"
+                       value="{{ config.disk_space.interval | default(900, true) }}"
+                       min="60"
+                       class="mt-1 block w-48 rounded border-gray-300 shadow-sm text-sm
+                              focus:ring-blue-500 focus:border-blue-500
+                              border px-3 py-2">
+            </div>
+        </div>
+    </div>
+
+    {# HA Health #}
+    <div class="bg-white rounded-lg shadow" x-data="{ open: {{ 'true' if config.ha_health.enabled else 'false' }} }">
+        <button type="button" @click="open = !open"
+                class="w-full flex items-center justify-between p-6 text-left"
+                {% if not ha_handler_enabled %}disabled{% endif %}>
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold text-gray-900 {% if not ha_handler_enabled %}text-gray-400{% endif %}">
+                    HA Integration Health
+                </h2>
+                {% if config.ha_health.enabled and ha_handler_enabled %}
+                <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">Enabled</span>
+                {% endif %}
+            </div>
+            {% if ha_handler_enabled %}
+            <svg :class="open ? 'rotate-180' : ''" class="w-5 h-5 text-gray-400 transition-transform"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+            {% endif %}
+        </button>
+        {% if not ha_handler_enabled %}
+        <div class="px-6 pb-6">
+            <p class="text-sm text-amber-600 bg-amber-50 rounded p-3">
+                Enable the Home Assistant handler first to use this scanner.
+                <a href="/ui/services" class="underline hover:text-amber-800">Go to Services</a>
+            </p>
+        </div>
+        {% else %}
+        <div x-show="open" x-collapse class="px-6 pb-6 space-y-4 border-t border-gray-100">
+            <label class="flex items-center gap-2 cursor-pointer mt-4">
+                <input type="checkbox" name="ha_enabled"
+                       {% if config.ha_health.enabled %}checked{% endif %}
+                       class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Enable HA integration health scanning</span>
+            </label>
+            <div>
+                <label for="ha_interval" class="block text-sm font-medium text-gray-700">Interval Override (seconds)</label>
+                <input type="number" id="ha_interval" name="ha_interval"
+                       value="{{ config.ha_health.interval | default(900, true) }}"
+                       min="60"
+                       class="mt-1 block w-48 rounded border-gray-300 shadow-sm text-sm
+                              focus:ring-blue-500 focus:border-blue-500
+                              border px-3 py-2">
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Docker Health #}
+    <div class="bg-white rounded-lg shadow" x-data="{ open: {{ 'true' if config.docker_health.enabled else 'false' }} }">
+        <button type="button" @click="open = !open"
+                class="w-full flex items-center justify-between p-6 text-left"
+                {% if not docker_handler_enabled %}disabled{% endif %}>
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold text-gray-900 {% if not docker_handler_enabled %}text-gray-400{% endif %}">
+                    Docker Health
+                </h2>
+                {% if config.docker_health.enabled and docker_handler_enabled %}
+                <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">Enabled</span>
+                {% endif %}
+            </div>
+            {% if docker_handler_enabled %}
+            <svg :class="open ? 'rotate-180' : ''" class="w-5 h-5 text-gray-400 transition-transform"
+                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+            {% endif %}
+        </button>
+        {% if not docker_handler_enabled %}
+        <div class="px-6 pb-6">
+            <p class="text-sm text-amber-600 bg-amber-50 rounded p-3">
+                Enable the Docker handler first to use this scanner.
+                <a href="/ui/services" class="underline hover:text-amber-800">Go to Services</a>
+            </p>
+        </div>
+        {% else %}
+        <div x-show="open" x-collapse class="px-6 pb-6 space-y-4 border-t border-gray-100">
+            <label class="flex items-center gap-2 cursor-pointer mt-4">
+                <input type="checkbox" name="docker_enabled"
+                       {% if config.docker_health.enabled %}checked{% endif %}
+                       class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">Enable Docker container health scanning</span>
+            </label>
+            <div>
+                <label for="docker_ignore" class="block text-sm font-medium text-gray-700">Ignore Containers</label>
+                <textarea id="docker_ignore" name="docker_ignore" rows="3"
+                          class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm font-mono
+                                 focus:ring-blue-500 focus:border-blue-500
+                                 border px-3 py-2"
+                          placeholder="One container name per line">{{ (config.docker_health.ignore_containers or []) | join('\n') }}</textarea>
+                <p class="mt-1 text-xs text-gray-400">Container names to skip during health checks</p>
+            </div>
+            <div>
+                <label for="docker_interval" class="block text-sm font-medium text-gray-700">Interval Override (seconds)</label>
+                <input type="number" id="docker_interval" name="docker_interval"
+                       value="{{ config.docker_health.interval | default(900, true) }}"
+                       min="60"
+                       class="mt-1 block w-48 rounded border-gray-300 shadow-sm text-sm
+                              focus:ring-blue-500 focus:border-blue-500
+                              border px-3 py-2">
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Submit #}
+    <div class="flex items-center gap-3">
+        <button type="submit"
+                class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+            Save Scanner Configuration
+        </button>
+        <a href="/ui/services" class="text-sm text-gray-500 hover:text-gray-700">Cancel</a>
+    </div>
+</form>
+
+<script>
+function scannerForm() {
+    return {};
+}
+</script>
+{% endblock %}
