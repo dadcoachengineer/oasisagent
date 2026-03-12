@@ -11,13 +11,16 @@
     <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
     <link rel="stylesheet" href="/ui/static/oasis.css">
     <script>
-        // Inject CSRF token into all HTMX requests
+        // Inject CSRF token into all HTMX requests.
+        // Read from cookie (not meta tag) so it stays in sync after
+        // the sliding-window middleware reissues the JWT + CSRF pair.
+        function getCsrfToken() {
+            var match = document.cookie.match(/(?:^|;\s*)oasis_csrf_token=([^;]+)/);
+            return match ? match[1] : '';
+        }
         document.addEventListener('DOMContentLoaded', function() {
             document.body.addEventListener('htmx:configRequest', function(e) {
-                var csrf = document.querySelector('meta[name="csrf-token"]');
-                if (csrf) {
-                    e.detail.headers['X-CSRF-Token'] = csrf.content;
-                }
+                e.detail.headers['X-CSRF-Token'] = getCsrfToken();
             });
         });
     </script>
