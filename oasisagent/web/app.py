@@ -67,6 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
        is written to SQLite, YAML is permanently ignored.
     3. Otherwise, load config from SQLite.
     """
+    from oasisagent.audit.reader import AuditReader
     from oasisagent.bootstrap import configure_logging, load_file_secrets
     from oasisagent.config import load_config
     from oasisagent.db.config_store import ConfigStore
@@ -110,9 +111,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.start_time = time.monotonic()
     app.state.jwt_signing_key = derive_jwt_key(secret_key)
 
+    # Audit reader for Event Explorer UI (None if InfluxDB disabled)
+    audit_reader: AuditReader | None = None
+    if config.audit.influxdb.enabled:
+        audit_reader = AuditReader(config.audit)
+        await audit_reader.start()
+    app.state.audit_reader = audit_reader
+
     yield
 
     # Shutdown
+    if audit_reader is not None:
+        await audit_reader.stop()
     await orchestrator.stop()
     loop_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
