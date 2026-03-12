@@ -35,6 +35,7 @@ from oasisagent.config import (
     MqttNotificationConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
+    ScannerConfig,
     TelegramNotificationConfig,
     UnifiAdapterConfig,
     UnifiHandlerConfig,
@@ -135,6 +136,9 @@ CORE_SERVICE_TYPES: dict[str, TypeMeta] = {
     ),
     "circuit_breaker": TypeMeta(
         model=CircuitBreakerConfig,
+    ),
+    "scanner": TypeMeta(
+        model=ScannerConfig,
     ),
 }
 
