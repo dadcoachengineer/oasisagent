@@ -1,0 +1,30 @@
+<td class="px-4 py-3 text-sm font-medium text-gray-900">{{ row.name }}</td>
+<td class="px-4 py-3 text-sm text-gray-500">
+    <span class="px-2 py-0.5 rounded bg-gray-100 text-xs font-mono">{{ row.type }}</span>
+</td>
+<td class="px-4 py-3 text-sm">
+    {% if row.enabled %}
+    <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">Enabled</span>
+    {% else %}
+    <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs">Disabled</span>
+    {% endif %}
+</td>
+<td class="px-4 py-3 text-sm text-gray-500">{{ row.created_at[:10] }}</td>
+{% if current_user.role == "admin" %}
+<td class="px-4 py-3 text-sm text-right space-x-2">
+    <button hx-post="/ui/{{ table }}/{{ row.id }}/toggle"
+            class="text-blue-600 hover:text-blue-800 text-xs font-medium">
+        {% if row.enabled %}Disable{% else %}Enable{% endif %}
+    </button>
+    {% if table == "services" and row.type == "scanner" %}
+    <a href="/ui/services/scanners" class="text-gray-600 hover:text-gray-800 text-xs font-medium">Configure</a>
+    {% else %}
+    <a href="/ui/{{ table }}/{{ row.id }}/edit" class="text-gray-600 hover:text-gray-800 text-xs font-medium">Edit</a>
+    {% endif %}
+    <button hx-post="/ui/{{ table }}/{{ row.id }}/delete"
+            hx-confirm="Delete {{ row.name }}? This cannot be undone."
+            class="text-red-600 hover:text-red-800 text-xs font-medium">
+        Delete
+    </button>
+</td>
+{% endif %}

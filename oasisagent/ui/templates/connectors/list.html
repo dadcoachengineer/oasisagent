@@ -7,10 +7,10 @@
         <p class="text-sm text-gray-500">{{ rows | length }} configured</p>
     </div>
     {% if current_user.role == "admin" %}
-    <button class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700"
-            disabled title="CRUD operations coming in PR B">
+    <a href="/ui/{{ table }}/new"
+       class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
         Add New
-    </button>
+    </a>
     {% endif %}
 </div>
 
@@ -23,23 +23,16 @@
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                {% if current_user.role == "admin" %}
+                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                {% endif %}
             </tr>
         </thead>
         <tbody class="divide-y divide-gray-200">
             {% for row in rows %}
-            <tr class="hover:bg-gray-50">
-                <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ row.name }}</td>
-                <td class="px-4 py-3 text-sm text-gray-500">
-                    <span class="px-2 py-0.5 rounded bg-gray-100 text-xs font-mono">{{ row.type }}</span>
-                </td>
-                <td class="px-4 py-3 text-sm">
-                    {% if row.enabled %}
-                    <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">Enabled</span>
-                    {% else %}
-                    <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs">Disabled</span>
-                    {% endif %}
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-500">{{ row.created_at[:10] }}</td>
+            <tr id="row-{{ row.id }}" class="hover:bg-gray-50"
+                hx-target="#row-{{ row.id }}" hx-swap="outerHTML">
+                {% include "connectors/_row_cells.html" %}
             </tr>
             {% endfor %}
         </tbody>
@@ -47,7 +40,13 @@
 </div>
 {% else %}
 <div class="bg-white rounded-lg shadow p-8 text-center">
-    <p class="text-gray-500">No {{ title | lower }} configured yet.</p>
+    <p class="text-gray-500 mb-4">No {{ title | lower }} configured yet.</p>
+    {% if current_user.role == "admin" %}
+    <a href="/ui/{{ table }}/new"
+       class="inline-block bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+        Get Started
+    </a>
+    {% endif %}
 </div>
 {% endif %}
 {% endblock %}
