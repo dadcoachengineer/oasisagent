@@ -188,6 +188,35 @@ ingestion:
         severity: warning
 
 # -----------------------------------------------------------------------------
+# Scanner — Preventive scanning framework
+# Proactive health checks that catch issues before they cause outages.
+# Each scanner runs as its own ingestion adapter on a configurable interval.
+# -----------------------------------------------------------------------------
+scanner:
+  enabled: false
+  interval: 900                    # Global default interval (seconds); per-check overrides below
+
+  # TLS certificate expiry — checks cert validity from OasisAgent's vantage point
+  certificate_expiry:
+    enabled: false
+    endpoints:                     # hostname or hostname:port
+      - example.com
+      - nas.example.com:8443
+    warning_days: 30               # Emit WARNING when cert expires within N days
+    critical_days: 7               # Emit ERROR when cert expires within N days
+    interval: 900                  # Check interval (seconds); min 60
+
+  # Disk space usage — monitors local filesystem paths
+  disk_space:
+    enabled: false
+    paths:
+      - /
+      - /var/lib/docker
+    warning_threshold_pct: 85      # Emit WARNING when usage >= N%
+    critical_threshold_pct: 95     # Emit ERROR when usage >= N%
+    interval: 900                  # Check interval (seconds); min 60
+
+# -----------------------------------------------------------------------------
 # LLM — Language model configuration
 # OasisAgent is provider-agnostic. Any OpenAI-compatible endpoint works:
 # Ollama, LM Studio, vLLM, llama.cpp, or any cloud provider via LiteLLM.
