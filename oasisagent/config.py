@@ -413,6 +413,44 @@ class CloudflareAdapterConfig(BaseModel):
     timeout: int = 30
 
 
+# -- Scanner ----------------------------------------------------------------
+
+
+class CertExpiryCheckConfig(BaseModel):
+    """TLS certificate expiry scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    endpoints: list[str] = Field(default_factory=list)
+    warning_days: int = 30
+    critical_days: int = 7
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
+class DiskSpaceCheckConfig(BaseModel):
+    """Disk space usage scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    paths: list[str] = Field(default_factory=list)
+    warning_threshold_pct: int = 85
+    critical_threshold_pct: int = 95
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
+class ScannerConfig(BaseModel):
+    """Preventive scanning framework configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    interval: Annotated[int, Field(ge=60)] = 900
+    certificate_expiry: CertExpiryCheckConfig = Field(default_factory=CertExpiryCheckConfig)
+    disk_space: DiskSpaceCheckConfig = Field(default_factory=DiskSpaceCheckConfig)
+
+
 # -- Ingestion (top-level) --------------------------------------------------
 
 
@@ -734,6 +772,7 @@ class OasisAgentConfig(BaseModel):
 
     agent: AgentConfig = Field(default_factory=AgentConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    scanner: ScannerConfig = Field(default_factory=ScannerConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     handlers: HandlersConfig = Field(default_factory=HandlersConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)

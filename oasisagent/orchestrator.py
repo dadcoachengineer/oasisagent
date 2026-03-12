@@ -291,6 +291,23 @@ class Orchestrator:
                 HttpPollerAdapter(cfg.ingestion.http_poller_targets, self._queue)
             )
 
+        # 14b. Scanner adapters (each scanner is its own adapter)
+        if cfg.scanner.enabled:
+            if cfg.scanner.certificate_expiry.enabled:
+                from oasisagent.scanner.cert_expiry import CertExpiryScannerAdapter
+
+                interval = cfg.scanner.certificate_expiry.interval or cfg.scanner.interval
+                self._adapters.append(CertExpiryScannerAdapter(
+                    cfg.scanner.certificate_expiry, self._queue, interval,
+                ))
+            if cfg.scanner.disk_space.enabled:
+                from oasisagent.scanner.disk_space import DiskSpaceScannerAdapter
+
+                interval = cfg.scanner.disk_space.interval or cfg.scanner.interval
+                self._adapters.append(DiskSpaceScannerAdapter(
+                    cfg.scanner.disk_space, self._queue, interval,
+                ))
+
         # 15. Metrics server (Prometheus)
         if cfg.agent.metrics_port > 0:
             from oasisagent import metrics as metrics_mod
