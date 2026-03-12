@@ -119,6 +119,62 @@ class TestPrometheusParser:
         assert monitors == []
 
 
+class TestNaNHandling:
+    """Prometheus can emit NaN/Inf for monitors with no data yet."""
+
+    def test_nan_status_skips_monitor(self) -> None:
+        client = UptimeKumaClient("http://localhost:3001", "test-key")
+        metrics = (
+            'monitor_status{monitor_name="NoData",monitor_type="http",'
+            'monitor_url="http://x.com",monitor_hostname="",'
+            'monitor_port=""} NaN\n'
+        )
+        monitors = client._parse_metrics(metrics)
+        assert monitors == []
+
+    def test_nan_response_time_becomes_none(self) -> None:
+        client = UptimeKumaClient("http://localhost:3001", "test-key")
+        metrics = (
+            'monitor_status{monitor_name="X",monitor_type="http",'
+            'monitor_url="http://x.com",monitor_hostname="",'
+            'monitor_port=""} 1\n'
+            'monitor_response_time{monitor_name="X",monitor_type="http",'
+            'monitor_url="http://x.com",monitor_hostname="",'
+            'monitor_port=""} NaN\n'
+        )
+        monitors = client._parse_metrics(metrics)
+        assert len(monitors) == 1
+        assert monitors[0].response_time_ms is None
+
+    def test_nan_cert_days_becomes_none(self) -> None:
+        client = UptimeKumaClient("http://localhost:3001", "test-key")
+        metrics = (
+            'monitor_status{monitor_name="X",monitor_type="http",'
+            'monitor_url="http://x.com",monitor_hostname="",'
+            'monitor_port=""} 1\n'
+            'monitor_cert_days_remaining{monitor_name="X",'
+            'monitor_type="http",monitor_url="http://x.com",'
+            'monitor_hostname="",monitor_port=""} NaN\n'
+        )
+        monitors = client._parse_metrics(metrics)
+        assert len(monitors) == 1
+        assert monitors[0].cert_days_remaining is None
+
+    def test_inf_response_time_becomes_none(self) -> None:
+        client = UptimeKumaClient("http://localhost:3001", "test-key")
+        metrics = (
+            'monitor_status{monitor_name="X",monitor_type="http",'
+            'monitor_url="http://x.com",monitor_hostname="",'
+            'monitor_port=""} 1\n'
+            'monitor_response_time{monitor_name="X",monitor_type="http",'
+            'monitor_url="http://x.com",monitor_hostname="",'
+            'monitor_port=""} +Inf\n'
+        )
+        monitors = client._parse_metrics(metrics)
+        assert len(monitors) == 1
+        assert monitors[0].response_time_ms is None
+
+
 class TestClientLifecycle:
     @pytest.mark.asyncio
     async def test_fetch_without_start_raises(self) -> None:

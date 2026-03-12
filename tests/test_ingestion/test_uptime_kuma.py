@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from oasisagent.clients.uptime_kuma import MonitorMetrics
 from oasisagent.config import UptimeKumaAdapterConfig
@@ -279,3 +280,48 @@ class TestProcessMonitors:
         events = adapter._process_monitors([_make_monitor(status=0)])
         assert events[0].payload["monitor_type"] == "http"
         assert events[0].payload["url"] == "https://google.com"
+
+
+# ---------------------------------------------------------------------------
+# Startup retry behaviour
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+
+class TestStartupRetry:
+    @pytest.mark.asyncio
+    async def test_retries_on_initial_connection_failure(self) -> None:
+        """start() should retry with back-off, not return permanently."""
+        adapter = _make_adapter()
+
+        call_count = 0
+        original_sleep = asyncio.sleep
+
+        async def _start_side_effect() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ConnectionError("refused")
+
+        async def _noop_sleep(_: float) -> None:
+            await original_sleep(0)
+
+        adapter._client = AsyncMock()
+        adapter._client.start = AsyncMock(side_effect=_start_side_effect)
+        adapter._client.fetch_metrics = AsyncMock(return_value=[])
+        adapter._client.close = AsyncMock()
+
+        with patch("oasisagent.ingestion.uptime_kuma.asyncio.sleep", side_effect=_noop_sleep):
+            task = asyncio.create_task(adapter.start())
+            # Let event loop drain — retries + poll loop start
+            for _ in range(200):
+                await original_sleep(0)
+            adapter._stopping = True
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                task.cancel()
+
+        assert call_count >= 3
+        assert adapter._connected is True

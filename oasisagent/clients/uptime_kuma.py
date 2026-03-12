@@ -18,6 +18,7 @@ Unrecognized lines (``# HELP``, ``# TYPE``, other metrics) are skipped.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 
@@ -155,22 +156,39 @@ class UptimeKumaClient:
 
             # Prometheus gauge values are always text. int(float(str(v)))
             # handles both integer ("1") and float ("1.0") representations.
+            # Guard against NaN/Inf which Prometheus can emit for no-data.
+            status_f = float(str(status_raw))
+            if math.isnan(status_f) or math.isinf(status_f):
+                continue  # No usable status — skip monitor
+
+            resp_f = (
+                float(str(response_time)) if response_time is not None else None
+            )
+            if resp_f is not None and (math.isnan(resp_f) or math.isinf(resp_f)):
+                resp_f = None
+
+            cert_d: int | None = None
+            if cert_days is not None:
+                cert_f = float(str(cert_days))
+                if not (math.isnan(cert_f) or math.isinf(cert_f)):
+                    cert_d = int(cert_f)
+
+            cert_v: bool | None = None
+            if cert_valid is not None:
+                cv_f = float(str(cert_valid))
+                if not (math.isnan(cv_f) or math.isinf(cv_f)):
+                    cert_v = int(cv_f) == 1
+
             result.append(MonitorMetrics(
                 name=name,
                 monitor_type=str(data.get("monitor_type", "")),
                 url=str(data.get("monitor_url", "")),
                 hostname=str(data.get("monitor_hostname", "")),
                 port=str(data.get("monitor_port", "")),
-                status=int(float(str(status_raw))),
-                response_time_ms=(
-                    float(str(response_time)) if response_time is not None else None
-                ),
-                cert_days_remaining=(
-                    int(float(str(cert_days))) if cert_days is not None else None
-                ),
-                cert_is_valid=(
-                    int(float(str(cert_valid))) == 1 if cert_valid is not None else None
-                ),
+                status=int(status_f),
+                response_time_ms=resp_f,
+                cert_days_remaining=cert_d,
+                cert_is_valid=cert_v,
             ))
 
         return result
