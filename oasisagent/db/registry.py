@@ -19,6 +19,7 @@ from pydantic import BaseModel  # noqa: TC002 — used at runtime in TypeMeta
 
 from oasisagent.config import (
     CircuitBreakerConfig,
+    CloudflareAdapterConfig,
     DockerHandlerConfig,
     EmailNotificationConfig,
     GuardrailsConfig,
@@ -77,6 +78,10 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "unifi": TypeMeta(
         model=UnifiAdapterConfig,
         secret_fields=frozenset({"password"}),
+    ),
+    "cloudflare": TypeMeta(
+        model=CloudflareAdapterConfig,
+        secret_fields=frozenset({"api_token"}),
     ),
 }
 
