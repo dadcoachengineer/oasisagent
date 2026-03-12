@@ -413,6 +413,24 @@ class CloudflareAdapterConfig(BaseModel):
     timeout: int = 30
 
 
+# -- Uptime Kuma ------------------------------------------------------------
+
+
+class UptimeKumaAdapterConfig(BaseModel):
+    """Uptime Kuma Prometheus metrics polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    response_time_threshold_ms: int = 5000
+    cert_warning_days: int = 30
+    cert_critical_days: int = 7
+
+
 # -- Scanner ----------------------------------------------------------------
 
 
@@ -466,6 +484,9 @@ class IngestionConfig(BaseModel):
     unifi: UnifiAdapterConfig = Field(default_factory=UnifiAdapterConfig)
     cloudflare: CloudflareAdapterConfig = Field(
         default_factory=CloudflareAdapterConfig,
+    )
+    uptime_kuma: UptimeKumaAdapterConfig = Field(
+        default_factory=UptimeKumaAdapterConfig,
     )
 
 
