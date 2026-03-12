@@ -58,8 +58,7 @@ class TestConnectorCreateForm:
             data={
                 "type": "mqtt",
                 "name": "test-mqtt",
-                "broker_host": "mqtt.example.com",
-                "broker_port": "1883",
+                "broker": "mqtt://mqtt.example.com:1883",
             },
         )
         # Success → 204 with HX-Redirect
@@ -79,8 +78,7 @@ class TestConnectorCreateForm:
             data={
                 "type": "mqtt",
                 "name": "dup-mqtt",
-                "broker_host": "mqtt.example.com",
-                "broker_port": "1883",
+                "broker": "mqtt://mqtt.example.com:1883",
             },
         )
         # Create duplicate
@@ -89,8 +87,7 @@ class TestConnectorCreateForm:
             data={
                 "type": "mqtt",
                 "name": "dup-mqtt",
-                "broker_host": "mqtt2.example.com",
-                "broker_port": "1883",
+                "broker": "mqtt://mqtt2.example.com:1883",
             },
         )
         assert resp.status_code == 422
@@ -113,8 +110,7 @@ class TestConnectorEdit:
             data={
                 "type": "mqtt",
                 "name": "edit-test",
-                "broker_host": "mqtt.example.com",
-                "broker_port": "1883",
+                "broker": "mqtt://mqtt.example.com:1883",
             },
         )
 
@@ -138,8 +134,7 @@ class TestConnectorEdit:
             "/ui/connectors/1",
             data={
                 "name": "updated-mqtt",
-                "broker_host": "new-host.example.com",
-                "broker_port": "1884",
+                "broker": "mqtt://new-host.example.com:1884",
             },
         )
         assert resp.status_code == 204
@@ -154,7 +149,7 @@ class TestConnectorEdit:
     ) -> None:
         resp = await auth_client.post(
             "/ui/connectors/999",
-            data={"name": "nope", "broker_host": "x"},
+            data={"name": "nope", "broker": "mqtt://x:1883"},
         )
         assert resp.status_code == 404
 
@@ -167,8 +162,7 @@ class TestConnectorDelete:
             data={
                 "type": "mqtt",
                 "name": "delete-me",
-                "broker_host": "mqtt.example.com",
-                "broker_port": "1883",
+                "broker": "mqtt://mqtt.example.com:1883",
             },
         )
         # Delete
@@ -196,8 +190,7 @@ class TestConnectorToggle:
             data={
                 "type": "mqtt",
                 "name": "toggle-test",
-                "broker_host": "mqtt.example.com",
-                "broker_port": "1883",
+                "broker": "mqtt://mqtt.example.com:1883",
             },
         )
         # Toggle — should return the _row.html partial

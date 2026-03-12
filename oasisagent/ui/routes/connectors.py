@@ -292,6 +292,10 @@ def _build_ui_crud(
                 status_code=422,
             )
         except sqlite3.IntegrityError:
+            config_display = {
+                k: v for k, v in config.items()
+                if not any(s.name == k and s.input_type == "password" for s in specs)
+            }
             return templates.TemplateResponse(
                 "connectors/form.html",
                 {
@@ -302,7 +306,7 @@ def _build_ui_crud(
                     "type_name": type_name,
                     "type_display_name": get_display_name(type_name),
                     "specs": specs,
-                    "config": config,
+                    "config": config_display,
                     "name": name,
                     "errors": [f"Name already exists: {name}"],
                 },
