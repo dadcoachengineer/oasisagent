@@ -134,7 +134,7 @@ class TestCallbackGauges:
         _update_callback_gauges()
         assert QUEUE_DEPTH._value.get() == 0
 
-    def test_pending_actions_reads_from_pending_queue(self) -> None:
+    async def test_pending_actions_reads_from_pending_queue(self) -> None:
         queue = EventQueue(max_size=100)
         pending = PendingQueue()
 
@@ -145,8 +145,8 @@ class TestCallbackGauges:
             params={},
             risk_tier=RiskTier.RECOMMEND,
         )
-        pending.add("evt-1", action, "test diagnosis", timeout_minutes=30)
-        pending.add("evt-2", action, "test diagnosis", timeout_minutes=30)
+        await pending.add("evt-1", action, "test diagnosis", timeout_minutes=30)
+        await pending.add("evt-2", action, "test diagnosis", timeout_minutes=30)
 
         set_callback_sources(queue, pending)
         _update_callback_gauges()
@@ -206,7 +206,7 @@ class TestMetricsServer:
 
 
 class TestPendingQueueCount:
-    def test_pending_count_with_mixed_statuses(self) -> None:
+    async def test_pending_count_with_mixed_statuses(self) -> None:
         queue = PendingQueue()
         action = RecommendedAction(
             description="test",
@@ -215,16 +215,16 @@ class TestPendingQueueCount:
             params={},
             risk_tier=RiskTier.RECOMMEND,
         )
-        p1 = queue.add("evt-1", action, "diag", timeout_minutes=30)
-        p2 = queue.add("evt-2", action, "diag", timeout_minutes=30)
-        queue.add("evt-3", action, "diag", timeout_minutes=30)
+        p1 = await queue.add("evt-1", action, "diag", timeout_minutes=30)
+        p2 = await queue.add("evt-2", action, "diag", timeout_minutes=30)
+        await queue.add("evt-3", action, "diag", timeout_minutes=30)
 
         assert queue.pending_count == 3
 
-        queue.approve(p1.id)
+        await queue.approve(p1.id)
         assert queue.pending_count == 2
 
-        queue.reject(p2.id)
+        await queue.reject(p2.id)
         assert queue.pending_count == 1
 
     def test_pending_count_empty(self) -> None:

@@ -416,7 +416,7 @@ class TestVerifyInApprovalDispatch:
         orchestrator._pending_queue = PendingQueue()
         action = _make_action()
         action = action.model_copy(update={"risk_tier": RiskTier.RECOMMEND})
-        pending = orchestrator._pending_queue.add(
+        pending = await orchestrator._pending_queue.add(
             event_id="evt-1",
             action=action,
             diagnosis="Test",
