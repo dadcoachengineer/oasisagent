@@ -764,6 +764,10 @@ class Orchestrator:
                     action=action,
                     diagnosis=result.diagnosis,
                     timeout_minutes=self._config.guardrails.approval_timeout_minutes,
+                    entity_id=event.entity_id,
+                    severity=event.severity.value,
+                    source=event.source,
+                    system=event.system,
                 )
                 await self._publish_pending_action(pending)
                 await self._publish_pending_list()
@@ -844,6 +848,10 @@ class Orchestrator:
             action=action,
             diagnosis=result.diagnosis,
             timeout_minutes=self._config.guardrails.approval_timeout_minutes,
+            entity_id=event.entity_id,
+            severity=event.severity.value,
+            source=event.source,
+            system=event.system,
         )
         await self._publish_pending_action(pending)
         await self._publish_pending_list()

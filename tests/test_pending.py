@@ -70,6 +70,33 @@ class TestPendingQueueAdd:
         p2 = queue.add("e2", _make_action(), "d2", 30)
         assert p1.id != p2.id
 
+    def test_add_with_event_context(self) -> None:
+        queue = PendingQueue()
+        pending = queue.add(
+            event_id="evt-1",
+            action=_make_action(),
+            diagnosis="test",
+            timeout_minutes=30,
+            entity_id="sensor.temperature",
+            severity="warning",
+            source="mqtt",
+            system="homeassistant",
+        )
+
+        assert pending.entity_id == "sensor.temperature"
+        assert pending.severity == "warning"
+        assert pending.source == "mqtt"
+        assert pending.system == "homeassistant"
+
+    def test_add_without_event_context_defaults_to_empty(self) -> None:
+        queue = PendingQueue()
+        pending = queue.add("evt-1", _make_action(), "test", 30)
+
+        assert pending.entity_id == ""
+        assert pending.severity == ""
+        assert pending.source == ""
+        assert pending.system == ""
+
 
 # ---------------------------------------------------------------------------
 # PendingQueue.approve
@@ -261,6 +288,23 @@ class TestPendingQueuePayload:
         assert payload[0]["action"]["handler"] == "homeassistant"
         assert payload[0]["action"]["operation"] == "restart_integration"
 
+    def test_to_list_payload_includes_event_context(self) -> None:
+        queue = PendingQueue()
+        queue.add(
+            "evt-1", _make_action(), "ZWave crash", 30,
+            entity_id="sensor.temp",
+            severity="critical",
+            source="mqtt",
+            system="homeassistant",
+        )
+
+        payload = queue.to_list_payload()
+
+        assert payload[0]["entity_id"] == "sensor.temp"
+        assert payload[0]["severity"] == "critical"
+        assert payload[0]["source"] == "mqtt"
+        assert payload[0]["system"] == "homeassistant"
+
 
 # ---------------------------------------------------------------------------
 # PendingAction model
@@ -287,3 +331,39 @@ class TestPendingActionModel:
         assert data["status"] == "pending"
         assert data["event_id"] == "evt-1"
         assert data["action"]["risk_tier"] == "recommend"
+
+    def test_pending_action_serialization_with_context(self) -> None:
+        pending = PendingAction(
+            event_id="evt-1",
+            action=_make_action(),
+            diagnosis="test",
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            entity_id="sensor.temperature",
+            severity="warning",
+            source="mqtt",
+            system="homeassistant",
+        )
+
+        data = pending.model_dump(mode="json")
+        assert data["entity_id"] == "sensor.temperature"
+        assert data["severity"] == "warning"
+        assert data["source"] == "mqtt"
+        assert data["system"] == "homeassistant"
+
+    def test_pending_action_deserialization_without_context(self) -> None:
+        """Backward compat: deserialize without the new context fields."""
+        data = {
+            "id": "test-id",
+            "event_id": "evt-1",
+            "action": _make_action().model_dump(),
+            "diagnosis": "test",
+            "created_at": datetime.now(UTC).isoformat(),
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+            "status": "pending",
+        }
+
+        pending = PendingAction.model_validate(data)
+        assert pending.entity_id == ""
+        assert pending.severity == ""
+        assert pending.source == ""
+        assert pending.system == ""

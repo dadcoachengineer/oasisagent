@@ -7,6 +7,22 @@
     {% endif %}
     <div class="flex items-start justify-between">
         <div class="flex-1 min-w-0">
+            {# Entity + severity context #}
+            {% if action.entity_id %}
+            <div class="flex items-center gap-2 mb-2">
+                <span class="text-sm font-semibold text-gray-800 font-mono">{{ action.entity_id }}</span>
+                {% if action.severity %}
+                <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                    {% if action.severity == 'critical' %}bg-red-100 text-red-700
+                    {% elif action.severity == 'warning' %}bg-amber-100 text-amber-700
+                    {% elif action.severity == 'info' %}bg-blue-100 text-blue-700
+                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ action.severity }}
+                </span>
+                {% endif %}
+            </div>
+            {% endif %}
+
             {# Handler + operation badge #}
             <div class="flex items-center gap-2 mb-2">
                 <span class="px-2 py-0.5 rounded bg-gray-100 text-xs font-mono text-gray-600">
@@ -56,9 +72,19 @@
             </div>
             {% endif %}
 
-            {# Metadata: event ID, timestamps #}
+            {# Metadata: source, system, event ID, timestamps #}
             <div class="mt-3 flex items-center gap-4 text-xs text-gray-400">
-                <span>Event: {{ action.event_id[:12] }}...</span>
+                {% if action.source %}
+                <span>Source: {{ action.source }}</span>
+                {% endif %}
+                {% if action.system %}
+                <span>System: {{ action.system }}</span>
+                {% endif %}
+                <a href="/ui/events/{{ action.event_id }}"
+                   class="text-blue-500 hover:text-blue-700 hover:underline"
+                   title="{{ action.event_id }}">
+                    Event: {{ action.event_id[:12] }}...
+                </a>
                 <span>Created: {{ action.created_at.strftime('%H:%M:%S') }}</span>
                 {% if action.status.value == 'pending' %}
                 <span class="text-amber-500" x-data x-text="(() => {
