@@ -237,6 +237,22 @@ class TestApproveAction:
         )
         assert resp.status_code == 404
 
+    async def test_approve_orchestrator_error_returns_409(
+        self, approval_client: AsyncClient,
+    ) -> None:
+        """If orchestrator raises during approval, return 409 with error card."""
+        queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
+        orch: MagicMock = approval_client._test_orch  # type: ignore[attr-defined]
+        action_id = _add_test_action(queue)
+        orch._process_approval.side_effect = RuntimeError("handler crashed")
+
+        resp = await approval_client.post(f"/ui/approvals/{action_id}/approve")
+        assert resp.status_code == 409
+        assert "Approval failed" in resp.text
+
+        # Reset side effect for other tests
+        orch._process_approval.side_effect = None
+
 
 # ---------------------------------------------------------------------------
 # Reject
@@ -270,7 +286,7 @@ class TestRejectAction:
 
 
 class TestApprovalRBAC:
-    async def test_viewer_can_view_approvals(
+    async def test_viewer_cannot_view_approvals(
         self, viewer_approval_client: AsyncClient,
     ) -> None:
         """Viewers cannot access the approvals page (requires operator)."""

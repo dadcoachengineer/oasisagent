@@ -1,5 +1,10 @@
 {# Single pending action card — used in list.html and as HTMX swap target #}
 <div id="action-{{ action.id }}" class="bg-white rounded-lg shadow p-5">
+    {% if error is defined and error %}
+    <div class="mb-3 bg-red-50 border border-red-200 rounded p-3">
+        <p class="text-sm text-red-700">{{ error }}</p>
+    </div>
+    {% endif %}
     <div class="flex items-start justify-between">
         <div class="flex-1 min-w-0">
             {# Handler + operation badge #}

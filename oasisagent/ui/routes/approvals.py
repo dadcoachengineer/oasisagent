@@ -7,12 +7,15 @@ dispatch pipeline; reject records the decision and clears MQTT state.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from oasisagent.ui.auth import TokenPayload, require_operator
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from oasisagent.approval.pending import PendingQueue
@@ -87,10 +90,23 @@ async def approve_action(
         raise HTTPException(status_code=404, detail="Action not found")
 
     # Delegate to orchestrator — marks approved, dispatches handler, clears MQTT
-    await orch._process_approval(action_id)
-
     templates = request.app.state.templates
-    # Re-fetch to get updated status (may be approved or already resolved)
+    try:
+        await orch._process_approval(action_id)
+    except Exception:
+        logger.exception("Failed to process approval for %s", action_id)
+        # Re-fetch — action may have been expired or resolved by another channel
+        updated = queue.get(action_id)
+        return templates.TemplateResponse(
+            "approvals/_action_card.html",
+            {
+                **_base_context(request, current_user),
+                "action": updated or pending,
+                "error": "Approval failed — action may have expired or already been resolved.",
+            },
+            status_code=409,
+        )
+
     updated = queue.get(action_id)
     return templates.TemplateResponse(
         "approvals/_action_card.html",
@@ -127,9 +143,22 @@ async def reject_action(
         raise HTTPException(status_code=404, detail="Action not found")
 
     # Delegate to orchestrator — marks rejected, clears MQTT
-    await orch._process_rejection(action_id)
-
     templates = request.app.state.templates
+    try:
+        await orch._process_rejection(action_id)
+    except Exception:
+        logger.exception("Failed to process rejection for %s", action_id)
+        updated = queue.get(action_id)
+        return templates.TemplateResponse(
+            "approvals/_action_card.html",
+            {
+                **_base_context(request, current_user),
+                "action": updated or pending,
+                "error": "Rejection failed — action may have expired or already been resolved.",
+            },
+            status_code=409,
+        )
+
     updated = queue.get(action_id)
     return templates.TemplateResponse(
         "approvals/_action_card.html",
