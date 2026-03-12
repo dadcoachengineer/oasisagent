@@ -72,7 +72,7 @@ class TestConfigValidation:
         assert target.threshold.critical == 95.0
 
     def test_threshold_critical_must_exceed_warning(self) -> None:
-        with pytest.raises(ValidationError, match="critical.*must be greater than warning"):
+        with pytest.raises(ValidationError, match=r"critical.*must be greater than warning"):
             _make_target(
                 mode="threshold",
                 threshold={

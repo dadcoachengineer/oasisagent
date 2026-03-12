@@ -208,7 +208,10 @@ async def login_2fa(
 
     # Validate pending token
     try:
-        payload = pyjwt.decode(pending_token, signing_key, algorithms=[_JWT_ALGORITHM], options={"verify_sub": False})
+        payload = pyjwt.decode(
+            pending_token, signing_key,
+            algorithms=[_JWT_ALGORITHM], options={"verify_sub": False},
+        )
         if payload.get("purpose") != "2fa_pending":
             raise ValueError("Wrong token purpose")
     except Exception:
@@ -302,7 +305,10 @@ async def login_totp_enroll_confirm(
         )
 
     try:
-        payload = pyjwt.decode(pending_token, signing_key, algorithms=[_JWT_ALGORITHM], options={"verify_sub": False})
+        payload = pyjwt.decode(
+            pending_token, signing_key,
+            algorithms=[_JWT_ALGORITHM], options={"verify_sub": False},
+        )
         if payload.get("purpose") != "totp_enroll":
             raise ValueError("Wrong token purpose")
         user = await store.get_user_by_id(payload["sub"])
@@ -353,7 +359,10 @@ async def logout(request: Request) -> RedirectResponse:
     token = request.cookies.get(_COOKIE_NAME)
     if token:
         try:
-            payload = pyjwt.decode(token, signing_key, algorithms=[_JWT_ALGORITHM], options={"verify_sub": False})
+            payload = pyjwt.decode(
+                token, signing_key,
+                algorithms=[_JWT_ALGORITHM], options={"verify_sub": False},
+            )
             user = await store.get_user_by_id(payload["sub"])
             if user:
                 await store.update_user(
