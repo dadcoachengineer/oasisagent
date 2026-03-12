@@ -279,10 +279,12 @@ class Orchestrator:
         if cfg.ingestion.mqtt.enabled:
             self._adapters.append(MqttAdapter(cfg.ingestion.mqtt, self._queue))
         if cfg.ingestion.ha_websocket.enabled:
+            logger.info("Starting HA WebSocket adapter: url=%s", cfg.ingestion.ha_websocket.url)
             self._adapters.append(
                 HaWebSocketAdapter(cfg.ingestion.ha_websocket, self._queue)
             )
         if cfg.ingestion.ha_log_poller.enabled:
+            logger.info("Starting HA Log Poller adapter: url=%s", cfg.ingestion.ha_log_poller.url)
             self._adapters.append(
                 HaLogPollerAdapter(cfg.ingestion.ha_log_poller, self._queue)
             )

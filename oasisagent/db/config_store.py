@@ -410,6 +410,10 @@ class ConfigStore:
 
     async def _load_ingestion(self) -> IngestionConfig:
         rows = await self.list_connectors()
+        logger.debug(
+            "Connector rows: %s",
+            [(r["type"], r["name"], r["enabled"]) for r in rows],
+        )
         by_type = self._rows_by_type(rows)
 
         kwargs: dict[str, Any] = {}
@@ -417,15 +421,35 @@ class ConfigStore:
             kwargs["mqtt"] = by_type["mqtt"]["config"]
         if "ha_websocket" in by_type:
             kwargs["ha_websocket"] = by_type["ha_websocket"]["config"]
+            logger.debug(
+                "Loaded ha_websocket config from DB: url=%s enabled=%s",
+                by_type["ha_websocket"]["config"].get("url", "<missing>"),
+                by_type["ha_websocket"]["enabled"],
+            )
+        else:
+            logger.debug("No ha_websocket row found in connectors (types: %s)", list(by_type.keys()))
         if "ha_log_poller" in by_type:
             kwargs["ha_log_poller"] = by_type["ha_log_poller"]["config"]
+            logger.debug(
+                "Loaded ha_log_poller config from DB: url=%s enabled=%s",
+                by_type["ha_log_poller"]["config"].get("url", "<missing>"),
+                by_type["ha_log_poller"]["enabled"],
+            )
+        else:
+            logger.debug("No ha_log_poller row found in connectors (types: %s)", list(by_type.keys()))
 
         # HTTP poller supports multiple targets (one row per target)
         poller_rows = [r for r in rows if r["type"] == "http_poller" and r["enabled"]]
         if poller_rows:
             kwargs["http_poller_targets"] = [r["config"] for r in poller_rows]
 
-        return IngestionConfig.model_validate(kwargs) if kwargs else IngestionConfig()
+        result = IngestionConfig.model_validate(kwargs) if kwargs else IngestionConfig()
+        logger.debug(
+            "Final ingestion config: ha_ws_url=%s ha_ws_enabled=%s ha_lp_url=%s ha_lp_enabled=%s",
+            result.ha_websocket.url, result.ha_websocket.enabled,
+            result.ha_log_poller.url, result.ha_log_poller.enabled,
+        )
+        return result
 
     async def _load_llm(self) -> LlmConfig:
         rows = await self.list_services()
