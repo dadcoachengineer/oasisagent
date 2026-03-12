@@ -1,0 +1,57 @@
+fixes:
+  - id: cloudflare-tunnel-down
+    match:
+      system: cloudflare
+      event_type: tunnel_disconnected
+    diagnosis: "Cloudflare tunnel is disconnected — cloudflared connector may have crashed or lost connectivity"
+    action:
+      type: escalate
+      handler: cloudflare
+      operation: notify
+      details:
+        message: |
+          Cloudflare tunnel disconnected. Checklist:
+          1. Check cloudflared service status on the origin host
+          2. Verify origin host has internet connectivity
+          3. Check cloudflared logs for authentication errors
+          4. Verify tunnel credentials haven't been rotated
+          5. Check Cloudflare status page for outages
+    risk_tier: escalate
+
+  - id: cloudflare-waf-spike
+    match:
+      system: cloudflare
+      event_type: waf_spike
+    diagnosis: "WAF event spike detected — possible DDoS or brute force attempt"
+    action:
+      type: recommend
+      handler: cloudflare
+      operation: notify
+      details:
+        message: |
+          WAF blocked request spike detected. Investigation steps:
+          1. Review top matched rules in payload
+          2. Check if source IPs are from a single ASN/region
+          3. Verify legitimate traffic is not being blocked
+          4. Consider enabling Under Attack Mode if sustained
+          5. Review rate limiting rules
+    risk_tier: recommend
+
+  - id: cloudflare-ssl-expiry-warning
+    match:
+      system: cloudflare
+      event_type: certificate_expiry
+    diagnosis: "SSL certificate approaching expiration — auto-renewal may have failed"
+    action:
+      type: recommend
+      handler: cloudflare
+      operation: notify
+      details:
+        message: |
+          SSL certificate expiry warning. Steps:
+          1. Check certificate pack status in Cloudflare dashboard
+          2. Verify domain validation (DCV) is passing
+          3. Check for CAA record issues blocking issuance
+          4. If using Advanced Certificate Manager, verify API key
+          5. Manual renewal may be needed if auto-renewal keeps failing
+    risk_tier: recommend
