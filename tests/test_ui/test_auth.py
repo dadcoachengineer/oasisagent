@@ -160,7 +160,7 @@ class TestJWTTokens:
 
     def test_reissue_returns_none_past_max_lifetime(self) -> None:
         signing_key = derive_jwt_key("test")
-        old_iat = time.time() - (5 * 3600)  # 5 hours ago
+        old_iat = time.time() - (25 * 3600)  # 25 hours ago (exceeds 24h max)
         payload = TokenPayload(
             sub=1, username="admin", role="admin", gen=0,
             csrf="abc", iat=old_iat, exp=time.time() + 1000,

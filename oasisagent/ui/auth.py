@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _JWT_ALGORITHM = "HS256"
-_JWT_MAX_LIFETIME_HOURS = 4
-_JWT_INACTIVITY_MINUTES = 30
+_JWT_MAX_LIFETIME_HOURS = 24
+_JWT_INACTIVITY_MINUTES = 120
 _COOKIE_NAME = "oasis_access_token"
 _CSRF_COOKIE_NAME = "oasis_csrf_token"
 _CSRF_HEADER_NAME = "x-csrf-token"
