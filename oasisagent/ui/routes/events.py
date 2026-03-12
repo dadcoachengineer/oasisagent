@@ -29,6 +29,41 @@ def _get_audit_reader(request: Request) -> AuditReader | None:
     return getattr(request.app.state, "audit_reader", None)
 
 
+def _safe_int(value: str | None, default: int) -> int:
+    """Parse an int from a query param, falling back to default on junk input."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_event_filters(request: Request) -> dict:
+    """Extract and validate event filter params from query string."""
+    params = request.query_params
+    return {
+        "duration": params.get("duration", "24h"),
+        "severity": params.get("severity") or None,
+        "source": params.get("source") or None,
+        "system": params.get("system") or None,
+        "event_type": params.get("event_type") or None,
+        "offset": _safe_int(params.get("offset"), 0),
+        "limit": _safe_int(params.get("limit"), 25),
+    }
+
+
+def _filters_for_template(filters: dict) -> dict:
+    """Convert parsed filters to template-friendly format (None → "")."""
+    return {
+        "duration": filters["duration"],
+        "severity": filters["severity"] or "",
+        "source": filters["source"] or "",
+        "system": filters["system"] or "",
+        "event_type": filters["event_type"] or "",
+    }
+
+
 @router.get("/events", response_class=HTMLResponse)
 async def events_page(
     request: Request,
@@ -47,24 +82,10 @@ async def events_page(
     }
 
     if reader is not None:
-        duration = request.query_params.get("duration", "24h")
-        severity = request.query_params.get("severity") or None
-        source = request.query_params.get("source") or None
-        system = request.query_params.get("system") or None
-        event_type = request.query_params.get("event_type") or None
-        offset = int(request.query_params.get("offset", "0"))
-        limit = int(request.query_params.get("limit", "25"))
+        filters = _parse_event_filters(request)
 
         try:
-            page = await reader.list_events(
-                offset=offset,
-                limit=limit,
-                duration=duration,
-                severity=severity,
-                source=source,
-                system=system,
-                event_type=event_type,
-            )
+            page = await reader.list_events(**filters)
             filter_options = await reader.get_filter_options()
         except Exception:
             logger.exception("Failed to query events from InfluxDB")
@@ -73,13 +94,7 @@ async def events_page(
 
         ctx["page"] = page
         ctx["filter_options"] = filter_options
-        ctx["filters"] = {
-            "duration": duration,
-            "severity": severity or "",
-            "source": source or "",
-            "system": system or "",
-            "event_type": event_type or "",
-        }
+        ctx["filters"] = _filters_for_template(filters)
 
     return templates.TemplateResponse("events/list.html", ctx)
 
@@ -99,36 +114,16 @@ async def events_table_partial(
     }
 
     if reader is not None:
-        duration = request.query_params.get("duration", "24h")
-        severity = request.query_params.get("severity") or None
-        source = request.query_params.get("source") or None
-        system = request.query_params.get("system") or None
-        event_type = request.query_params.get("event_type") or None
-        offset = int(request.query_params.get("offset", "0"))
-        limit = int(request.query_params.get("limit", "25"))
+        filters = _parse_event_filters(request)
 
         try:
-            page = await reader.list_events(
-                offset=offset,
-                limit=limit,
-                duration=duration,
-                severity=severity,
-                source=source,
-                system=system,
-                event_type=event_type,
-            )
+            page = await reader.list_events(**filters)
         except Exception:
             logger.exception("Failed to query events from InfluxDB")
             page = None
 
         ctx["page"] = page
-        ctx["filters"] = {
-            "duration": duration,
-            "severity": severity or "",
-            "source": source or "",
-            "system": system or "",
-            "event_type": event_type or "",
-        }
+        ctx["filters"] = _filters_for_template(filters)
 
     return templates.TemplateResponse("events/_table.html", ctx)
 

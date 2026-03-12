@@ -147,6 +147,20 @@ class TestEventsPage:
         resp = await auth_client.get("/ui/events")
         assert resp.status_code == 200
 
+    @pytest.mark.asyncio
+    async def test_malformed_offset_limit_defaults(self, auth_client: AsyncClient) -> None:
+        """Non-numeric offset/limit falls back to defaults instead of 500."""
+        mock_reader = AsyncMock()
+        mock_reader.list_events = AsyncMock(return_value=_make_page())
+        mock_reader.get_filter_options = AsyncMock(return_value=_make_filter_options())
+        auth_client._transport.app.state.audit_reader = mock_reader  # type: ignore[union-attr]
+
+        resp = await auth_client.get("/ui/events?offset=abc&limit=xyz")
+        assert resp.status_code == 200
+        call_kwargs = mock_reader.list_events.call_args[1]
+        assert call_kwargs["offset"] == 0
+        assert call_kwargs["limit"] == 25
+
 
 # ---------------------------------------------------------------------------
 # Tests — HTMX table partial
