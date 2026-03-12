@@ -457,6 +457,107 @@ class TestAlarmPolling:
 
         queue.put_nowait.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_cleared_alarms_evicted_from_tracker(self) -> None:
+        """Alarms no longer in the response are evicted from _seen_alarms."""
+        adapter, _queue = _make_adapter()
+        adapter._seen_alarms = {"old-alarm-1", "old-alarm-2"}
+
+        # Only old-alarm-1 still present in response
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"_id": "old-alarm-1", "key": "EVT_1", "msg": ""}],
+        })
+
+        await adapter._poll_alarms()
+
+        assert "old-alarm-1" in adapter._seen_alarms
+        assert "old-alarm-2" not in adapter._seen_alarms
+
+    @pytest.mark.asyncio
+    async def test_empty_response_clears_all_seen(self) -> None:
+        """Empty alarm response evicts all tracked alarms."""
+        adapter, _queue = _make_adapter()
+        adapter._seen_alarms = {"a1", "a2", "a3"}
+
+        adapter._client.get = AsyncMock(return_value={"data": []})
+
+        await adapter._poll_alarms()
+
+        assert len(adapter._seen_alarms) == 0
+
+
+# ---------------------------------------------------------------------------
+# Configurable thresholds
+# ---------------------------------------------------------------------------
+
+
+class TestConfigurableThresholds:
+    @pytest.mark.asyncio
+    async def test_custom_cpu_threshold(self) -> None:
+        """Custom CPU threshold triggers at configured value."""
+        adapter, queue = _make_adapter(cpu_threshold=80.0)
+        adapter._device_states["aa:bb:cc"] = 1
+
+        devices = [{
+            "mac": "aa:bb:cc",
+            "state": 1,
+            "name": "AP-1",
+            "type": "uap",
+            "adopted": True,
+            "system-stats": {"cpu": "85.0", "mem": "30.0"},
+        }]
+        adapter._client.get = AsyncMock(return_value={"data": devices})
+
+        await adapter._poll_devices()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "device_high_cpu"
+        assert event.payload["threshold"] == 80.0
+
+    @pytest.mark.asyncio
+    async def test_custom_memory_threshold(self) -> None:
+        """Custom memory threshold triggers at configured value."""
+        adapter, queue = _make_adapter(memory_threshold=70.0)
+        adapter._device_states["aa:bb:cc"] = 1
+
+        devices = [{
+            "mac": "aa:bb:cc",
+            "state": 1,
+            "name": "AP-1",
+            "type": "uap",
+            "adopted": True,
+            "system-stats": {"cpu": "10.0", "mem": "75.0"},
+        }]
+        adapter._client.get = AsyncMock(return_value={"data": devices})
+
+        await adapter._poll_devices()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "device_high_mem"
+        assert event.payload["threshold"] == 70.0
+
+    @pytest.mark.asyncio
+    async def test_default_threshold_85_no_alert(self) -> None:
+        """At default 90% threshold, 85% CPU should not alert."""
+        adapter, queue = _make_adapter()
+        adapter._device_states["aa:bb:cc"] = 1
+
+        devices = [{
+            "mac": "aa:bb:cc",
+            "state": 1,
+            "name": "AP-1",
+            "type": "uap",
+            "adopted": True,
+            "system-stats": {"cpu": "85.0", "mem": "30.0"},
+        }]
+        adapter._client.get = AsyncMock(return_value={"data": devices})
+
+        await adapter._poll_devices()
+
+        queue.put_nowait.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Health subsystem polling
