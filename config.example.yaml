@@ -187,6 +187,17 @@ ingestion:
         event_type: state_unavailable
         severity: warning
 
+  # Uptime Kuma — external monitoring via Prometheus /metrics endpoint
+  uptime_kuma:
+    enabled: false
+    url: http://uptime-kuma:3001       # Uptime Kuma base URL
+    api_key: "${UPTIME_KUMA_API_KEY:-}"  # API key (v1.21+, used as Basic auth password)
+    poll_interval: 60                  # Seconds between polls
+    timeout: 10
+    response_time_threshold_ms: 5000   # Emit WARNING when response time exceeds this
+    cert_warning_days: 30              # Certificate expiry warning threshold
+    cert_critical_days: 7              # Certificate expiry critical threshold
+
 # -----------------------------------------------------------------------------
 # Scanner — Preventive scanning framework
 # Proactive health checks that catch issues before they cause outages.

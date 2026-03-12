@@ -39,6 +39,7 @@ from oasisagent.config import (
     TelegramNotificationConfig,
     UnifiAdapterConfig,
     UnifiHandlerConfig,
+    UptimeKumaAdapterConfig,
     WebhookNotificationConfig,
     WebhookSourceConfig,
 )
@@ -84,6 +85,10 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "cloudflare": TypeMeta(
         model=CloudflareAdapterConfig,
         secret_fields=frozenset({"api_token"}),
+    ),
+    "uptime_kuma": TypeMeta(
+        model=UptimeKumaAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
     ),
 }
 

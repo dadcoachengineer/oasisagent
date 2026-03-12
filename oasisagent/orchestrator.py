@@ -290,6 +290,12 @@ class Orchestrator:
             self._adapters.append(
                 HttpPollerAdapter(cfg.ingestion.http_poller_targets, self._queue)
             )
+        if cfg.ingestion.uptime_kuma.enabled:
+            from oasisagent.ingestion.uptime_kuma import UptimeKumaAdapter
+
+            self._adapters.append(
+                UptimeKumaAdapter(cfg.ingestion.uptime_kuma, self._queue)
+            )
 
         # 14b. Scanner adapters (each scanner is its own adapter)
         if cfg.scanner.enabled:
