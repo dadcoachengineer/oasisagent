@@ -64,7 +64,10 @@ class DockerHealthScannerAdapter(ScannerIngestAdapter):
         return "scanner.docker_health"
 
     async def start(self) -> None:
-        """Create HTTP session (Unix socket or TCP) then start poll loop."""
+        """Create HTTP session (Unix socket or TCP) then start poll loop.
+
+        Blocks until stop() is called or the task is cancelled.
+        """
         connector: aiohttp.BaseConnector
         if self._docker_config.url:
             connector = aiohttp.TCPConnector(
@@ -83,7 +86,12 @@ class DockerHealthScannerAdapter(ScannerIngestAdapter):
             connector=connector,
             timeout=timeout,
         )
-        await super().start()
+        try:
+            await super().start()
+        except Exception:
+            await self._session.close()
+            self._session = None
+            raise
 
     async def stop(self) -> None:
         """Close HTTP session and stop the poll loop."""
