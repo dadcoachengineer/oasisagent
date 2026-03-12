@@ -1,0 +1,85 @@
+{# HTMX partial: event table + pagination controls #}
+{% if page is none or page.rows | length == 0 %}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+    <p class="text-gray-500">No events recorded yet.</p>
+</div>
+{% else %}
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Severity</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">System</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entity</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Disposition</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200">
+            {% for row in page.rows %}
+            <tr class="hover:bg-gray-50 cursor-pointer"
+                onclick="window.location='/ui/events/{{ row.event_id }}'">
+                <td class="px-4 py-3 text-sm font-mono text-gray-600 whitespace-nowrap">
+                    {{ row.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}
+                </td>
+                <td class="px-4 py-3 text-sm">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                        {% if row.severity == 'critical' %}bg-red-100 text-red-700
+                        {% elif row.severity == 'warning' %}bg-amber-100 text-amber-700
+                        {% elif row.severity == 'info' %}bg-blue-100 text-blue-700
+                        {% else %}bg-gray-100 text-gray-600{% endif %}">
+                        {{ row.severity }}
+                    </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ row.source }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ row.system }}</td>
+                <td class="px-4 py-3 text-sm font-mono text-gray-600">{{ row.entity_id }}</td>
+                <td class="px-4 py-3 text-sm font-mono text-gray-600">{{ row.event_type }}</td>
+                <td class="px-4 py-3 text-sm">
+                    {% if row.disposition %}
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                        {% if row.disposition == 'remediated' %}bg-green-100 text-green-700
+                        {% elif row.disposition == 'escalated' %}bg-amber-100 text-amber-700
+                        {% elif row.disposition == 'suppressed' %}bg-gray-100 text-gray-600
+                        {% elif row.disposition == 'failed' %}bg-red-100 text-red-700
+                        {% else %}bg-blue-100 text-blue-700{% endif %}">
+                        {{ row.disposition }}
+                        {% if row.tier %}<span class="opacity-60 ml-0.5">{{ row.tier }}</span>{% endif %}
+                    </span>
+                    {% else %}
+                    <span class="text-xs text-gray-400">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {# Pagination controls #}
+    <div class="bg-gray-50 px-4 py-3 flex items-center justify-between border-t border-gray-200">
+        <div class="text-xs text-gray-500">
+            Showing {{ page.offset + 1 }}–{{ page.offset + page.rows | length }}
+        </div>
+        <div class="flex gap-2">
+            {% if page.has_prev %}
+            {% set prev_offset = [page.offset - page.limit, 0] | max %}
+            <button hx-get="/ui/events/table?offset={{ prev_offset }}&limit={{ page.limit }}&duration={{ filters.duration }}{% if filters.severity %}&severity={{ filters.severity }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.system %}&system={{ filters.system }}{% endif %}{% if filters.event_type %}&event_type={{ filters.event_type }}{% endif %}"
+                    hx-target="#event-table" hx-swap="innerHTML"
+                    class="px-3 py-1 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
+                Previous
+            </button>
+            {% endif %}
+            {% if page.has_next %}
+            {% set next_offset = page.offset + page.limit %}
+            <button hx-get="/ui/events/table?offset={{ next_offset }}&limit={{ page.limit }}&duration={{ filters.duration }}{% if filters.severity %}&severity={{ filters.severity }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.system %}&system={{ filters.system }}{% endif %}{% if filters.event_type %}&event_type={{ filters.event_type }}{% endif %}"
+                    hx-target="#event-table" hx-swap="innerHTML"
+                    class="px-3 py-1 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
+                Next
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
