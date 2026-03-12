@@ -610,12 +610,13 @@ async def scanner_save(
 
     form = await request.form()
     form_data = dict(form)
-    scanner_config = _parse_scanner_form(form_data)
 
     rows = await store.list_services()
     scanner_row = _find_scanner_row(rows)
+    scanner_config: dict[str, Any] = {}
 
     try:
+        scanner_config = _parse_scanner_form(form_data)
         if scanner_row:
             # Update existing scanner row — replace entire config
             enabled = scanner_config.pop("enabled")
@@ -635,8 +636,10 @@ async def scanner_save(
             if isinstance(exc, ValidationError)
             else [str(exc)]
         )
-        # Re-render with errors — put enabled back for display
-        scanner_config["enabled"] = form_data.get("enabled") is not None
+        # Re-render with errors — use defaults if parse itself failed
+        if not scanner_config:
+            scanner_config = _default_scanner_config()
+        scanner_config["enabled"] = "enabled" in form_data
         ha_enabled = await _handler_enabled(store, "ha_handler")
         docker_enabled = await _handler_enabled(store, "docker_handler")
         return templates.TemplateResponse(

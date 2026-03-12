@@ -175,6 +175,26 @@ class TestScannerSave:
         )
         assert resp.status_code == 422
 
+    async def test_save_non_numeric_interval_returns_422(
+        self, auth_client: AsyncClient,
+    ) -> None:
+        """Non-numeric interval should return 422, not 500."""
+        resp = await auth_client.post(
+            "/ui/services/scanners",
+            data={
+                "interval": "abc",
+                "cert_warning_days": "30",
+                "cert_critical_days": "7",
+                "cert_interval": "900",
+                "disk_warning_pct": "85",
+                "disk_critical_pct": "95",
+                "disk_interval": "900",
+                "ha_interval": "900",
+                "docker_interval": "900",
+            },
+        )
+        assert resp.status_code == 422
+
 
 class TestScannerFormParsing:
     """Direct tests for _parse_scanner_form."""
