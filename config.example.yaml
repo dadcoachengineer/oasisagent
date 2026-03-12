@@ -216,6 +216,19 @@ scanner:
     critical_threshold_pct: 95     # Emit ERROR when usage >= N%
     interval: 900                  # Check interval (seconds); min 60
 
+  # Home Assistant integration health — detects integrations in error state
+  # Requires handlers.homeassistant to be enabled (uses its URL and token)
+  ha_health:
+    enabled: false
+    interval: 900                  # Check interval (seconds); min 60
+
+  # Docker container health — detects unhealthy, exited, or restarting containers
+  # Requires handlers.docker to be enabled (uses its socket/URL)
+  docker_health:
+    enabled: false
+    ignore_containers: []          # Container names to skip (e.g., ["temp-builder"])
+    interval: 900                  # Check interval (seconds); min 60
+
 # -----------------------------------------------------------------------------
 # LLM — Language model configuration
 # OasisAgent is provider-agnostic. Any OpenAI-compatible endpoint works:

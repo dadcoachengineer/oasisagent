@@ -440,6 +440,25 @@ class DiskSpaceCheckConfig(BaseModel):
     interval: Annotated[int, Field(ge=60)] = 900
 
 
+class HaHealthCheckConfig(BaseModel):
+    """Home Assistant integration health scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
+class DockerHealthCheckConfig(BaseModel):
+    """Docker container health scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    ignore_containers: list[str] = Field(default_factory=list)
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
 class ScannerConfig(BaseModel):
     """Preventive scanning framework configuration."""
 
@@ -449,6 +468,8 @@ class ScannerConfig(BaseModel):
     interval: Annotated[int, Field(ge=60)] = 900
     certificate_expiry: CertExpiryCheckConfig = Field(default_factory=CertExpiryCheckConfig)
     disk_space: DiskSpaceCheckConfig = Field(default_factory=DiskSpaceCheckConfig)
+    ha_health: HaHealthCheckConfig = Field(default_factory=HaHealthCheckConfig)
+    docker_health: DockerHealthCheckConfig = Field(default_factory=DockerHealthCheckConfig)
 
 
 # -- Ingestion (top-level) --------------------------------------------------
