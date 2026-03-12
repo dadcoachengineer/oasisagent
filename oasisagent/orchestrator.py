@@ -313,6 +313,22 @@ class Orchestrator:
                 self._adapters.append(DiskSpaceScannerAdapter(
                     cfg.scanner.disk_space, self._queue, interval,
                 ))
+            if cfg.scanner.ha_health.enabled and cfg.handlers.homeassistant.enabled:
+                from oasisagent.scanner.ha_health import HaHealthScannerAdapter
+
+                interval = cfg.scanner.ha_health.interval or cfg.scanner.interval
+                self._adapters.append(HaHealthScannerAdapter(
+                    cfg.scanner.ha_health, self._queue, interval,
+                    ha_config=cfg.handlers.homeassistant,
+                ))
+            if cfg.scanner.docker_health.enabled and cfg.handlers.docker.enabled:
+                from oasisagent.scanner.docker_health import DockerHealthScannerAdapter
+
+                interval = cfg.scanner.docker_health.interval or cfg.scanner.interval
+                self._adapters.append(DockerHealthScannerAdapter(
+                    cfg.scanner.docker_health, self._queue, interval,
+                    docker_config=cfg.handlers.docker,
+                ))
 
         # 15. Metrics server (Prometheus)
         if cfg.agent.metrics_port > 0:
