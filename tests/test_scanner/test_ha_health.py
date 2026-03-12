@@ -147,24 +147,42 @@ class TestHaHealthEvaluate:
         assert len(events) == 1
         assert events[0].payload["state"] == "config_entry_not_ready"
 
-    def test_dedup_key_includes_domain(self) -> None:
+    def test_dedup_key_includes_entry_id(self) -> None:
         scanner = _make_scanner()
         events = scanner._evaluate_entries([
-            _make_entry(domain="hue", state="setup_error"),
+            _make_entry(domain="hue", entry_id="hue_001", state="setup_error"),
         ])
-        assert events[0].metadata.dedup_key == "scanner.ha_health:hue"
+        assert events[0].metadata.dedup_key == "scanner.ha_health:hue_001"
 
     def test_multiple_domains_tracked_independently(self) -> None:
         scanner = _make_scanner()
         events = scanner._evaluate_entries([
-            _make_entry(domain="zwave_js", state="setup_error"),
-            _make_entry(domain="mqtt", state="loaded"),
+            _make_entry(domain="zwave_js", entry_id="zw_1", state="setup_error"),
+            _make_entry(domain="mqtt", entry_id="mqtt_1", state="loaded"),
         ])
         assert len(events) == 1
         assert events[0].entity_id == "zwave_js"
 
+    def test_multiple_entries_same_domain_tracked_independently(self) -> None:
+        """Two config entries for the same domain (e.g., two Hue bridges)."""
+        scanner = _make_scanner()
+        events = scanner._evaluate_entries([
+            _make_entry(
+                domain="hue", entry_id="hue_bridge_1",
+                title="Hue Bridge 1", state="setup_error",
+            ),
+            _make_entry(
+                domain="hue", entry_id="hue_bridge_2",
+                title="Hue Bridge 2", state="loaded",
+            ),
+        ])
+        # Only bridge 1 is unhealthy — bridge 2 should not mask it
+        assert len(events) == 1
+        assert events[0].payload["entry_id"] == "hue_bridge_1"
+        assert events[0].payload["state"] == "setup_error"
+
     def test_setup_in_progress_not_alerted(self) -> None:
-        """setup_in_progress is in _ERROR_STATES but not _ALERT_STATES."""
+        """setup_in_progress is excluded from _ALERT_STATES to avoid startup noise."""
         scanner = _make_scanner()
         events = scanner._evaluate_entries([
             _make_entry(state="setup_in_progress"),

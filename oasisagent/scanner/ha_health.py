@@ -32,17 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Integration states that indicate a problem
-_ERROR_STATES = frozenset({
-    "setup_error",
-    "config_entry_not_ready",
-    "not_loaded",
-    "setup_retry",
-    "setup_in_progress",  # not an error per se, but noteworthy if stuck
-})
-
-# Only these states trigger events; setup_in_progress is excluded from
-# event emission to avoid noise during HA startup
+# States that trigger events. setup_in_progress and setup_retry are
+# excluded to avoid noise during HA startup and transient retries.
 _ALERT_STATES = frozenset({
     "setup_error",
     "config_entry_not_ready",
@@ -70,7 +61,9 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
         self._ha_url = ha_config.url.rstrip("/")
         self._ha_token = ha_config.token
         self._session: aiohttp.ClientSession | None = None
-        # State tracking: integration_domain -> "ok" | error_state
+        # State tracking: entry_id -> "ok" | error_state
+        # Keyed by entry_id (not domain) because a single domain can have
+        # multiple config entries (e.g., two Hue bridges, multiple Z-Wave dongles).
         self._states: dict[str, str] = {}
 
     @property
@@ -78,7 +71,10 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
         return "scanner.ha_health"
 
     async def start(self) -> None:
-        """Create HTTP session then start the poll loop."""
+        """Create HTTP session then start the poll loop.
+
+        Blocks until stop() is called or the task is cancelled.
+        """
         headers = {
             "Authorization": f"Bearer {self._ha_token}",
             "Content-Type": "application/json",
@@ -87,7 +83,12 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
         self._session = aiohttp.ClientSession(
             base_url=self._ha_url, headers=headers, timeout=timeout,
         )
-        await super().start()
+        try:
+            await super().start()
+        except Exception:
+            await self._session.close()
+            self._session = None
+            raise
 
     async def stop(self) -> None:
         """Close HTTP session and stop the poll loop."""
@@ -110,9 +111,12 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
             return await resp.json()  # type: ignore[no-any-return]
 
     def _evaluate_entries(self, entries: list[dict[str, Any]]) -> list[Event]:
-        """Check each entry's state and emit events on transitions."""
+        """Check each entry's state and emit events on transitions.
+
+        Tracks per entry_id — a domain like ``hue`` can have multiple config
+        entries (one per bridge) and each is monitored independently.
+        """
         events: list[Event] = []
-        seen_domains: set[str] = set()
 
         for entry in entries:
             domain = entry.get("domain", "unknown")
@@ -120,14 +124,10 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
             entry_id = entry.get("entry_id", "")
             title = entry.get("title", domain)
 
-            # Use domain as the tracking key (multiple entries per domain
-            # are possible but we track the worst state per domain)
-            seen_domains.add(domain)
-
             new_state = state if state in _ALERT_STATES else "ok"
 
-            old_state = self._states.get(domain)
-            self._states[domain] = new_state
+            old_state = self._states.get(entry_id)
+            self._states[entry_id] = new_state
 
             if old_state == new_state:
                 continue
@@ -150,7 +150,7 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
                         "state": state,
                     },
                     metadata=EventMetadata(
-                        dedup_key=f"scanner.ha_health:{domain}",
+                        dedup_key=f"scanner.ha_health:{entry_id}",
                     ),
                 ))
 
@@ -170,7 +170,7 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
                         "previous_state": old_state,
                     },
                     metadata=EventMetadata(
-                        dedup_key=f"scanner.ha_health:{domain}",
+                        dedup_key=f"scanner.ha_health:{entry_id}",
                     ),
                 ))
 

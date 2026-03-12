@@ -41,7 +41,7 @@ class ScannerIngestAdapter(IngestAdapter):
         """Run one scan cycle. Return events to emit."""
 
     async def start(self) -> None:
-        """Start the polling loop."""
+        """Start the polling loop. Blocks until stop() is called or cancelled."""
         self._task = asyncio.create_task(
             self._poll_loop(), name=f"scanner-{self.name}",
         )
