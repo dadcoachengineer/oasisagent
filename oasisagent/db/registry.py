@@ -35,6 +35,7 @@ from oasisagent.config import (
     ProxmoxHandlerConfig,
     TelegramNotificationConfig,
     UnifiAdapterConfig,
+    UnifiHandlerConfig,
     WebhookNotificationConfig,
     WebhookSourceConfig,
 )
@@ -110,6 +111,10 @@ CORE_SERVICE_TYPES: dict[str, TypeMeta] = {
     "proxmox_handler": TypeMeta(
         model=ProxmoxHandlerConfig,
         secret_fields=frozenset({"token_value"}),
+    ),
+    "unifi_handler": TypeMeta(
+        model=UnifiHandlerConfig,
+        secret_fields=frozenset({"password"}),
     ),
     "influxdb": TypeMeta(
         model=InfluxDbConfig,

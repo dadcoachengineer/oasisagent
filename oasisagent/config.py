@@ -388,6 +388,8 @@ class UnifiAdapterConfig(BaseModel):
     poll_alarms: bool = True
     poll_health: bool = True
     timeout: int = 10
+    cpu_threshold: float = 90.0
+    memory_threshold: float = 90.0
 
 
 
@@ -521,6 +523,27 @@ class PortainerHandlerConfig(BaseModel):
     verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
 
 
+class UnifiHandlerConfig(BaseModel):
+    """UniFi Network handler configuration.
+
+    Executes actions against the UniFi controller: restart devices,
+    block/unblock clients, gather device context.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://192.168.1.1"
+    username: str = ""
+    password: str = ""
+    site: str = "default"
+    verify_ssl: bool = False
+    is_udm: bool = True
+    timeout: int = 10
+    verify_timeout: Annotated[int, Field(ge=1)] = 30
+    verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
+
+
 class HandlersConfig(BaseModel):
     """All handler configurations."""
 
@@ -530,6 +553,7 @@ class HandlersConfig(BaseModel):
     docker: DockerHandlerConfig = Field(default_factory=DockerHandlerConfig)
     portainer: PortainerHandlerConfig = Field(default_factory=PortainerHandlerConfig)
     proxmox: ProxmoxHandlerConfig = Field(default_factory=ProxmoxHandlerConfig)
+    unifi: UnifiHandlerConfig = Field(default_factory=UnifiHandlerConfig)
 
 
 # -- Guardrails -------------------------------------------------------------
