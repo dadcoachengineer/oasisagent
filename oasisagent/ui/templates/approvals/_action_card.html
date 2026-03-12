@@ -1,0 +1,91 @@
+{# Single pending action card — used in list.html and as HTMX swap target #}
+<div id="action-{{ action.id }}" class="bg-white rounded-lg shadow p-5">
+    <div class="flex items-start justify-between">
+        <div class="flex-1 min-w-0">
+            {# Handler + operation badge #}
+            <div class="flex items-center gap-2 mb-2">
+                <span class="px-2 py-0.5 rounded bg-gray-100 text-xs font-mono text-gray-600">
+                    {{ action.action.handler }}.{{ action.action.operation }}
+                </span>
+                <span class="px-2 py-0.5 rounded text-xs font-medium
+                    {% if action.action.risk_tier.value == 'auto' %}bg-green-100 text-green-700
+                    {% elif action.action.risk_tier.value == 'recommend' %}bg-amber-100 text-amber-700
+                    {% else %}bg-red-100 text-red-700{% endif %}">
+                    {{ action.action.risk_tier.value | upper }}
+                </span>
+                {% if action.status.value != 'pending' %}
+                <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                    {% if action.status.value == 'approved' %}bg-green-100 text-green-700
+                    {% elif action.status.value == 'rejected' %}bg-red-100 text-red-700
+                    {% else %}bg-gray-100 text-gray-500{% endif %}">
+                    {{ action.status.value | capitalize }}
+                </span>
+                {% endif %}
+            </div>
+
+            {# Description #}
+            <p class="text-sm font-medium text-gray-900">{{ action.action.description }}</p>
+
+            {# Diagnosis #}
+            {% if action.diagnosis %}
+            <p class="mt-1 text-sm text-gray-600">{{ action.diagnosis }}</p>
+            {% endif %}
+
+            {# Parameters #}
+            {% if action.action.params %}
+            <div class="mt-2">
+                <details class="text-xs">
+                    <summary class="text-gray-400 cursor-pointer hover:text-gray-600">Parameters</summary>
+                    <pre class="mt-1 p-2 bg-gray-50 rounded text-xs font-mono text-gray-600 overflow-x-auto">{{ action.action.params | tojson(indent=2) }}</pre>
+                </details>
+            </div>
+            {% endif %}
+
+            {# Reasoning #}
+            {% if action.action.reasoning %}
+            <div class="mt-2">
+                <details class="text-xs">
+                    <summary class="text-gray-400 cursor-pointer hover:text-gray-600">Reasoning</summary>
+                    <p class="mt-1 text-xs text-gray-500">{{ action.action.reasoning }}</p>
+                </details>
+            </div>
+            {% endif %}
+
+            {# Metadata: event ID, timestamps #}
+            <div class="mt-3 flex items-center gap-4 text-xs text-gray-400">
+                <span>Event: {{ action.event_id[:12] }}...</span>
+                <span>Created: {{ action.created_at.strftime('%H:%M:%S') }}</span>
+                {% if action.status.value == 'pending' %}
+                <span class="text-amber-500" x-data x-text="(() => {
+                    const exp = new Date('{{ action.expires_at.isoformat() }}');
+                    const now = new Date();
+                    const mins = Math.max(0, Math.round((exp - now) / 60000));
+                    return 'Expires in ' + mins + 'm';
+                })()">
+                    Expires: {{ action.expires_at.strftime('%H:%M:%S') }}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+        {# Action buttons — only for pending #}
+        {% if action.status.value == 'pending' and current_user.role in ('admin', 'operator') %}
+        <div class="flex flex-col gap-2 ml-4 shrink-0">
+            <button hx-post="/ui/approvals/{{ action.id }}/approve"
+                    hx-target="#action-{{ action.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Approve this action? It will be executed immediately."
+                    class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700">
+                Approve
+            </button>
+            <button hx-post="/ui/approvals/{{ action.id }}/reject"
+                    hx-target="#action-{{ action.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Reject this action?"
+                    class="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700">
+                Reject
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
