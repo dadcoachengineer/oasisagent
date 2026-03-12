@@ -190,6 +190,12 @@ class CloudflareAdapter(IngestAdapter):
                     ),
                 ))
 
+        # Evict deleted tunnels to prevent unbounded growth
+        current_ids = {t.get("id", "") for t in tunnels} - {""}
+        self._tunnel_states = {
+            k: v for k, v in self._tunnel_states.items() if k in current_ids
+        }
+
     # -----------------------------------------------------------------
     # WAF event polling
     # -----------------------------------------------------------------

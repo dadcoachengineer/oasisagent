@@ -169,6 +169,18 @@ class TestPost:
             await client.post("/zones/z1/purge_cache", {})
 
     @pytest.mark.asyncio
+    async def test_post_raises_on_api_error(self) -> None:
+        """success=false with 200 status should raise on POST."""
+        resp = _mock_resp(200, {
+            "success": False,
+            "errors": [{"message": "Invalid purge request"}],
+        })
+        _, client = _mock_session_with("post", resp)
+
+        with pytest.raises(aiohttp.ClientResponseError, match="API error"):
+            await client.post("/zones/z1/purge_cache", {})
+
+    @pytest.mark.asyncio
     async def test_post_not_started_raises(self) -> None:
         client = _make_client()
         with pytest.raises(RuntimeError, match="not started"):
@@ -202,6 +214,18 @@ class TestDelete:
 
         with pytest.raises(aiohttp.ClientResponseError):
             await client.delete("/zones/z1/firewall/rules/bad-id")
+
+    @pytest.mark.asyncio
+    async def test_delete_raises_on_api_error(self) -> None:
+        """success=false with 200 status should raise on DELETE."""
+        resp = _mock_resp(200, {
+            "success": False,
+            "errors": [{"message": "Cannot delete active rule"}],
+        })
+        _, client = _mock_session_with("delete", resp)
+
+        with pytest.raises(aiohttp.ClientResponseError, match="API error"):
+            await client.delete("/zones/z1/firewall/rules/rule-1")
 
     @pytest.mark.asyncio
     async def test_delete_not_started_raises(self) -> None:

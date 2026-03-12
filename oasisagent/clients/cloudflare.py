@@ -102,6 +102,13 @@ class CloudflareClient:
                     resp.request_info, resp.history,
                     status=resp.status, message=msg,
                 )
+            if not data.get("success", True):
+                errors = data.get("errors", [])
+                msg = f"Cloudflare API error on POST {path}: {errors}"
+                raise aiohttp.ClientResponseError(
+                    resp.request_info, resp.history,
+                    status=resp.status, message=msg,
+                )
             return data
 
     async def delete(self, path: str) -> dict[str, Any]:
@@ -118,6 +125,13 @@ class CloudflareClient:
             if resp.status >= 400:
                 errors = data.get("errors", [])
                 msg = f"Cloudflare DELETE {path} failed (HTTP {resp.status}): {errors}"
+                raise aiohttp.ClientResponseError(
+                    resp.request_info, resp.history,
+                    status=resp.status, message=msg,
+                )
+            if not data.get("success", True):
+                errors = data.get("errors", [])
+                msg = f"Cloudflare API error on DELETE {path}: {errors}"
                 raise aiohttp.ClientResponseError(
                     resp.request_info, resp.history,
                     status=resp.status, message=msg,

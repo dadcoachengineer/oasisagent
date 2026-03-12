@@ -211,6 +211,21 @@ class TestTunnelPolling:
         event = queue.put_nowait.call_args[0][0]
         assert event.metadata.dedup_key == "cloudflare:tunnel:t1:status"
 
+    @pytest.mark.asyncio
+    async def test_deleted_tunnel_evicted_from_tracker(self) -> None:
+        """Tunnels no longer in the response are evicted from state tracker."""
+        adapter, _queue = _make_adapter()
+        adapter._tunnel_states = {"t1": "active", "t2": "active"}
+
+        adapter._client.get = AsyncMock(return_value={
+            "result": [{"id": "t1", "name": "tun-1", "status": "active"}],
+        })
+
+        await adapter._poll_tunnels()
+
+        assert "t1" in adapter._tunnel_states
+        assert "t2" not in adapter._tunnel_states
+
 
 # ---------------------------------------------------------------------------
 # WAF polling
