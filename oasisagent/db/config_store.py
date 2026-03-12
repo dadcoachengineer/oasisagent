@@ -427,7 +427,7 @@ class ConfigStore:
                 by_type["ha_websocket"]["enabled"],
             )
         else:
-            logger.debug("No ha_websocket row found in connectors (types: %s)", list(by_type.keys()))
+            logger.debug("No ha_websocket row in connectors (types: %s)", list(by_type.keys()))
         if "ha_log_poller" in by_type:
             kwargs["ha_log_poller"] = by_type["ha_log_poller"]["config"]
             logger.debug(
@@ -436,7 +436,7 @@ class ConfigStore:
                 by_type["ha_log_poller"]["enabled"],
             )
         else:
-            logger.debug("No ha_log_poller row found in connectors (types: %s)", list(by_type.keys()))
+            logger.debug("No ha_log_poller row in connectors (types: %s)", list(by_type.keys()))
 
         # HTTP poller supports multiple targets (one row per target)
         poller_rows = [r for r in rows if r["type"] == "http_poller" and r["enabled"]]
