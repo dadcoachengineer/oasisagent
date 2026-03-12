@@ -392,6 +392,26 @@ class UnifiAdapterConfig(BaseModel):
     memory_threshold: float = 90.0
 
 
+# -- Cloudflare -------------------------------------------------------------
+
+
+class CloudflareAdapterConfig(BaseModel):
+    """Cloudflare API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    api_token: str = ""
+    account_id: str = ""
+    zone_id: str = ""
+    poll_interval: int = 300
+    poll_tunnels: bool = True
+    poll_waf: bool = True
+    poll_ssl: bool = True
+    waf_lookback_minutes: int = 10
+    waf_spike_threshold: int = 50
+    timeout: int = 30
+
 
 # -- Ingestion (top-level) --------------------------------------------------
 
@@ -406,6 +426,9 @@ class IngestionConfig(BaseModel):
     ha_log_poller: HaLogPollerConfig = Field(default_factory=HaLogPollerConfig)
     http_poller_targets: list[HttpPollerTargetConfig] = Field(default_factory=list)
     unifi: UnifiAdapterConfig = Field(default_factory=UnifiAdapterConfig)
+    cloudflare: CloudflareAdapterConfig = Field(
+        default_factory=CloudflareAdapterConfig,
+    )
 
 
 # -- LLM -------------------------------------------------------------------
