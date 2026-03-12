@@ -56,6 +56,15 @@ class PendingAction(BaseModel):
     expires_at: datetime
     status: PendingStatus = PendingStatus.PENDING
 
+    # Event context — denormalized for display without requiring a lookup.
+    # Stored as plain strings to keep the approval module decoupled from
+    # the Event/Severity models. Defaults to "" for backward compatibility
+    # with existing MQTT retained messages.
+    entity_id: str = ""
+    severity: str = ""
+    source: str = ""
+    system: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Queue
@@ -79,6 +88,11 @@ class PendingQueue:
         action: RecommendedAction,
         diagnosis: str,
         timeout_minutes: int,
+        *,
+        entity_id: str = "",
+        severity: str = "",
+        source: str = "",
+        system: str = "",
     ) -> PendingAction:
         """Create a pending action and add it to the queue.
 
@@ -87,6 +101,10 @@ class PendingQueue:
             action: The RecommendedAction to hold for approval.
             diagnosis: Human-readable summary for the operator.
             timeout_minutes: Minutes until the action expires.
+            entity_id: Entity affected (e.g. ``sensor.temperature``).
+            severity: Event severity as string (e.g. ``warning``).
+            source: Ingestion source (e.g. ``mqtt``).
+            system: Target system (e.g. ``homeassistant``).
 
         Returns:
             The created PendingAction with a unique ID.
@@ -98,6 +116,10 @@ class PendingQueue:
             diagnosis=diagnosis,
             created_at=now,
             expires_at=now + timedelta(minutes=timeout_minutes),
+            entity_id=entity_id,
+            severity=severity,
+            source=source,
+            system=system,
         )
         self._actions[pending.id] = pending
         logger.info(
