@@ -22,6 +22,11 @@
             document.body.addEventListener('htmx:configRequest', function(e) {
                 e.detail.headers['X-CSRF-Token'] = getCsrfToken();
             });
+            document.body.addEventListener('htmx:afterRequest', function(evt) {
+                if (evt.detail.xhr && evt.detail.xhr.status === 401) {
+                    window.location.href = '/ui/login';
+                }
+            });
         });
     </script>
 </head>
