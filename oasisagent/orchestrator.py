@@ -404,6 +404,10 @@ class Orchestrator:
             from oasisagent.notifications.discord import DiscordNotificationChannel
 
             channels.append(DiscordNotificationChannel(cfg.notifications.discord))
+        if cfg.notifications.slack.enabled:
+            from oasisagent.notifications.slack import SlackNotificationChannel
+
+            channels.append(SlackNotificationChannel(cfg.notifications.slack))
         self._dispatcher = NotificationDispatcher(channels)
 
         # 12. Pending action queue (for RECOMMEND-tier actions)

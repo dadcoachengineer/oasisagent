@@ -37,6 +37,7 @@ from oasisagent.config import (
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
     ScannerConfig,
+    SlackNotificationConfig,
     TelegramNotificationConfig,
     UnifiAdapterConfig,
     UnifiHandlerConfig,
@@ -171,6 +172,10 @@ NOTIFICATION_TYPES: dict[str, TypeMeta] = {
     ),
     "discord": TypeMeta(
         model=DiscordNotificationConfig,
+        secret_fields=frozenset({"webhook_url"}),
+    ),
+    "slack": TypeMeta(
+        model=SlackNotificationConfig,
         secret_fields=frozenset({"webhook_url"}),
     ),
 }
