@@ -202,6 +202,9 @@ class Orchestrator:
     }
 
     # Maps notification channel name() → DB notification type.
+    # Only mqtt differs (name()="mqtt", DB type="mqtt_notification").
+    # email, webhook, telegram name() values match their DB types directly
+    # and fall through via the .get() fallback.
     _CHANNEL_NAME_TO_TYPE: ClassVar[dict[str, str]] = {
         "mqtt": "mqtt_notification",
     }
