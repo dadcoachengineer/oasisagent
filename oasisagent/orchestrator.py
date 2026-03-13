@@ -320,11 +320,21 @@ class Orchestrator:
             else:
                 services["scanner"] = "connected"
 
+        # --- Connector detail (per-endpoint breakdown) ---
+        connector_details: dict[str, dict[str, str]] = {}
+        for adapter in self._adapters:
+            if hasattr(adapter, "health_detail"):
+                detail = adapter.health_detail()
+                if detail:
+                    connector_details[adapter.name] = detail
+
         result: dict[str, dict[str, str]] = {
             "connectors": connectors,
             "services": services,
             "notifications": notifications,
         }
+        if connector_details:
+            result["connector_detail"] = connector_details  # type: ignore[assignment]
         if scanner_detail:
             result["scanner_detail"] = {"detail": scanner_detail}
         return result
