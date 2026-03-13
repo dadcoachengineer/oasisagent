@@ -49,7 +49,15 @@ class CloudflareAdapter(IngestAdapter):
         )
         self._stopping = False
         self._task: asyncio.Task[None] | None = None
-        self._connected = False
+
+        # Per-endpoint health tracking (replaces single _connected bool)
+        self._endpoint_health: dict[str, bool] = {}
+        if self._config.poll_tunnels and self._config.account_id:
+            self._endpoint_health["tunnels"] = False
+        if self._config.poll_waf and self._config.zone_id:
+            self._endpoint_health["waf"] = False
+        if self._config.poll_ssl and self._config.zone_id:
+            self._endpoint_health["ssl"] = False
 
         # Dedup trackers
         self._tunnel_states: dict[str, str] = {}  # tunnel_id → status
@@ -64,10 +72,8 @@ class CloudflareAdapter(IngestAdapter):
         """Connect to Cloudflare API and start the polling loop."""
         try:
             await self._client.start()
-            self._connected = True
         except Exception as exc:
             logger.error("Cloudflare adapter: connection failed: %s", exc)
-            self._connected = False
             return
 
         self._task = asyncio.create_task(
@@ -80,10 +86,20 @@ class CloudflareAdapter(IngestAdapter):
         if self._task is not None:
             self._task.cancel()
         await self._client.close()
-        self._connected = False
+        for key in self._endpoint_health:
+            self._endpoint_health[key] = False
 
     async def healthy(self) -> bool:
-        return self._connected
+        if not self._endpoint_health:
+            return False
+        return any(self._endpoint_health.values())
+
+    def health_detail(self) -> dict[str, str]:
+        """Per-endpoint health for dashboard display."""
+        return {
+            endpoint: ("connected" if ok else "disconnected")
+            for endpoint, ok in self._endpoint_health.items()
+        }
 
     # -----------------------------------------------------------------
     # Poll loop
@@ -92,22 +108,35 @@ class CloudflareAdapter(IngestAdapter):
     async def _poll_loop(self) -> None:
         """Main polling loop — polls all enabled endpoints each interval."""
         while not self._stopping:
-            try:
-                if self._config.poll_tunnels and self._config.account_id:
+            if self._config.poll_tunnels and self._config.account_id:
+                try:
                     await self._poll_tunnels()
+                    self._endpoint_health["tunnels"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("Cloudflare tunnels poll error: %s", exc)
+                    self._endpoint_health["tunnels"] = False
 
-                if self._config.poll_waf and self._config.zone_id:
+            if self._config.poll_waf and self._config.zone_id:
+                try:
                     await self._poll_waf()
+                    self._endpoint_health["waf"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("Cloudflare waf poll error: %s", exc)
+                    self._endpoint_health["waf"] = False
 
-                if self._config.poll_ssl and self._config.zone_id:
+            if self._config.poll_ssl and self._config.zone_id:
+                try:
                     await self._poll_ssl()
-
-                self._connected = True
-            except asyncio.CancelledError:
-                return
-            except Exception as exc:
-                logger.warning("Cloudflare poll error: %s", exc)
-                self._connected = False
+                    self._endpoint_health["ssl"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("Cloudflare ssl poll error: %s", exc)
+                    self._endpoint_health["ssl"] = False
 
             for _ in range(self._config.poll_interval):
                 if self._stopping:
