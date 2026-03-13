@@ -95,6 +95,7 @@ class PendingQueue:
     def __init__(self, db: aiosqlite.Connection | None = None) -> None:
         self._db = db
         self._actions: dict[str, PendingAction] = {}
+        self._pending_keys: set[str] = set()
         if db is None:
             logger.warning(
                 "PendingQueue created without database — actions will not "
@@ -143,6 +144,12 @@ class PendingQueue:
         if rows:
             logger.info("Loaded %d pending action(s) from database", len(rows))
 
+        # Rebuild dedup keys from loaded pending actions
+        queue._pending_keys = {
+            PendingQueue._make_key(p.action)
+            for p in queue._actions.values()
+        }
+
         return queue
 
     async def add(
@@ -156,7 +163,7 @@ class PendingQueue:
         severity: str = "",
         source: str = "",
         system: str = "",
-    ) -> PendingAction:
+    ) -> PendingAction | None:
         """Create a pending action and add it to the queue.
 
         Args:
@@ -170,8 +177,16 @@ class PendingQueue:
             system: Target system (e.g. ``homeassistant``).
 
         Returns:
-            The created PendingAction with a unique ID.
+            The created PendingAction with a unique ID, or None if a
+            duplicate pending action already exists.
         """
+        key = self._make_key(action)
+        if key in self._pending_keys:
+            logger.debug(
+                "Duplicate pending action suppressed: %s", key
+            )
+            return None
+
         now = datetime.now(UTC)
         pending = PendingAction(
             event_id=event_id,
@@ -209,6 +224,7 @@ class PendingQueue:
             await self._db.commit()
 
         self._actions[pending.id] = pending
+        self._pending_keys.add(key)
         logger.info(
             "Pending action %s enqueued: %s (expires %s)",
             pending.id,
@@ -252,6 +268,7 @@ class PendingQueue:
             await self._db.commit()
 
         pending.status = PendingStatus.APPROVED
+        self._pending_keys.discard(self._make_key(pending.action))
         logger.info("Pending action %s approved", action_id)
         return pending
 
@@ -290,6 +307,7 @@ class PendingQueue:
             await self._db.commit()
 
         pending.status = PendingStatus.REJECTED
+        self._pending_keys.discard(self._make_key(pending.action))
         logger.info("Pending action %s rejected", action_id)
         return pending
 
@@ -319,6 +337,7 @@ class PendingQueue:
                 pending = self._actions.get(eid)
                 if pending is not None:
                     pending.status = PendingStatus.EXPIRED
+                    self._pending_keys.discard(self._make_key(pending.action))
                     expired.append(pending)
                     logger.info("Pending action %s expired", pending.id)
             return expired
@@ -328,6 +347,7 @@ class PendingQueue:
         for pending in self._actions.values():
             if pending.status == PendingStatus.PENDING and now >= pending.expires_at:
                 pending.status = PendingStatus.EXPIRED
+                self._pending_keys.discard(self._make_key(pending.action))
                 expired.append(pending)
                 logger.info("Pending action %s expired", pending.id)
         return expired
@@ -360,6 +380,11 @@ class PendingQueue:
             if a.status == PendingStatus.PENDING
         ]
 
+
+    @staticmethod
+    def _make_key(action: RecommendedAction) -> str:
+        """Build a dedup key from handler, operation, and target entity."""
+        return f"{action.handler}:{action.operation}:{action.target_entity_id or ''}"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
