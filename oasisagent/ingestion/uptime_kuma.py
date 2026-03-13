@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from oasisagent.clients.uptime_kuma import MonitorMetrics, UptimeKumaClient
 from oasisagent.ingestion.base import IngestAdapter
 from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.util.dedup import normalize_cert_dedup_key
 
 if TYPE_CHECKING:
     from oasisagent.config import UptimeKumaAdapterConfig
@@ -200,7 +201,12 @@ class UptimeKumaAdapter(IngestAdapter):
         return []
 
     def _check_cert(self, monitor: MonitorMetrics) -> list[Event]:
-        """Emit certificate_expiry on threshold transitions."""
+        """Emit certificate_expiry on threshold transitions.
+
+        Uses normalized dedup keys so that certificate events from both
+        Uptime Kuma and the cert scanner share the same key for the same
+        hostname, allowing the EventQueue to deduplicate across sources.
+        """
         if monitor.cert_days_remaining is None:
             return []
 
@@ -218,6 +224,9 @@ class UptimeKumaAdapter(IngestAdapter):
         if old_state == new_state:
             return []
 
+        # Use monitor URL for normalized dedup key (cross-source correlation)
+        cert_dedup_key = normalize_cert_dedup_key(monitor.url) if monitor.url else None
+
         # Recovery
         if new_state == "ok" and old_state in ("warning", "critical"):
             return [self._make_event(
@@ -226,7 +235,7 @@ class UptimeKumaAdapter(IngestAdapter):
                     "cert_days_remaining": days,
                     "previous_state": old_state,
                 },
-                dedup_suffix=":cert",
+                dedup_key_override=cert_dedup_key,
             )]
 
         # Warning or critical
@@ -239,7 +248,7 @@ class UptimeKumaAdapter(IngestAdapter):
                     "state": new_state,
                     "cert_is_valid": monitor.cert_is_valid,
                 },
-                dedup_suffix=":cert",
+                dedup_key_override=cert_dedup_key,
             )]
 
         return []
@@ -252,8 +261,10 @@ class UptimeKumaAdapter(IngestAdapter):
         *,
         payload: dict[str, object] | None = None,
         dedup_suffix: str = "",
+        dedup_key_override: str | None = None,
     ) -> Event:
         """Build an Event from monitor data."""
+        dedup_key = dedup_key_override or f"uptime_kuma:{monitor.name}{dedup_suffix}"
         return Event(
             source=self.name,
             system="uptime_kuma",
@@ -267,7 +278,7 @@ class UptimeKumaAdapter(IngestAdapter):
                 **(payload or {}),
             },
             metadata=EventMetadata(
-                dedup_key=f"uptime_kuma:{monitor.name}{dedup_suffix}",
+                dedup_key=dedup_key,
             ),
         )
 

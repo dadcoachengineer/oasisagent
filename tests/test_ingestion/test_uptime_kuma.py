@@ -246,10 +246,22 @@ class TestCertTransitions:
         assert events[0].event_type == "certificate_renewed"
         assert events[0].payload["previous_state"] == "critical"
 
-    def test_cert_dedup_key_has_suffix(self) -> None:
+    def test_cert_dedup_key_normalized(self) -> None:
         adapter = _make_adapter()
         events = adapter._check_cert(_make_monitor(cert_days_remaining=3))
-        assert events[0].metadata.dedup_key == "uptime_kuma:Google:cert"
+        # URL is https://google.com -> normalized to cert_expiry:google.com
+        assert events[0].metadata.dedup_key == "cert_expiry:google.com"
+
+    def test_cert_dedup_key_matches_scanner(self) -> None:
+        """Cert events from UK and cert scanner share the same dedup key."""
+        from oasisagent.util.dedup import normalize_cert_dedup_key
+
+        adapter = _make_adapter()
+        events = adapter._check_cert(
+            _make_monitor(url="https://example.com", cert_days_remaining=3)
+        )
+        scanner_key = normalize_cert_dedup_key("example.com:443")
+        assert events[0].metadata.dedup_key == scanner_key
 
 
 # ---------------------------------------------------------------------------
