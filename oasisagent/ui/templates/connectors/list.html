@@ -39,7 +39,7 @@
         </tbody>
     </table>
     <div hx-get="/ui/{{ table }}/health"
-         hx-trigger="load, every {{ health_poll_interval|default(5) }}s [document.visibilityState === 'visible']"
+         hx-trigger="every {{ health_poll_interval|default(5) }}s [document.visibilityState === 'visible']"
          hx-swap="none"
          style="display:none"></div>
 </div>
