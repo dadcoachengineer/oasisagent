@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -284,6 +285,30 @@ class TestMqttLifecycle:
         mock_cls.assert_called_once()
         assert channel._client is not None
 
+    @patch("oasisagent.notifications.mqtt.aiomqtt.Client")
+    async def test_start_does_not_block_on_failure(
+        self, mock_cls: MagicMock,
+    ) -> None:
+        """If initial connection fails, start() returns immediately
+        and spawns a background reconnect task."""
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(
+            side_effect=ConnectionRefusedError("Connection refused"),
+        )
+        mock_cls.return_value = mock_instance
+
+        channel = MqttNotificationChannel(_make_config())
+        await channel.start()
+
+        # start() returned without blocking
+        assert channel._client is None
+        assert channel._reconnect_task is not None
+        assert not channel._reconnect_task.done()
+
+        # Clean up
+        await channel.stop()
+        assert channel._reconnect_task is None
+
     async def test_stop_disconnects(self) -> None:
         channel = _mock_mqtt_channel()
         channel._client.__aexit__ = AsyncMock()
@@ -295,6 +320,16 @@ class TestMqttLifecycle:
     async def test_stop_without_start_is_noop(self) -> None:
         channel = MqttNotificationChannel(_make_config())
         await channel.stop()  # Should not raise
+
+    async def test_stop_cancels_reconnect_task(self) -> None:
+        """Stop cancels any pending background reconnect."""
+        channel = MqttNotificationChannel(_make_config())
+        # Simulate a reconnect task in progress
+        channel._reconnect_task = asyncio.create_task(asyncio.sleep(9999))
+
+        await channel.stop()
+
+        assert channel._reconnect_task is None
 
 
 # ---------------------------------------------------------------------------

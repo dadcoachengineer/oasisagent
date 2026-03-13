@@ -10,6 +10,7 @@ to specific severity levels or use wildcard oasis/notifications/#.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -35,6 +36,8 @@ class MqttNotificationChannel(NotificationChannel):
     def __init__(self, config: MqttNotificationConfig) -> None:
         self._config = config
         self._client: aiomqtt.Client | None = None
+        self._reconnect_task: asyncio.Task[None] | None = None
+        self._stopping = False
 
     def name(self) -> str:
         return "mqtt"
@@ -45,51 +48,83 @@ class MqttNotificationChannel(NotificationChannel):
             return True
         return self._client is not None
 
-    async def start(self) -> None:
-        """Connect to the MQTT broker with retry on failure.
-
-        Retries with exponential backoff (5s → 10s → 20s → ... → 300s max)
-        so a transient broker outage at startup doesn't permanently break
-        notifications.
-        """
-        if not self._config.enabled:
-            logger.info("MQTT notifications disabled — skipping connection")
-            return
-
+    async def _connect(self) -> None:
+        """Attempt a single connection to the MQTT broker."""
         parsed = urlparse(self._config.broker)
         hostname = parsed.hostname or "localhost"
         port = parsed.port or 1883
 
+        self._client = aiomqtt.Client(
+            hostname=hostname,
+            port=port,
+            username=self._config.username or None,
+            password=self._config.password or None,
+        )
+        await self._client.__aenter__()
+
+    async def _reconnect_loop(self) -> None:
+        """Background retry loop — connects with exponential backoff."""
         backoff = 5
         max_backoff = 300
-        while True:
+        while not self._stopping:
+            await asyncio.sleep(backoff)
+            if self._stopping:
+                return
             try:
-                self._client = aiomqtt.Client(
-                    hostname=hostname,
-                    port=port,
-                    username=self._config.username or None,
-                    password=self._config.password or None,
-                )
-                await self._client.__aenter__()
+                await self._connect()
                 logger.info(
-                    "MQTT notification channel started (broker=%s, prefix=%s)",
+                    "MQTT notification channel connected (broker=%s, prefix=%s)",
                     self._config.broker,
                     self._config.topic_prefix,
                 )
                 return
             except Exception as exc:
+                self._client = None
+                backoff = min(backoff * 2, max_backoff)
                 logger.error(
                     "MQTT notification channel: connection failed: %s "
                     "(retrying in %ds)",
                     exc,
                     backoff,
                 )
-                self._client = None
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
+
+    async def start(self) -> None:
+        """Connect to the MQTT broker.
+
+        Attempts one connection. If it fails, spawns a background task
+        that retries with exponential backoff so startup is never blocked.
+        """
+        if not self._config.enabled:
+            logger.info("MQTT notifications disabled — skipping connection")
+            return
+
+        try:
+            await self._connect()
+            logger.info(
+                "MQTT notification channel started (broker=%s, prefix=%s)",
+                self._config.broker,
+                self._config.topic_prefix,
+            )
+        except Exception as exc:
+            self._client = None
+            logger.warning(
+                "MQTT notification channel: initial connection failed: %s "
+                "(will retry in background)",
+                exc,
+            )
+            self._reconnect_task = asyncio.create_task(
+                self._reconnect_loop(),
+                name="mqtt-notification-reconnect",
+            )
 
     async def stop(self) -> None:
         """Disconnect from the MQTT broker."""
+        self._stopping = True
+        if self._reconnect_task is not None and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reconnect_task
+            self._reconnect_task = None
         if self._client is not None:
             try:
                 await self._client.__aexit__(None, None, None)
