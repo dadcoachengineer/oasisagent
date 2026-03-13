@@ -1,0 +1,29 @@
+{# Single health badge — expects `health_status` variable and optional `scanner_detail` #}
+{% if health_status == "connected" %}
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs"
+      {% if scanner_detail %}title="{{ scanner_detail }}"{% endif %}>
+    <span class="w-1.5 h-1.5 rounded-full bg-green-500 mr-1"></span>Connected
+</span>
+{% elif health_status == "disconnected" %}
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs"
+      {% if scanner_detail %}title="{{ scanner_detail }}"{% endif %}>
+    <span class="w-1.5 h-1.5 rounded-full bg-red-500 mr-1"></span>Disconnected
+</span>
+{% elif health_status == "error" %}
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs"
+      {% if scanner_detail %}title="{{ scanner_detail }}"{% endif %}>
+    <span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1"></span>Error
+</span>
+{% elif health_status == "disabled" %}
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-400 text-xs">
+    <span class="w-1.5 h-1.5 rounded-full bg-gray-400 mr-1"></span>Disabled
+</span>
+{% elif health_status == "unknown" %}
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs">
+    <span class="mr-1 text-xs font-bold">?</span>Unknown
+</span>
+{% else %}
+<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs">
+    <span class="w-1.5 h-1.5 rounded-full bg-gray-300 mr-1"></span>Not Running
+</span>
+{% endif %}

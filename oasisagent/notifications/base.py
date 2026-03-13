@@ -26,6 +26,10 @@ class NotificationChannel(ABC):
     def name(self) -> str:
         """Channel identifier for logging and result tracking."""
 
+    async def healthy(self) -> bool:
+        """Check channel health. Default returns True — override for real checks."""
+        return True
+
     async def start(self) -> None:  # noqa: B027 — intentional non-abstract default
         """Initialize channel resources. Default no-op."""
 

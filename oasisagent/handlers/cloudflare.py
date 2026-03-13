@@ -62,6 +62,13 @@ class CloudflareHandler(Handler):
             self._client = None
             logger.info("Cloudflare handler stopped")
 
+    async def healthy(self) -> bool:
+        """Check Cloudflare connectivity via token verification endpoint."""
+        if self._client is None:
+            return False
+        data = await self._client.get("/user/tokens/verify")
+        return data.get("success", False)
+
     async def can_handle(
         self, event: Event, action: RecommendedAction,
     ) -> bool:

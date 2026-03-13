@@ -108,6 +108,13 @@ class ProxmoxHandler(Handler):
             self._session = None
             logger.info("Proxmox handler stopped")
 
+    async def healthy(self) -> bool:
+        """Check Proxmox connectivity via GET /api2/json/version."""
+        if self._session is None:
+            return False
+        async with self._session.get("/api2/json/version") as resp:
+            return resp.status == 200
+
     async def can_handle(self, event: Event, action: RecommendedAction) -> bool:
         return (
             action.handler == "proxmox"

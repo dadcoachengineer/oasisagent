@@ -16,7 +16,7 @@ import signal
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from oasisagent.approval.listener import ApprovalListener
 from oasisagent.approval.pending import PendingAction, PendingQueue
@@ -190,6 +190,100 @@ class Orchestrator:
                 self._queue.task_done()
         except asyncio.CancelledError:
             pass
+
+    # Maps handler name() → DB service type for health lookups.
+    _HANDLER_NAME_TO_TYPE: ClassVar[dict[str, str]] = {
+        "homeassistant": "ha_handler",
+        "docker": "docker_handler",
+        "portainer": "portainer_handler",
+        "proxmox": "proxmox_handler",
+        "unifi": "unifi_handler",
+        "cloudflare": "cloudflare_handler",
+    }
+
+    # Maps notification channel name() → DB notification type.
+    _CHANNEL_NAME_TO_TYPE: ClassVar[dict[str, str]] = {
+        "mqtt": "mqtt_notification",
+    }
+
+    # Internal service types that lack a real health check.
+    _INTERNAL_SERVICE_TYPES: tuple[str, ...] = (
+        "llm_triage", "llm_reasoning", "llm_options",
+        "influxdb", "guardrails", "circuit_breaker",
+    )
+
+    async def get_component_health(self) -> dict[str, dict[str, str]]:
+        """Return live health status for all active components.
+
+        Returns ``{"connectors": {...}, "services": {...}, "notifications": {...}}``
+        where each value maps a DB type string to a health status string:
+        ``"connected"``, ``"disconnected"``, ``"error"``, or ``"unknown"``.
+        """
+        # TODO: Use asyncio.gather with per-component timeout so one slow
+        # handler (e.g., Proxmox behind VPN) doesn't block the entire response.
+        connectors: dict[str, str] = {}
+        services: dict[str, str] = {}
+        notifications: dict[str, str] = {}
+        scanner_detail = ""
+
+        # --- Connectors: non-scanner adapters ---
+        scanner_results: list[tuple[str, str]] = []
+        for adapter in self._adapters:
+            status = await self._check_health(adapter)
+            if adapter.name.startswith("scanner."):
+                scanner_results.append((adapter.name, status))
+            else:
+                connectors[adapter.name] = status
+
+        # --- Services: handlers ---
+        for handler in self._handlers.values():
+            db_type = self._HANDLER_NAME_TO_TYPE.get(
+                handler.name(), handler.name(),
+            )
+            services[db_type] = await self._check_health(handler)
+
+        # --- Services: internal components → "unknown" ---
+        for svc_type in self._INTERNAL_SERVICE_TYPES:
+            services[svc_type] = "unknown"
+
+        # --- Services: scanner aggregate (D2) ---
+        if scanner_results:
+            statuses = [s for _, s in scanner_results]
+            healthy_count = statuses.count("connected")
+            total = len(statuses)
+            scanner_detail = f"{healthy_count}/{total} scanners healthy"
+            if any(s == "error" for s in statuses):
+                services["scanner"] = "error"
+            elif any(s == "disconnected" for s in statuses):
+                services["scanner"] = "disconnected"
+            else:
+                services["scanner"] = "connected"
+
+        # --- Notifications ---
+        if self._dispatcher is not None:
+            for channel in self._dispatcher.channels:
+                db_type = self._CHANNEL_NAME_TO_TYPE.get(
+                    channel.name(), channel.name(),
+                )
+                notifications[db_type] = await self._check_health(channel)
+
+        result: dict[str, dict[str, str]] = {
+            "connectors": connectors,
+            "services": services,
+            "notifications": notifications,
+        }
+        if scanner_detail:
+            result["scanner_detail"] = {"detail": scanner_detail}
+        return result
+
+    @staticmethod
+    async def _check_health(component: object) -> str:
+        """Call healthy() on a component and map the result to a status string."""
+        try:
+            is_healthy = await component.healthy()  # type: ignore[union-attr]
+            return "connected" if is_healthy else "disconnected"
+        except Exception:
+            return "error"
 
     async def stop(self) -> None:
         """Signal shutdown and tear down all components.

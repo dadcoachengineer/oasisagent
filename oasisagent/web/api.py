@@ -29,3 +29,14 @@ async def status(request: Request) -> dict[str, Any]:
         "errors": orchestrator._errors,
         "queue_depth": queue_depth,
     }
+
+
+@router.get("/health/components")
+async def component_health(request: Request) -> dict[str, Any]:
+    """Live health status for all connectors, services, and notifications.
+
+    Unauthenticated — consistent with /status. Consider adding short TTL
+    cache (3-5s) if multiple UI tabs cause excessive upstream health checks.
+    """
+    orchestrator = request.app.state.orchestrator
+    return await orchestrator.get_component_health()

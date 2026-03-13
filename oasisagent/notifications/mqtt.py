@@ -39,6 +39,12 @@ class MqttNotificationChannel(NotificationChannel):
     def name(self) -> str:
         return "mqtt"
 
+    async def healthy(self) -> bool:
+        """Check MQTT broker connectivity."""
+        if not self._config.enabled:
+            return True
+        return self._client is not None
+
     async def start(self) -> None:
         """Connect to the MQTT broker with retry on failure.
 
