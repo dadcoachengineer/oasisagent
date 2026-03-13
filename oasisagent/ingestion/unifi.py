@@ -94,7 +94,7 @@ class UnifiAdapter(IngestAdapter):
     async def _poll_loop(self) -> None:
         """Main polling loop — polls all endpoints each interval."""
         consecutive_failures = 0
-        _MAX_BACKOFF = 300  # 5 minutes cap
+        max_backoff = 300  # 5 minutes cap
 
         while not self._stopping:
             try:
@@ -114,7 +114,7 @@ class UnifiAdapter(IngestAdapter):
                 consecutive_failures += 1
                 backoff = int(min(
                     self._config.poll_interval * (2 ** (consecutive_failures - 1)),
-                    _MAX_BACKOFF,
+                    max_backoff,
                 ))
                 logger.warning(
                     "UniFi poll error (attempt %d, next retry in %ds): %s",

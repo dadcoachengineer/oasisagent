@@ -268,7 +268,7 @@ class Orchestrator:
 
         # Distribute results into the correct category dicts.
         scanner_results: list[tuple[str, str]] = []
-        for (key, category, _), status in zip(checks, results):
+        for (key, category, _), status in zip(checks, results, strict=True):
             if category == "connector":
                 if key.startswith("scanner."):
                     scanner_results.append((key, status))
@@ -325,7 +325,7 @@ class Orchestrator:
                 timeout=cls._HEALTH_CHECK_TIMEOUT,
             )
             return "connected" if is_healthy else "disconnected"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "error"
         except Exception:
             return "error"
