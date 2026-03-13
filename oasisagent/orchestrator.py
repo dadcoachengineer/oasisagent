@@ -39,7 +39,7 @@ from oasisagent.ingestion.ha_log_poller import HaLogPollerAdapter
 from oasisagent.ingestion.ha_websocket import HaWebSocketAdapter
 from oasisagent.ingestion.http_poller import HttpPollerAdapter
 from oasisagent.ingestion.mqtt import MqttAdapter
-from oasisagent.llm.client import LLMClient
+from oasisagent.llm.client import LLMClient, LLMRole
 from oasisagent.llm.reasoning import ReasoningService
 from oasisagent.llm.triage import TriageService
 from oasisagent.metrics import MetricsServer
@@ -211,9 +211,14 @@ class Orchestrator:
 
     # Internal service types that lack a real health check.
     _INTERNAL_SERVICE_TYPES: tuple[str, ...] = (
-        "llm_triage", "llm_reasoning", "llm_options",
         "influxdb", "guardrails", "circuit_breaker",
     )
+
+    # Maps LLM roles to DB service types for health lookups.
+    _LLM_ROLE_TO_TYPE: ClassVar[dict[str, str]] = {
+        "triage": "llm_triage",
+        "reasoning": "llm_reasoning",
+    }
 
     async def get_component_health(self) -> dict[str, dict[str, str]]:
         """Return live health status for all active components.
@@ -244,6 +249,12 @@ class Orchestrator:
                 handler.name(), handler.name(),
             )
             services[db_type] = await self._check_health(handler)
+
+        # --- Services: LLM endpoints — infer from last call ---
+        if self._llm_client is not None:
+            for role in LLMRole:
+                db_type = self._LLM_ROLE_TO_TYPE.get(role.value, role.value)
+                services[db_type] = self._llm_client.get_role_health(role)
 
         # --- Services: internal components → "unknown" ---
         for svc_type in self._INTERNAL_SERVICE_TYPES:

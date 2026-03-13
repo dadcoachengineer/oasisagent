@@ -112,6 +112,11 @@ class LLMClient:
             LLMRole.TRIAGE: UsageStats(),
             LLMRole.REASONING: UsageStats(),
         }
+        # Track last call outcome per role: None = no calls yet
+        self._last_call_ok: dict[LLMRole, bool | None] = {
+            LLMRole.TRIAGE: None,
+            LLMRole.REASONING: None,
+        }
 
     async def complete(
         self,
@@ -146,7 +151,7 @@ class LLMClient:
 
         # Try primary endpoint with retries
         try:
-            return await self._complete_with_retries(
+            result = await self._complete_with_retries(
                 role=role,
                 endpoint=endpoint,
                 messages=messages,
@@ -154,7 +159,10 @@ class LLMClient:
                 temperature=temperature,
                 max_retries=retry_attempts,
             )
+            self._last_call_ok[role] = True
+            return result
         except _NON_RETRYABLE_ERRORS:
+            self._last_call_ok[role] = False
             raise
         except Exception as primary_err:
             # Fallback: reasoning → triage (only after retries exhausted)
@@ -165,6 +173,7 @@ class LLMClient:
                     retry_attempts,
                     primary_err,
                 )
+                self._last_call_ok[LLMRole.REASONING] = False
                 triage_endpoint = self._endpoint_for(LLMRole.TRIAGE)
                 try:
                     response = await self._complete_with_retries(
@@ -175,14 +184,17 @@ class LLMClient:
                         temperature=temperature,
                         max_retries=retry_attempts,
                     )
+                    self._last_call_ok[LLMRole.TRIAGE] = True
                     # Mark as degraded — caller/audit can use this
                     return response.model_copy(update={"degraded": True})
                 except Exception as fallback_err:
+                    self._last_call_ok[LLMRole.TRIAGE] = False
                     raise LLMError(
                         f"Both reasoning and triage endpoints failed. "
                         f"Reasoning: {primary_err}. Triage: {fallback_err}"
                     ) from fallback_err
 
+            self._last_call_ok[role] = False
             raise LLMError(
                 f"LLM completion failed for role '{role.value}' "
                 f"after {retry_attempts} retries: {primary_err}"
@@ -191,6 +203,18 @@ class LLMClient:
     def get_usage_stats(self) -> dict[str, UsageStats]:
         """Return cumulative token usage per role."""
         return {role.value: stats for role, stats in self._usage.items()}
+
+    def get_role_health(self, role: LLMRole) -> str:
+        """Return health status for a role based on last call outcome.
+
+        Returns ``"unknown"`` if no calls have been made yet,
+        ``"connected"`` if the last call succeeded, or
+        ``"error"`` if the last call failed.
+        """
+        last = self._last_call_ok.get(role)
+        if last is None:
+            return "unknown"
+        return "connected" if last else "error"
 
     # -------------------------------------------------------------------
     # Internal helpers
