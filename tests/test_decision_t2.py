@@ -295,6 +295,63 @@ class TestT2Guardrails:
 
         assert result.disposition == DecisionDisposition.BLOCKED
 
+    async def test_target_entity_id_checked_instead_of_event(self) -> None:
+        """Guardrails check action.target_entity_id when set, not event.entity_id."""
+        diagnosis = DiagnosisResult(
+            root_cause="Lock firmware issue",
+            confidence=0.9,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Restart lock integration",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                    reasoning="Need to restart",
+                    target_entity_id="lock.front_door",
+                ),
+            ],
+            risk_assessment="Affects security domain",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+        # Event entity is NOT in a blocked domain, but target is
+        event = _make_event(entity_id="sensor.temperature")
+
+        result = await engine.process_event(event)
+
+        assert result.disposition == DecisionDisposition.BLOCKED
+
+    async def test_no_target_entity_falls_back_to_event(self) -> None:
+        """Without target_entity_id, guardrails use event.entity_id."""
+        diagnosis = DiagnosisResult(
+            root_cause="Sensor issue",
+            confidence=0.9,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Restart sensor integration",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                    reasoning="Safe restart",
+                ),
+            ],
+            risk_assessment="Low risk",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+        event = _make_event(entity_id="sensor.temperature")
+
+        result = await engine.process_event(event)
+
+        assert result.disposition == DecisionDisposition.MATCHED
+        assert len(result.recommended_actions) == 1
+
     async def test_dry_run_blocks_t2_actions(self) -> None:
         """Dry run mode blocks all T2 actions (they count as not approved)."""
         reasoning = _make_reasoning_service()
