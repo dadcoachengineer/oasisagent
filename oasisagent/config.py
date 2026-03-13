@@ -835,6 +835,18 @@ class DiscordNotificationConfig(BaseModel):
     avatar_url: str = ""
 
 
+class SlackNotificationConfig(BaseModel):
+    """Slack Incoming Webhook notification channel configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    webhook_url: str = ""
+    channel: str = ""
+    username: str = "OasisAgent"
+    icon_emoji: str = ":robot_face:"
+
+
 class NotificationsConfig(BaseModel):
     """All notification channel configurations."""
 
@@ -845,6 +857,7 @@ class NotificationsConfig(BaseModel):
     webhook: WebhookNotificationConfig = Field(default_factory=WebhookNotificationConfig)
     telegram: TelegramNotificationConfig = Field(default_factory=TelegramNotificationConfig)
     discord: DiscordNotificationConfig = Field(default_factory=DiscordNotificationConfig)
+    slack: SlackNotificationConfig = Field(default_factory=SlackNotificationConfig)
 
 
 # -- Top-level config -------------------------------------------------------

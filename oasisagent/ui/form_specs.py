@@ -65,6 +65,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "webhook": "Webhook",
     "telegram": "Telegram",
     "discord": "Discord",
+    "slack": "Slack",
 }
 
 TYPE_DESCRIPTIONS: dict[str, str] = {
@@ -137,6 +138,7 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "webhook": "POST notifications to webhook URLs",
     "telegram": "Send notifications via Telegram bot",
     "discord": "Send notifications via Discord webhook",
+    "slack": "Send notifications via Slack Incoming Webhook",
 }
 
 # Types that only allow a single instance
@@ -1006,6 +1008,33 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         FieldSpec(
             "avatar_url", "Avatar URL", "text",
             help_text="URL for the webhook avatar image (optional)",
+        ),
+    ],
+    "slack": [
+        FieldSpec(
+            "webhook_url", "Webhook URL", "password",
+            help_text=(
+                "Slack Incoming Webhook URL — create one at"
+                " api.slack.com/apps → Incoming Webhooks"
+            ),
+            required=True,
+        ),
+        FieldSpec(
+            "channel", "Channel Override", "text",
+            help_text=(
+                "Override the default channel (e.g. #alerts)."
+                " Leave blank to use the webhook default"
+            ),
+        ),
+        FieldSpec(
+            "username", "Bot Username", "text",
+            help_text="Display name for the bot in Slack",
+            default="OasisAgent",
+        ),
+        FieldSpec(
+            "icon_emoji", "Icon Emoji", "text",
+            help_text="Emoji for the bot avatar (e.g. :robot_face:)",
+            default=":robot_face:",
         ),
     ],
 }
