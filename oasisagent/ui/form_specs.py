@@ -160,10 +160,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Broker username — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Broker password — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
@@ -192,6 +194,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "Long-Lived Access Token", "password",
+            help_text=(
+                "HA → Profile → Long-Lived Access Tokens"
+                " → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         # subscriptions: deferred (nested model)
@@ -205,6 +211,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "Long-Lived Access Token", "password",
+            help_text=(
+                "HA → Profile → Long-Lived Access Tokens"
+                " → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -238,6 +248,7 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "auth_secret", "Auth Secret", "password",
+            help_text="Shared secret the sender includes in the header",
             show_when=("auth_mode", "header_secret"),
         ),
         FieldSpec(
@@ -302,11 +313,13 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "auth_username", "Username", "text",
+            help_text="HTTP Basic Auth username",
             group="Authentication",
             show_when=("auth_mode", "basic"),
         ),
         FieldSpec(
             "auth_password", "Password", "password",
+            help_text="HTTP Basic Auth password",
             group="Authentication",
             show_when=("auth_mode", "basic"),
         ),
@@ -318,6 +331,7 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "auth_value", "Auth Value", "password",
+            help_text="e.g. Bearer <token> or raw API key",
             group="Authentication",
             show_when=("auth_mode", "token"),
         ),
@@ -332,10 +346,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Local admin account — avoid using SSO credentials",
             required=True, group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Password for the local admin account",
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -380,14 +396,26 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     "cloudflare": [
         FieldSpec(
             "api_token", "API Token", "password",
+            help_text=(
+                "Cloudflare dashboard → My Profile"
+                " → API Tokens → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
             "account_id", "Account ID", "text",
+            help_text=(
+                "Dashboard → any domain → Overview sidebar"
+                " → Account ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
             "zone_id", "Zone ID", "text",
+            help_text=(
+                "Dashboard → domain → Overview sidebar"
+                " → Zone ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
@@ -484,6 +512,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "api_key", "API Key", "password",
+            help_text=(
+                "Optional for local Ollama; required for"
+                " OpenRouter or other hosted providers"
+            ),
             group="Authentication",
         ),
         FieldSpec(
@@ -512,6 +544,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "api_key", "API Key", "password",
+            help_text=(
+                "Provider API key — e.g. OpenRouter,"
+                " Anthropic, or OpenAI"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -564,6 +600,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "Long-Lived Access Token", "password",
+            help_text=(
+                "HA → Profile → Long-Lived Access Tokens"
+                " → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -618,6 +658,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "api_key", "API Key", "password",
+            help_text=(
+                "Portainer → My Account → Access Tokens"
+                " → Add access token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -655,10 +699,15 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token_name", "Token Name", "text",
+            help_text=(
+                "Datacenter → Permissions → API Tokens"
+                " → token ID (without user@realm!)"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
             "token_value", "Token Value", "password",
+            help_text="Secret value shown once at token creation",
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -674,10 +723,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Local admin account — avoid using SSO credentials",
             required=True, group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Password for the local admin account",
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -709,14 +760,26 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     "cloudflare_handler": [
         FieldSpec(
             "api_token", "API Token", "password",
+            help_text=(
+                "Cloudflare dashboard → My Profile"
+                " → API Tokens → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
             "zone_id", "Zone ID", "text",
+            help_text=(
+                "Dashboard → domain → Overview sidebar"
+                " → Zone ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
             "account_id", "Account ID", "text",
+            help_text=(
+                "Dashboard → any domain → Overview sidebar"
+                " → Account ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
@@ -732,6 +795,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "API Token", "password",
+            help_text=(
+                "InfluxDB → Data → API Tokens"
+                " → Generate Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -834,10 +901,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Broker username — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Broker password — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
@@ -865,10 +934,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="SMTP login — often your email address",
             group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="SMTP password or app-specific password",
             group="Authentication",
         ),
         FieldSpec(
@@ -896,10 +967,15 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     "telegram": [
         FieldSpec(
             "bot_token", "Bot Token", "password",
+            help_text="Message @BotFather on Telegram → /newbot",
             required=True, group="Authentication",
         ),
         FieldSpec(
             "chat_id", "Chat ID", "text",
+            help_text=(
+                "Numeric chat/group ID — message your bot"
+                " then check /getUpdates"
+            ),
             required=True,
         ),
         FieldSpec(
