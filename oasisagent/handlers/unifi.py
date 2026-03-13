@@ -68,6 +68,15 @@ class UnifiHandler(Handler):
             self._client = None
             logger.info("UniFi handler stopped")
 
+    async def healthy(self) -> bool:
+        """Check UniFi connectivity — session must be established.
+
+        Known limitation: does not verify the session cookie is still valid.
+        A stale session may report healthy=True but fail on the next API call.
+        UniFi sessions expire unpredictably; the client handles re-auth on 401.
+        """
+        return self._client is not None
+
     async def can_handle(
         self, event: Event, action: RecommendedAction,
     ) -> bool:

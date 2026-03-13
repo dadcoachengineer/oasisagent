@@ -74,6 +74,13 @@ class HomeAssistantHandler(Handler):
             self._session = None
             logger.info("HA handler stopped")
 
+    async def healthy(self) -> bool:
+        """Check HA API connectivity via GET /api/."""
+        if self._session is None:
+            return False
+        async with self._session.get("/api/") as resp:
+            return resp.status == 200
+
     async def can_handle(self, event: Event, action: RecommendedAction) -> bool:
         """Check if this handler supports the action."""
         return (

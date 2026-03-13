@@ -1,0 +1,8 @@
+{# Batch OOB swap response — replaces health cells for all rows #}
+{% for s in statuses %}
+<td id="health-{{ s.id }}" hx-swap-oob="innerHTML:#health-{{ s.id }}">
+    {% with health_status=s.health_status, scanner_detail=s.scanner_detail %}
+    {% include "connectors/_health_badge.html" %}
+    {% endwith %}
+</td>
+{% endfor %}

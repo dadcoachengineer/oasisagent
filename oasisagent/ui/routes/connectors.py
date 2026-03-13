@@ -177,6 +177,7 @@ def _build_ui_crud(
                 "rows": masked,
                 "table": url_prefix,
                 "title": title,
+                "health_poll_interval": 5,
             },
         )
 
@@ -449,6 +450,58 @@ def _build_ui_crud(
         response = HTMLResponse(content="", status_code=204)
         response.headers["HX-Redirect"] = f"/ui/{url_prefix}"
         return response
+
+    # -----------------------------------------------------------------------
+    # GET /{category}/health — live health badges (HTMX polling)
+    # -----------------------------------------------------------------------
+
+    @router.get(
+        f"/{url_prefix}/health",
+        response_class=HTMLResponse,
+        name=f"{url_prefix}_health",
+    )
+    async def health_badges(
+        request: Request,
+        current_user: TokenPayload = Depends(require_viewer),
+    ) -> HTMLResponse:
+        store = _get_store(request)
+        rows = await getattr(store, list_method)()
+        templates = _get_templates(request)
+
+        # Get orchestrator health — handle missing orchestrator gracefully
+        orchestrator = getattr(request.app.state, "orchestrator", None)
+        health_map: dict[str, str] = {}
+        scanner_detail = ""
+        if orchestrator is not None:
+            try:
+                health = await orchestrator.get_component_health()
+                # The category key matches: connectors, services, notifications
+                health_map = health.get(url_prefix, {})
+                scanner_detail = health.get("scanner_detail", {}).get("detail", "")
+            except Exception:
+                pass  # All will show "not_running"
+
+        statuses = []
+        for row in rows:
+            if not row["enabled"]:
+                status = "disabled"
+            elif health_map:
+                status = health_map.get(row["type"], "not_running")
+            else:
+                status = "not_running"
+            statuses.append({
+                "id": row["id"],
+                "health_status": status,
+                "scanner_detail": scanner_detail if row["type"] == "scanner" else "",
+            })
+
+        return templates.TemplateResponse(
+            "connectors/_health_badges.html",
+            {
+                **_base_context(request, current_user),
+                "statuses": statuses,
+            },
+        )
 
     # -----------------------------------------------------------------------
     # POST /{category}/{id}/toggle — enable/disable (HTMX partial)

@@ -84,6 +84,14 @@ class DockerHandler(Handler):
             self._session = None
             logger.info("Docker handler stopped")
 
+    async def healthy(self) -> bool:
+        """Check Docker connectivity via GET /_ping."""
+        if self._session is None:
+            return False
+        async with self._session.get("/_ping") as resp:
+            body = await resp.text()
+            return body == "OK"
+
     async def can_handle(self, event: Event, action: RecommendedAction) -> bool:
         """Check if this handler supports the action."""
         return (

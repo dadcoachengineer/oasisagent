@@ -90,6 +90,13 @@ class PortainerHandler(Handler):
             self._session = None
             logger.info("Portainer handler stopped")
 
+    async def healthy(self) -> bool:
+        """Check Portainer connectivity via GET /api/status."""
+        if self._session is None:
+            return False
+        async with self._session.get("/api/status") as resp:
+            return resp.status == 200
+
     async def can_handle(self, event: Event, action: RecommendedAction) -> bool:
         return (
             action.handler == "portainer"
