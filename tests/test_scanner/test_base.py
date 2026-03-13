@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,11 +21,16 @@ class _StubScanner(ScannerIngestAdapter):
         interval: int = 1,
         events: list[Event] | None = None,
         error: Exception | None = None,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(queue, interval)
+        super().__init__(queue, interval, **kwargs)
         self._events_to_return = events or []
         self._error = error
         self.scan_count = 0
+
+    def set_events(self, events: list[Event]) -> None:
+        """Update events returned by subsequent scans."""
+        self._events_to_return = events
 
     @property
     def name(self) -> str:
@@ -139,3 +145,119 @@ class TestScannerBase:
         # Should not raise
         scanner._enqueue(event)
         queue.put_nowait.assert_called_once_with(event)
+
+
+# ---------------------------------------------------------------------------
+# Adaptive interval tests
+# ---------------------------------------------------------------------------
+
+
+class TestAdaptiveIntervals:
+    def test_effective_interval_normal(self) -> None:
+        """Without issues, effective interval equals configured interval."""
+        scanner = _StubScanner(_mock_queue(), interval=900)
+        assert scanner._effective_interval == 900
+
+    def test_effective_interval_fast_mode(self) -> None:
+        """After detecting issues, interval is reduced by fast factor."""
+        scanner = _StubScanner(
+            _mock_queue(), interval=900,
+            adaptive_enabled=True, adaptive_fast_factor=0.25,
+        )
+        scanner._adapted = True
+        assert scanner._effective_interval == 225
+
+    def test_effective_interval_minimum_60(self) -> None:
+        """Fast mode interval is clamped to at least 60 seconds."""
+        scanner = _StubScanner(
+            _mock_queue(), interval=100,
+            adaptive_enabled=True, adaptive_fast_factor=0.1,
+        )
+        scanner._adapted = True
+        # 100 * 0.1 = 10, but should be clamped to 60
+        assert scanner._effective_interval == 60
+
+    def test_adaptive_disabled(self) -> None:
+        """When adaptive is disabled, interval never changes."""
+        scanner = _StubScanner(
+            _mock_queue(), interval=900,
+            adaptive_enabled=False,
+        )
+        warning_event = _make_event(severity=Severity.WARNING)
+        scanner._update_adaptive_state([warning_event])
+        assert scanner._effective_interval == 900
+        assert scanner._adapted is False
+
+    def test_warning_event_enters_fast_mode(self) -> None:
+        """WARNING+ events should trigger fast mode."""
+        scanner = _StubScanner(_mock_queue(), interval=900)
+        warning_event = _make_event(severity=Severity.WARNING)
+        scanner._update_adaptive_state([warning_event])
+        assert scanner._adapted is True
+        assert scanner._consecutive_clean == 0
+
+    def test_info_event_does_not_enter_fast_mode(self) -> None:
+        """INFO events (recovery) should not trigger fast mode."""
+        scanner = _StubScanner(_mock_queue(), interval=900)
+        info_event = _make_event(severity=Severity.INFO)
+        scanner._update_adaptive_state([info_event])
+        assert scanner._adapted is False
+
+    def test_clean_scans_restore_normal(self) -> None:
+        """After enough clean scans, fast mode is exited."""
+        scanner = _StubScanner(
+            _mock_queue(), interval=900,
+            adaptive_recovery_scans=3,
+        )
+        # Enter fast mode
+        warning_event = _make_event(severity=Severity.WARNING)
+        scanner._update_adaptive_state([warning_event])
+        assert scanner._adapted is True
+
+        # 2 clean scans — still in fast mode
+        scanner._update_adaptive_state([])
+        assert scanner._adapted is True
+        assert scanner._consecutive_clean == 1
+        scanner._update_adaptive_state([])
+        assert scanner._adapted is True
+        assert scanner._consecutive_clean == 2
+
+        # 3rd clean scan — exits fast mode
+        scanner._update_adaptive_state([])
+        assert scanner._adapted is False
+        assert scanner._consecutive_clean == 0
+
+    def test_issue_during_recovery_resets_count(self) -> None:
+        """A new issue during recovery resets the clean scan counter."""
+        scanner = _StubScanner(
+            _mock_queue(), interval=900,
+            adaptive_recovery_scans=3,
+        )
+        warning_event = _make_event(severity=Severity.WARNING)
+
+        # Enter fast mode and start recovering
+        scanner._update_adaptive_state([warning_event])
+        scanner._update_adaptive_state([])  # clean 1
+        scanner._update_adaptive_state([])  # clean 2
+
+        # New issue resets counter
+        scanner._update_adaptive_state([warning_event])
+        assert scanner._adapted is True
+        assert scanner._consecutive_clean == 0
+
+    def test_error_severity_enters_fast_mode(self) -> None:
+        """ERROR severity should also trigger fast mode."""
+        scanner = _StubScanner(_mock_queue(), interval=900)
+        error_event = _make_event(severity=Severity.ERROR)
+        scanner._update_adaptive_state([error_event])
+        assert scanner._adapted is True
+
+    def test_mixed_info_and_warning_enters_fast_mode(self) -> None:
+        """If any event is WARNING+, fast mode is triggered."""
+        scanner = _StubScanner(_mock_queue(), interval=900)
+        events = [
+            _make_event(severity=Severity.INFO),
+            _make_event(severity=Severity.WARNING),
+        ]
+        scanner._update_adaptive_state(events)
+        assert scanner._adapted is True

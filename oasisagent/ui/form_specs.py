@@ -929,7 +929,8 @@ DEFERRED_FIELDS: dict[str, frozenset[str]] = {
     "guardrails": frozenset({"circuit_breaker"}),
     # Scanner uses a custom page (PR 2) — all fields deferred
     "scanner": frozenset({
-        "interval", "certificate_expiry", "disk_space",
+        "interval", "adaptive_enabled", "adaptive_fast_factor",
+        "adaptive_recovery_scans", "certificate_expiry", "disk_space",
         "ha_health", "docker_health",
     }),
 }

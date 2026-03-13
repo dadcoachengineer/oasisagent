@@ -426,12 +426,18 @@ class Orchestrator:
 
         # 14b. Scanner adapters (each scanner is its own adapter)
         if cfg.scanner.enabled:
+            adaptive_kw = {
+                "adaptive_enabled": cfg.scanner.adaptive_enabled,
+                "adaptive_fast_factor": cfg.scanner.adaptive_fast_factor,
+                "adaptive_recovery_scans": cfg.scanner.adaptive_recovery_scans,
+            }
             if cfg.scanner.certificate_expiry.enabled:
                 from oasisagent.scanner.cert_expiry import CertExpiryScannerAdapter
 
                 interval = cfg.scanner.certificate_expiry.interval or cfg.scanner.interval
                 self._adapters.append(CertExpiryScannerAdapter(
                     cfg.scanner.certificate_expiry, self._queue, interval,
+                    **adaptive_kw,
                 ))
             if cfg.scanner.disk_space.enabled:
                 from oasisagent.scanner.disk_space import DiskSpaceScannerAdapter
@@ -439,6 +445,7 @@ class Orchestrator:
                 interval = cfg.scanner.disk_space.interval or cfg.scanner.interval
                 self._adapters.append(DiskSpaceScannerAdapter(
                     cfg.scanner.disk_space, self._queue, interval,
+                    **adaptive_kw,
                 ))
             if cfg.scanner.ha_health.enabled and cfg.handlers.homeassistant.enabled:
                 from oasisagent.scanner.ha_health import HaHealthScannerAdapter
@@ -447,6 +454,7 @@ class Orchestrator:
                 self._adapters.append(HaHealthScannerAdapter(
                     cfg.scanner.ha_health, self._queue, interval,
                     ha_config=cfg.handlers.homeassistant,
+                    **adaptive_kw,
                 ))
             if cfg.scanner.docker_health.enabled and cfg.handlers.docker.enabled:
                 from oasisagent.scanner.docker_health import DockerHealthScannerAdapter
@@ -455,6 +463,7 @@ class Orchestrator:
                 self._adapters.append(DockerHealthScannerAdapter(
                     cfg.scanner.docker_health, self._queue, interval,
                     docker_config=cfg.handlers.docker,
+                    **adaptive_kw,
                 ))
 
         # 15. Metrics server (Prometheus)

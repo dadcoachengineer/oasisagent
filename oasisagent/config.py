@@ -484,6 +484,9 @@ class ScannerConfig(BaseModel):
 
     enabled: bool = False
     interval: Annotated[int, Field(ge=60)] = 900
+    adaptive_enabled: bool = True
+    adaptive_fast_factor: Annotated[float, Field(gt=0.0, lt=1.0)] = 0.25
+    adaptive_recovery_scans: Annotated[int, Field(ge=1)] = 3
     certificate_expiry: CertExpiryCheckConfig = Field(default_factory=CertExpiryCheckConfig)
     disk_space: DiskSpaceCheckConfig = Field(default_factory=DiskSpaceCheckConfig)
     ha_health: HaHealthCheckConfig = Field(default_factory=HaHealthCheckConfig)

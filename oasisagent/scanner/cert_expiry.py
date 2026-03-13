@@ -23,7 +23,7 @@ import asyncio
 import logging
 import ssl
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from oasisagent.models import Event, EventMetadata, Severity
 from oasisagent.scanner.base import ScannerIngestAdapter
@@ -46,9 +46,13 @@ class CertExpiryScannerAdapter(ScannerIngestAdapter):
     """
 
     def __init__(
-        self, config: CertExpiryCheckConfig, queue: EventQueue, interval: int,
+        self,
+        config: CertExpiryCheckConfig,
+        queue: EventQueue,
+        interval: int,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(queue, interval)
+        super().__init__(queue, interval, **kwargs)
         self._config = config
         # State tracking: endpoint -> "ok" | "warning" | "critical"
         self._states: dict[str, str] = {}
