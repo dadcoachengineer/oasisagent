@@ -573,6 +573,13 @@ class ConfigStore:
         else:
             logger.debug("No ha_log_poller row in connectors (types: %s)", list(by_type.keys()))
 
+        if "unifi" in by_type:
+            kwargs["unifi"] = by_type["unifi"]["config"]
+        if "cloudflare" in by_type:
+            kwargs["cloudflare"] = by_type["cloudflare"]["config"]
+        if "uptime_kuma" in by_type:
+            kwargs["uptime_kuma"] = by_type["uptime_kuma"]["config"]
+
         # HTTP poller supports multiple targets (one row per target)
         poller_rows = [r for r in rows if r["type"] == "http_poller" and r["enabled"]]
         if poller_rows:
@@ -609,8 +616,14 @@ class ConfigStore:
             kwargs["homeassistant"] = by_type["ha_handler"]["config"]
         if "docker_handler" in by_type:
             kwargs["docker"] = by_type["docker_handler"]["config"]
+        if "portainer_handler" in by_type:
+            kwargs["portainer"] = by_type["portainer_handler"]["config"]
         if "proxmox_handler" in by_type:
             kwargs["proxmox"] = by_type["proxmox_handler"]["config"]
+        if "unifi_handler" in by_type:
+            kwargs["unifi"] = by_type["unifi_handler"]["config"]
+        if "cloudflare_handler" in by_type:
+            kwargs["cloudflare"] = by_type["cloudflare_handler"]["config"]
 
         return HandlersConfig.model_validate(kwargs) if kwargs else HandlersConfig()
 
@@ -647,6 +660,8 @@ class ConfigStore:
             kwargs["email"] = by_type["email"]["config"]
         if "webhook" in by_type:
             kwargs["webhook"] = by_type["webhook"]["config"]
+        if "telegram" in by_type:
+            kwargs["telegram"] = by_type["telegram"]["config"]
 
         return NotificationsConfig.model_validate(kwargs) if kwargs else NotificationsConfig()
 

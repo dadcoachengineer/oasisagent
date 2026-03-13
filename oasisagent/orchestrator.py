@@ -417,6 +417,18 @@ class Orchestrator:
             self._adapters.append(
                 HttpPollerAdapter(cfg.ingestion.http_poller_targets, self._queue)
             )
+        if cfg.ingestion.unifi.enabled:
+            from oasisagent.ingestion.unifi import UnifiAdapter
+
+            self._adapters.append(
+                UnifiAdapter(cfg.ingestion.unifi, self._queue)
+            )
+        if cfg.ingestion.cloudflare.enabled:
+            from oasisagent.ingestion.cloudflare import CloudflareAdapter
+
+            self._adapters.append(
+                CloudflareAdapter(cfg.ingestion.cloudflare, self._queue)
+            )
         if cfg.ingestion.uptime_kuma.enabled:
             from oasisagent.ingestion.uptime_kuma import UptimeKumaAdapter
 
