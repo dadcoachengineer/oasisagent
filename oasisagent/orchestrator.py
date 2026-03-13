@@ -400,6 +400,10 @@ class Orchestrator:
             from oasisagent.notifications.telegram import TelegramChannel
 
             channels.append(TelegramChannel(cfg.notifications.telegram))
+        if cfg.notifications.discord.enabled:
+            from oasisagent.notifications.discord import DiscordNotificationChannel
+
+            channels.append(DiscordNotificationChannel(cfg.notifications.discord))
         self._dispatcher = NotificationDispatcher(channels)
 
         # 12. Pending action queue (for RECOMMEND-tier actions)

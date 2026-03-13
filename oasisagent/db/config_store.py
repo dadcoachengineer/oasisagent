@@ -212,6 +212,7 @@ class ConfigStore:
                 ("email", "email", config.notifications.email),
                 ("webhook", "webhook", config.notifications.webhook),
                 ("telegram", "telegram", config.notifications.telegram),
+                ("discord", "discord", config.notifications.discord),
             ]
             for type_name, default_name, sub_cfg in notif_map:
                 if sub_cfg.enabled:
@@ -662,6 +663,8 @@ class ConfigStore:
             kwargs["webhook"] = by_type["webhook"]["config"]
         if "telegram" in by_type:
             kwargs["telegram"] = by_type["telegram"]["config"]
+        if "discord" in by_type:
+            kwargs["discord"] = by_type["discord"]["config"]
 
         return NotificationsConfig.model_validate(kwargs) if kwargs else NotificationsConfig()
 
