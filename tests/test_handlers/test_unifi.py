@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -121,6 +122,58 @@ class TestLifecycle:
         handler = UnifiHandler(_make_config())
         with pytest.raises(RuntimeError, match="start\\(\\) must be called"):
             await handler.execute(_make_event(), _make_action())
+
+
+# ---------------------------------------------------------------------------
+# healthy
+# ---------------------------------------------------------------------------
+
+
+class TestHealthy:
+    @pytest.mark.asyncio
+    async def test_healthy_no_client(self) -> None:
+        handler = UnifiHandler(_make_config())
+        assert await handler.healthy() is False
+
+    @pytest.mark.asyncio
+    async def test_healthy_success(self) -> None:
+        handler = _make_handler()
+        handler._client.get = AsyncMock(return_value={
+            "data": [{"subsystem": "wlan", "status": "ok"}],
+        })
+
+        assert await handler.healthy() is True
+        handler._client.get.assert_called_once_with("stat/health")
+
+    @pytest.mark.asyncio
+    async def test_healthy_http_error(self) -> None:
+        handler = _make_handler()
+        handler._client.get = AsyncMock(
+            side_effect=aiohttp.ClientError("connection refused"),
+        )
+
+        assert await handler.healthy() is False
+
+    @pytest.mark.asyncio
+    async def test_healthy_timeout(self) -> None:
+        async def _slow_get(_endpoint: str) -> dict:
+            await asyncio.sleep(10)
+            return {"data": []}
+
+        handler = _make_handler()
+        handler._client.get = _slow_get
+        handler._HEALTH_TIMEOUT = 0.1
+
+        assert await handler.healthy() is False
+
+    @pytest.mark.asyncio
+    async def test_healthy_auth_failure(self) -> None:
+        handler = _make_handler()
+        handler._client.get = AsyncMock(
+            side_effect=ConnectionError("auth failed"),
+        )
+
+        assert await handler.healthy() is False
 
 
 # ---------------------------------------------------------------------------

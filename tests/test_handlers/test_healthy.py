@@ -246,7 +246,11 @@ class TestUnifiHealthy:
             username="admin", password="secret",
         )
         handler = UnifiHandler(config)
-        handler._client = MagicMock()  # Simulate started client
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={
+            "data": [{"subsystem": "wlan", "status": "ok"}],
+        })
+        handler._client = mock_client
 
         assert await handler.healthy() is True
 
