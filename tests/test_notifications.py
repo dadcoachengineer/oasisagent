@@ -6,6 +6,8 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from oasisagent.config import MqttNotificationConfig
 from oasisagent.models import Notification, Severity
 from oasisagent.notifications.base import NotificationChannel
@@ -266,6 +268,49 @@ class TestMqttErrors:
 
         assert result is False
 
+    async def test_send_failure_triggers_reconnect(self) -> None:
+        """Mid-session publish failure should spawn a reconnect task."""
+        channel = _mock_mqtt_channel()
+        channel._client.publish.side_effect = Exception("broker dropped")
+
+        result = await channel.send(_make_notification())
+
+        assert result is False
+        assert channel._client is None
+        assert channel._reconnect_task is not None
+        assert not channel._reconnect_task.done()
+
+        await channel.stop()
+
+    async def test_publish_raw_failure_triggers_reconnect(self) -> None:
+        """Mid-session raw publish failure should spawn a reconnect task."""
+        channel = _mock_mqtt_channel()
+        channel._client.publish.side_effect = Exception("broker dropped")
+
+        result = await channel.publish_raw("topic", "payload")
+
+        assert result is False
+        assert channel._client is None
+        assert channel._reconnect_task is not None
+
+        await channel.stop()
+
+    async def test_duplicate_reconnect_not_spawned(self) -> None:
+        """Multiple publish failures should not spawn duplicate reconnect tasks."""
+        channel = _mock_mqtt_channel()
+        channel._client.publish.side_effect = Exception("broker dropped")
+
+        await channel.send(_make_notification())
+        first_task = channel._reconnect_task
+
+        # Second failure — client is None so send returns False early
+        # without spawning another task
+        await channel.send(_make_notification())
+
+        assert channel._reconnect_task is first_task
+
+        await channel.stop()
+
 
 # ---------------------------------------------------------------------------
 # MQTT channel: lifecycle
@@ -330,6 +375,23 @@ class TestMqttLifecycle:
         await channel.stop()
 
         assert channel._reconnect_task is None
+
+    @patch("oasisagent.notifications.mqtt.aiomqtt.Client")
+    async def test_connect_does_not_assign_client_on_failure(
+        self, mock_cls: MagicMock,
+    ) -> None:
+        """_connect() should not leave _client set if __aenter__ raises."""
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(
+            side_effect=ConnectionRefusedError("refused"),
+        )
+        mock_cls.return_value = mock_instance
+
+        channel = MqttNotificationChannel(_make_config())
+        with pytest.raises(ConnectionRefusedError):
+            await channel._connect()
+
+        assert channel._client is None
 
 
 # ---------------------------------------------------------------------------
