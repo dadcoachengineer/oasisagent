@@ -545,6 +545,23 @@ class ConfigStore:
                 result[row["type"]] = row
         return result
 
+    @staticmethod
+    def _cfg(row: dict[str, Any]) -> dict[str, Any]:
+        """Return a row's config dict with ``enabled: True`` injected.
+
+        The DB ``enabled`` column is the source of truth — ``config_json``
+        may not contain it (UI-created rows omit it). This method ensures
+        Pydantic models that default ``enabled=False`` see the component
+        as enabled.
+
+        Only used for types whose Pydantic model has an ``enabled`` field.
+        LLM/guardrails/circuit_breaker configs don't — call
+        ``row["config"]`` directly for those.
+        """
+        cfg = dict(row["config"])
+        cfg["enabled"] = True
+        return cfg
+
     async def _load_ingestion(self) -> IngestionConfig:
         rows = await self.list_connectors()
         logger.debug(
@@ -555,9 +572,9 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "mqtt" in by_type:
-            kwargs["mqtt"] = by_type["mqtt"]["config"]
+            kwargs["mqtt"] = self._cfg(by_type["mqtt"])
         if "ha_websocket" in by_type:
-            kwargs["ha_websocket"] = by_type["ha_websocket"]["config"]
+            kwargs["ha_websocket"] = self._cfg(by_type["ha_websocket"])
             logger.debug(
                 "Loaded ha_websocket config from DB: url=%s enabled=%s",
                 by_type["ha_websocket"]["config"].get("url", "<missing>"),
@@ -566,7 +583,7 @@ class ConfigStore:
         else:
             logger.debug("No ha_websocket row in connectors (types: %s)", list(by_type.keys()))
         if "ha_log_poller" in by_type:
-            kwargs["ha_log_poller"] = by_type["ha_log_poller"]["config"]
+            kwargs["ha_log_poller"] = self._cfg(by_type["ha_log_poller"])
             logger.debug(
                 "Loaded ha_log_poller config from DB: url=%s enabled=%s",
                 by_type["ha_log_poller"]["config"].get("url", "<missing>"),
@@ -576,11 +593,11 @@ class ConfigStore:
             logger.debug("No ha_log_poller row in connectors (types: %s)", list(by_type.keys()))
 
         if "unifi" in by_type:
-            kwargs["unifi"] = by_type["unifi"]["config"]
+            kwargs["unifi"] = self._cfg(by_type["unifi"])
         if "cloudflare" in by_type:
-            kwargs["cloudflare"] = by_type["cloudflare"]["config"]
+            kwargs["cloudflare"] = self._cfg(by_type["cloudflare"])
         if "uptime_kuma" in by_type:
-            kwargs["uptime_kuma"] = by_type["uptime_kuma"]["config"]
+            kwargs["uptime_kuma"] = self._cfg(by_type["uptime_kuma"])
 
         # HTTP poller supports multiple targets (one row per target)
         poller_rows = [r for r in rows if r["type"] == "http_poller" and r["enabled"]]
@@ -615,17 +632,17 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "ha_handler" in by_type:
-            kwargs["homeassistant"] = by_type["ha_handler"]["config"]
+            kwargs["homeassistant"] = self._cfg(by_type["ha_handler"])
         if "docker_handler" in by_type:
-            kwargs["docker"] = by_type["docker_handler"]["config"]
+            kwargs["docker"] = self._cfg(by_type["docker_handler"])
         if "portainer_handler" in by_type:
-            kwargs["portainer"] = by_type["portainer_handler"]["config"]
+            kwargs["portainer"] = self._cfg(by_type["portainer_handler"])
         if "proxmox_handler" in by_type:
-            kwargs["proxmox"] = by_type["proxmox_handler"]["config"]
+            kwargs["proxmox"] = self._cfg(by_type["proxmox_handler"])
         if "unifi_handler" in by_type:
-            kwargs["unifi"] = by_type["unifi_handler"]["config"]
+            kwargs["unifi"] = self._cfg(by_type["unifi_handler"])
         if "cloudflare_handler" in by_type:
-            kwargs["cloudflare"] = by_type["cloudflare_handler"]["config"]
+            kwargs["cloudflare"] = self._cfg(by_type["cloudflare_handler"])
 
         return HandlersConfig.model_validate(kwargs) if kwargs else HandlersConfig()
 
@@ -647,7 +664,7 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "influxdb" in by_type:
-            kwargs["influxdb"] = by_type["influxdb"]["config"]
+            kwargs["influxdb"] = self._cfg(by_type["influxdb"])
 
         return AuditConfig.model_validate(kwargs) if kwargs else AuditConfig()
 
@@ -657,17 +674,17 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "mqtt_notification" in by_type:
-            kwargs["mqtt"] = by_type["mqtt_notification"]["config"]
+            kwargs["mqtt"] = self._cfg(by_type["mqtt_notification"])
         if "email" in by_type:
-            kwargs["email"] = by_type["email"]["config"]
+            kwargs["email"] = self._cfg(by_type["email"])
         if "webhook" in by_type:
-            kwargs["webhook"] = by_type["webhook"]["config"]
+            kwargs["webhook"] = self._cfg(by_type["webhook"])
         if "telegram" in by_type:
-            kwargs["telegram"] = by_type["telegram"]["config"]
+            kwargs["telegram"] = self._cfg(by_type["telegram"])
         if "discord" in by_type:
-            kwargs["discord"] = by_type["discord"]["config"]
+            kwargs["discord"] = self._cfg(by_type["discord"])
         if "slack" in by_type:
-            kwargs["slack"] = by_type["slack"]["config"]
+            kwargs["slack"] = self._cfg(by_type["slack"])
 
         return NotificationsConfig.model_validate(kwargs) if kwargs else NotificationsConfig()
 
