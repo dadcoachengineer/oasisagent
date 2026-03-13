@@ -49,18 +49,24 @@ class MqttNotificationChannel(NotificationChannel):
         return self._client is not None
 
     async def _connect(self) -> None:
-        """Attempt a single connection to the MQTT broker."""
+        """Attempt a single connection to the MQTT broker.
+
+        Assigns ``_client`` only after the connection is fully established
+        to avoid a TOCTOU window where ``healthy()`` returns True for
+        an unconnected client.
+        """
         parsed = urlparse(self._config.broker)
         hostname = parsed.hostname or "localhost"
         port = parsed.port or 1883
 
-        self._client = aiomqtt.Client(
+        client = aiomqtt.Client(
             hostname=hostname,
             port=port,
             username=self._config.username or None,
             password=self._config.password or None,
         )
-        await self._client.__aenter__()
+        await client.__aenter__()
+        self._client = client
 
     async def _reconnect_loop(self) -> None:
         """Background retry loop — connects with exponential backoff."""
@@ -73,7 +79,7 @@ class MqttNotificationChannel(NotificationChannel):
             try:
                 await self._connect()
                 logger.info(
-                    "MQTT notification channel connected (broker=%s, prefix=%s)",
+                    "MQTT notification channel reconnected (broker=%s, prefix=%s)",
                     self._config.broker,
                     self._config.topic_prefix,
                 )
@@ -87,6 +93,23 @@ class MqttNotificationChannel(NotificationChannel):
                     exc,
                     backoff,
                 )
+
+    def _trigger_reconnect(self) -> None:
+        """Tear down the dead client and spawn a background reconnect task.
+
+        Safe to call multiple times — skips if a reconnect is already running
+        or if the channel is shutting down.
+        """
+        self._client = None
+        if self._stopping:
+            return
+        if self._reconnect_task is not None and not self._reconnect_task.done():
+            return
+        logger.info("MQTT notification channel: scheduling background reconnect")
+        self._reconnect_task = asyncio.create_task(
+            self._reconnect_loop(),
+            name="mqtt-notification-reconnect",
+        )
 
     async def start(self) -> None:
         """Connect to the MQTT broker.
@@ -151,7 +174,7 @@ class MqttNotificationChannel(NotificationChannel):
         """
         if self._client is None:
             logger.warning(
-                "MQTT channel not started — cannot publish to %s", topic
+                "MQTT channel not connected — cannot publish to %s", topic
             )
             return False
 
@@ -166,6 +189,7 @@ class MqttNotificationChannel(NotificationChannel):
             return True
         except Exception as exc:
             logger.warning("MQTT raw publish failed for %s: %s", topic, exc)
+            self._trigger_reconnect()
             return False
 
     async def send(self, notification: Notification) -> bool:
@@ -181,7 +205,7 @@ class MqttNotificationChannel(NotificationChannel):
 
         if self._client is None:
             logger.warning(
-                "MQTT notification channel not started — dropping notification %s",
+                "MQTT notification channel not connected — dropping notification %s",
                 notification.id,
             )
             return False
@@ -208,4 +232,5 @@ class MqttNotificationChannel(NotificationChannel):
                 notification.id,
                 exc,
             )
+            self._trigger_reconnect()
             return False
