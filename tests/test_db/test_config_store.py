@@ -238,6 +238,72 @@ class TestLoadConfigWithData:
         assert config.audit.influxdb.token == "influx-tok"
 
 
+class TestLoadConfigNewTypes:
+    """Test that v0.3.3+ types are loaded from SQLite into config."""
+
+    async def test_unifi_connector(self, store: ConfigStore) -> None:
+        await store.create_connector(
+            "unifi", "oasis-udm",
+            {"enabled": True, "url": "https://192.168.1.1", "username": "admin", "password": "pw"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.unifi.url == "https://192.168.1.1"
+        assert config.ingestion.unifi.enabled is True
+
+    async def test_cloudflare_connector(self, store: ConfigStore) -> None:
+        await store.create_connector(
+            "cloudflare", "cf",
+            {"enabled": True, "api_token": "tok123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.cloudflare.api_token == "tok123"
+        assert config.ingestion.cloudflare.enabled is True
+
+    async def test_uptime_kuma_connector(self, store: ConfigStore) -> None:
+        await store.create_connector(
+            "uptime_kuma", "kuma",
+            {"enabled": True, "url": "http://kuma:3001", "api_key": "key123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.uptime_kuma.url == "http://kuma:3001"
+        assert config.ingestion.uptime_kuma.enabled is True
+
+    async def test_portainer_handler(self, store: ConfigStore) -> None:
+        await store.create_service(
+            "portainer_handler", "portainer",
+            {"url": "https://portainer:9443", "api_key": "ptk"},
+        )
+        config = await store.load_config()
+        assert config.handlers.portainer.url == "https://portainer:9443"
+        assert config.handlers.portainer.api_key == "ptk"
+
+    async def test_unifi_handler(self, store: ConfigStore) -> None:
+        await store.create_service(
+            "unifi_handler", "unifi",
+            {"url": "https://192.168.1.1", "username": "admin", "password": "pw"},
+        )
+        config = await store.load_config()
+        assert config.handlers.unifi.url == "https://192.168.1.1"
+        assert config.handlers.unifi.password == "pw"
+
+    async def test_cloudflare_handler(self, store: ConfigStore) -> None:
+        await store.create_service(
+            "cloudflare_handler", "cf-handler",
+            {"api_token": "cf-tok"},
+        )
+        config = await store.load_config()
+        assert config.handlers.cloudflare.api_token == "cf-tok"
+
+    async def test_telegram_notification(self, store: ConfigStore) -> None:
+        await store.create_notification(
+            "telegram", "tg",
+            {"enabled": True, "bot_token": "bot123", "chat_id": "456"},
+        )
+        config = await store.load_config()
+        assert config.notifications.telegram.bot_token == "bot123"
+        assert config.notifications.telegram.chat_id == "456"
+
+
 class TestAgentConfig:
     async def test_default_agent_config(self, store: ConfigStore) -> None:
         config = await store.load_config()
