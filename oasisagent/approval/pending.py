@@ -337,9 +337,17 @@ class PendingQueue:
                 pending = self._actions.get(eid)
                 if pending is not None:
                     pending.status = PendingStatus.EXPIRED
-                    self._pending_keys.discard(self._make_key(pending.action))
                     expired.append(pending)
                     logger.info("Pending action %s expired", pending.id)
+
+            # Rebuild keys from remaining PENDING actions. Handles the
+            # edge case where _actions was out of sync with the DB —
+            # prevents stale keys from blocking future additions.
+            self._pending_keys = {
+                self._make_key(a.action)
+                for a in self._actions.values()
+                if a.status == PendingStatus.PENDING
+            }
             return expired
 
         # In-memory-only path (tests)
