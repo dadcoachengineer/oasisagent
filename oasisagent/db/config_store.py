@@ -547,19 +547,19 @@ class ConfigStore:
 
     @staticmethod
     def _cfg(row: dict[str, Any]) -> dict[str, Any]:
-        """Return a row's config dict with ``enabled: True`` injected.
+        """Return a row's config dict with the DB ``enabled`` column injected.
 
         The DB ``enabled`` column is the source of truth — ``config_json``
         may not contain it (UI-created rows omit it). This method ensures
-        Pydantic models that default ``enabled=False`` see the component
-        as enabled.
+        Pydantic models that default ``enabled=False`` see the actual DB
+        value rather than the model default.
 
         Only used for types whose Pydantic model has an ``enabled`` field.
         LLM/guardrails/circuit_breaker configs don't — call
         ``row["config"]`` directly for those.
         """
         cfg = dict(row["config"])
-        cfg["enabled"] = True
+        cfg["enabled"] = bool(row["enabled"])
         return cfg
 
     async def _load_ingestion(self) -> IngestionConfig:
