@@ -47,6 +47,10 @@ _KNOWN_OPERATIONS: frozenset[str] = frozenset({
 # Default inventory cache TTL in seconds.
 _INVENTORY_TTL = 300
 
+# Health check cache TTL and per-request timeout.
+_HEALTH_CACHE_TTL = 30.0  # seconds
+_HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=3)
+
 
 class HandlerNotStartedError(Exception):
     """Raised when handler methods are called before start()."""
@@ -66,6 +70,9 @@ class ProxmoxHandler(Handler):
         # Cluster resource inventory: vmid → {node, type, name, status, ...}
         self._inventory: dict[str, dict[str, Any]] = {}
         self._inventory_ts: float = 0.0
+        # Health check cache
+        self._health_cache: bool | None = None
+        self._health_cache_ts: float = 0.0
 
     def name(self) -> str:
         return "proxmox"
@@ -106,14 +113,55 @@ class ProxmoxHandler(Handler):
         if self._session is not None:
             await self._session.close()
             self._session = None
+            self._health_cache = None
+            self._health_cache_ts = 0.0
             logger.info("Proxmox handler stopped")
 
     async def healthy(self) -> bool:
-        """Check Proxmox connectivity via GET /api2/json/version."""
+        """Check Proxmox connectivity via GET /api2/json/version.
+
+        Uses a 30s TTL cache to avoid hammering an unreachable host.
+        Internal 3s timeout fits inside the orchestrator's 5s envelope.
+        """
         if self._session is None:
             return False
-        async with self._session.get("/api2/json/version") as resp:
-            return resp.status == 200
+
+        now = time.monotonic()
+        if self._health_cache is not None and (now - self._health_cache_ts) < _HEALTH_CACHE_TTL:
+            return self._health_cache
+
+        try:
+            async with self._session.get(
+                "/api2/json/version", timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                result = resp.status == 200
+                if not result:
+                    logger.warning(
+                        "Proxmox health check: HTTP %d (%s)",
+                        resp.status, self._config.url,
+                    )
+        except aiohttp.ClientConnectorError as exc:
+            logger.warning(
+                "Proxmox health check: connection failed (%s): %s",
+                self._config.url, exc,
+            )
+            result = False
+        except TimeoutError:
+            logger.warning(
+                "Proxmox health check: timed out after 3s (%s)",
+                self._config.url,
+            )
+            result = False
+        except aiohttp.ClientError as exc:
+            logger.warning(
+                "Proxmox health check failed (%s): %s",
+                self._config.url, exc,
+            )
+            result = False
+
+        self._health_cache = result
+        self._health_cache_ts = now
+        return result
 
     async def can_handle(self, event: Event, action: RecommendedAction) -> bool:
         return (
