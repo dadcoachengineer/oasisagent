@@ -33,10 +33,11 @@ logger = logging.getLogger(__name__)
 
 
 class FixActionType(StrEnum):
-    """What the known fix prescribes — recommend to a human or auto-fix."""
+    """What the known fix prescribes."""
 
     RECOMMEND = "recommend"
     AUTO_FIX = "auto_fix"
+    ESCALATE = "escalate"
 
 
 # ---------------------------------------------------------------------------

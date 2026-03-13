@@ -9,6 +9,7 @@ to specific severity levels or use wildcard oasis/notifications/#.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -39,7 +40,12 @@ class MqttNotificationChannel(NotificationChannel):
         return "mqtt"
 
     async def start(self) -> None:
-        """Connect to the MQTT broker."""
+        """Connect to the MQTT broker with retry on failure.
+
+        Retries with exponential backoff (5s → 10s → 20s → ... → 300s max)
+        so a transient broker outage at startup doesn't permanently break
+        notifications.
+        """
         if not self._config.enabled:
             logger.info("MQTT notifications disabled — skipping connection")
             return
@@ -48,18 +54,33 @@ class MqttNotificationChannel(NotificationChannel):
         hostname = parsed.hostname or "localhost"
         port = parsed.port or 1883
 
-        self._client = aiomqtt.Client(
-            hostname=hostname,
-            port=port,
-            username=self._config.username or None,
-            password=self._config.password or None,
-        )
-        await self._client.__aenter__()
-        logger.info(
-            "MQTT notification channel started (broker=%s, prefix=%s)",
-            self._config.broker,
-            self._config.topic_prefix,
-        )
+        backoff = 5
+        max_backoff = 300
+        while True:
+            try:
+                self._client = aiomqtt.Client(
+                    hostname=hostname,
+                    port=port,
+                    username=self._config.username or None,
+                    password=self._config.password or None,
+                )
+                await self._client.__aenter__()
+                logger.info(
+                    "MQTT notification channel started (broker=%s, prefix=%s)",
+                    self._config.broker,
+                    self._config.topic_prefix,
+                )
+                return
+            except Exception as exc:
+                logger.error(
+                    "MQTT notification channel: connection failed: %s "
+                    "(retrying in %ds)",
+                    exc,
+                    backoff,
+                )
+                self._client = None
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
 
     async def stop(self) -> None:
         """Disconnect from the MQTT broker."""
