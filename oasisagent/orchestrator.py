@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from oasisagent.approval.listener import ApprovalListener
-from oasisagent.approval.pending import PendingAction, PendingQueue
+from oasisagent.approval.pending import ApprovalDecision, PendingAction, PendingQueue
 from oasisagent.audit.influxdb import AuditWriter
 from oasisagent.db.stats_store import StatsStore
 from oasisagent.engine.circuit_breaker import CircuitBreaker
@@ -396,6 +396,10 @@ class Orchestrator:
             from oasisagent.notifications.webhook import WebhookNotificationChannel
 
             channels.append(WebhookNotificationChannel(cfg.notifications.webhook))
+        if cfg.notifications.telegram.enabled:
+            from oasisagent.notifications.telegram import TelegramChannel
+
+            channels.append(TelegramChannel(cfg.notifications.telegram))
         self._dispatcher = NotificationDispatcher(channels)
 
         # 12. Pending action queue (for RECOMMEND-tier actions)
@@ -543,6 +547,16 @@ class Orchestrator:
             )
             logger.info("Approval listener started")
 
+        # Interactive notification channel listeners (e.g., Telegram polling)
+        for channel in self._dispatcher.interactive_channels:
+            try:
+                await channel.start_listener(self._handle_interactive_approval)
+                logger.info("Interactive listener started: %s", channel.name())
+            except Exception:
+                logger.exception(
+                    "Failed to start interactive listener: %s", channel.name()
+                )
+
         # Metrics server
         if self._metrics_server is not None:
             try:
@@ -593,6 +607,16 @@ class Orchestrator:
             self._approval_listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._approval_listener_task
+
+        # 1b. Stop interactive notification channel listeners
+        if self._dispatcher is not None:
+            for channel in self._dispatcher.interactive_channels:
+                try:
+                    await channel.stop_listener()
+                except Exception:
+                    logger.exception(
+                        "Error stopping interactive listener: %s", channel.name()
+                    )
 
         # 2. Expire all remaining pending actions
         if self._pending_queue is not None:
@@ -1040,6 +1064,20 @@ class Orchestrator:
 
         # Notify operator about the pending action
         await self._send_notification(event, result)
+
+    async def _handle_interactive_approval(
+        self, action_id: str, decision: ApprovalDecision,
+    ) -> None:
+        """Called by interactive notification channels (Telegram, etc.).
+
+        Routes the decision to the appropriate handler based on the
+        operator's choice. Unlike the MQTT callback, this is already
+        async so we can call the processors directly.
+        """
+        if decision == ApprovalDecision.APPROVED:
+            await self._process_approval(action_id)
+        elif decision == ApprovalDecision.REJECTED:
+            await self._process_rejection(action_id)
 
     def _handle_approval(self, action_id: str) -> None:
         """Called by the approval listener when an action is approved.
