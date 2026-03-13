@@ -64,7 +64,7 @@ class CloudflareClient:
             msg = "Cloudflare client not started — call start() first"
             raise RuntimeError(msg)
 
-        async with self._session.get(path, params=params or None) as resp:
+        async with self._session.get(path.lstrip("/"), params=params or None) as resp:
             data = await resp.json()
             if resp.status >= 400:
                 errors = data.get("errors", [])
@@ -93,7 +93,7 @@ class CloudflareClient:
             msg = "Cloudflare client not started — call start() first"
             raise RuntimeError(msg)
 
-        async with self._session.post(path, json=json or {}) as resp:
+        async with self._session.post(path.lstrip("/"), json=json or {}) as resp:
             data = await resp.json()
             if resp.status >= 400:
                 errors = data.get("errors", [])
@@ -120,7 +120,7 @@ class CloudflareClient:
             msg = "Cloudflare client not started — call start() first"
             raise RuntimeError(msg)
 
-        async with self._session.delete(path) as resp:
+        async with self._session.delete(path.lstrip("/")) as resp:
             data = await resp.json()
             if resp.status >= 400:
                 errors = data.get("errors", [])
