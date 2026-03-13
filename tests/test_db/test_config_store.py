@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -255,3 +255,149 @@ class TestAgentConfig:
     async def test_update_agent_config_rejects_unknown_fields(self, store: ConfigStore) -> None:
         with pytest.raises(ValueError, match="Unknown fields"):
             await store.update_agent_config({"bogus_field": "nope"})
+
+
+class TestImportYaml:
+    """Tests for YAML → SQLite import on virgin databases."""
+
+    def _make_config(self, **overrides: Any) -> OasisAgentConfig:
+        """Build a minimal config with some enabled components."""
+        from oasisagent.config import (
+            AuditConfig,
+            HandlersConfig,
+            InfluxDbConfig,
+            IngestionConfig,
+            MqttIngestionConfig,
+            MqttNotificationConfig,
+            NotificationsConfig,
+        )
+
+        return OasisAgentConfig(
+            ingestion=IngestionConfig(
+                mqtt=MqttIngestionConfig(
+                    enabled=True,
+                    broker="mqtt://test.local:1883",
+                    password="mqtt-secret",
+                ),
+            ),
+            audit=AuditConfig(
+                influxdb=InfluxDbConfig(
+                    enabled=True,
+                    url="http://influx.local:8086",
+                    token="influx-token",
+                ),
+            ),
+            handlers=HandlersConfig(),
+            notifications=NotificationsConfig(
+                mqtt=MqttNotificationConfig(
+                    enabled=True,
+                    broker="mqtt://test.local:1883",
+                    password="notif-secret",
+                ),
+            ),
+            **overrides,
+        )
+
+    async def test_import_creates_connector_rows(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_connectors()
+        type_names = {r["type"] for r in rows}
+        # mqtt, ha_websocket, ha_log_poller all default to enabled=True
+        assert "mqtt" in type_names
+        assert "ha_websocket" in type_names
+        assert "ha_log_poller" in type_names
+
+        mqtt_row = next(r for r in rows if r["type"] == "mqtt")
+        assert mqtt_row["config"]["broker"] == "mqtt://test.local:1883"
+
+    async def test_import_creates_notification_rows(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_notifications()
+        assert len(rows) == 1
+        assert rows[0]["type"] == "mqtt_notification"
+        assert rows[0]["config"]["broker"] == "mqtt://test.local:1883"
+
+    async def test_import_creates_service_rows(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_services()
+        type_names = {r["type"] for r in rows}
+        # influxdb + llm_options + guardrails + circuit_breaker (always imported)
+        assert "influxdb" in type_names
+        assert "llm_options" in type_names
+        assert "guardrails" in type_names
+        assert "circuit_breaker" in type_names
+
+    async def test_import_secrets_are_encrypted(
+        self, store: ConfigStore, db: aiosqlite.Connection,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        # Raw DB row should NOT contain plaintext password
+        cursor = await db.execute(
+            "SELECT config_json FROM notification_channels WHERE type = 'mqtt_notification'"
+        )
+        row = await cursor.fetchone()
+        raw = json.loads(row["config_json"])
+        assert "password" not in raw
+
+        # But decrypted read should have it
+        rows = await store.list_notifications()
+        assert rows[0]["config"]["password"] == "notif-secret"
+
+    async def test_import_makes_db_non_virgin(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        assert await store.is_virgin() is True
+        await store.import_yaml(config)
+        assert await store.is_virgin() is False
+
+    async def test_roundtrip_yaml_to_sqlite_to_config(
+        self, store: ConfigStore,
+    ) -> None:
+        """Import YAML, then load from SQLite — should produce equivalent config."""
+        original = self._make_config()
+        await store.import_yaml(original)
+
+        loaded = await store.load_config()
+        # MQTT connector
+        assert loaded.ingestion.mqtt.enabled is True
+        assert loaded.ingestion.mqtt.broker == "mqtt://test.local:1883"
+        assert loaded.ingestion.mqtt.password == "mqtt-secret"
+        # MQTT notification
+        assert loaded.notifications.mqtt.enabled is True
+        assert loaded.notifications.mqtt.broker == "mqtt://test.local:1883"
+        assert loaded.notifications.mqtt.password == "notif-secret"
+        # InfluxDB
+        assert loaded.audit.influxdb.enabled is True
+        assert loaded.audit.influxdb.token == "influx-token"
+
+    async def test_disabled_components_not_imported(
+        self, store: ConfigStore,
+    ) -> None:
+        """Components with enabled=False should not create DB rows."""
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_services()
+        type_names = {r["type"] for r in rows}
+        # UniFi handler defaults to enabled=False
+        assert "unifi_handler" not in type_names
+
+        conn_rows = await store.list_connectors()
+        conn_types = {r["type"] for r in conn_rows}
+        # Cloudflare adapter defaults to enabled=False
+        assert "cloudflare" not in conn_types
