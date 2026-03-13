@@ -19,6 +19,7 @@ Tag vs. field split (InfluxDB performance):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -26,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from influxdb_client import Point
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
+from influxdb_client.rest import ApiException
 
 if TYPE_CHECKING:
     from influxdb_client.client.write_api_async import WriteApiAsync
@@ -227,13 +229,47 @@ class AuditWriter:
             )
 
     async def _write(self, point: Point, *, measurement: str = "") -> None:
-        """Write a point to InfluxDB. Best-effort — errors are logged."""
-        try:
-            assert self._write_api is not None
-            await self._write_api.write(bucket=self._bucket, record=point)
-        except Exception as exc:
+        """Write a point to InfluxDB. Best-effort with transient retry."""
+        if self._write_api is None:
             logger.warning(
-                "Audit write failed for %s: %s",
+                "Audit write skipped for %s: write API not initialized",
                 measurement,
-                exc,
             )
+            return
+
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                await self._write_api.write(bucket=self._bucket, record=point)
+                return
+            except Exception as exc:
+                if attempt < max_retries and self._is_retryable(exc):
+                    delay = 0.5 * (2**attempt)
+                    logger.warning(
+                        "Audit write failed for %s (attempt %d/%d), "
+                        "retrying in %.1fs: %s",
+                        measurement,
+                        attempt + 1,
+                        max_retries + 1,
+                        delay,
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.warning(
+                        "Audit write failed for %s (dropping): %s",
+                        measurement,
+                        exc,
+                    )
+                    return
+
+    @staticmethod
+    def _is_retryable(exc: Exception) -> bool:
+        """Determine if an exception is transient and worth retrying."""
+        if isinstance(exc, (ConnectionError, TimeoutError)):
+            return True
+        if isinstance(exc, ApiException):
+            return exc.status is not None and (
+                exc.status >= 500 or exc.status == 429
+            )
+        return False
