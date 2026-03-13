@@ -64,6 +64,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "email": "Email (SMTP)",
     "webhook": "Webhook",
     "telegram": "Telegram",
+    "discord": "Discord",
 }
 
 TYPE_DESCRIPTIONS: dict[str, str] = {
@@ -135,6 +136,7 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "email": "Send notifications via SMTP email",
     "webhook": "POST notifications to webhook URLs",
     "telegram": "Send notifications via Telegram bot",
+    "discord": "Send notifications via Discord webhook",
 }
 
 # Types that only allow a single instance
@@ -985,6 +987,25 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
                 ("MarkdownV2", "MarkdownV2"),
             ],
             default="HTML",
+        ),
+    ],
+    "discord": [
+        FieldSpec(
+            "webhook_url", "Webhook URL", "password",
+            help_text=(
+                "Server Settings → Integrations → Webhooks"
+                " → Copy Webhook URL"
+            ),
+            required=True,
+        ),
+        FieldSpec(
+            "username", "Bot Username", "text",
+            help_text="Display name for the webhook messages",
+            default="OasisAgent",
+        ),
+        FieldSpec(
+            "avatar_url", "Avatar URL", "text",
+            help_text="URL for the webhook avatar image (optional)",
         ),
     ],
 }

@@ -21,6 +21,7 @@ from oasisagent.config import (
     CircuitBreakerConfig,
     CloudflareAdapterConfig,
     CloudflareHandlerConfig,
+    DiscordNotificationConfig,
     DockerHandlerConfig,
     EmailNotificationConfig,
     GuardrailsConfig,
@@ -167,6 +168,10 @@ NOTIFICATION_TYPES: dict[str, TypeMeta] = {
     "telegram": TypeMeta(
         model=TelegramNotificationConfig,
         secret_fields=frozenset({"bot_token"}),
+    ),
+    "discord": TypeMeta(
+        model=DiscordNotificationConfig,
+        secret_fields=frozenset({"webhook_url"}),
     ),
 }
 
