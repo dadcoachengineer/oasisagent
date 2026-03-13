@@ -10,6 +10,7 @@ from oasisagent.ui.routes.connectors import router as connectors_router
 from oasisagent.ui.routes.dashboard import router as dashboard_router
 from oasisagent.ui.routes.events import router as events_router
 from oasisagent.ui.routes.known_fixes import router as known_fixes_router
+from oasisagent.ui.routes.notifications import router as notifications_router
 from oasisagent.ui.routes.setup_routes import router as setup_router
 from oasisagent.ui.routes.users import router as users_router
 
@@ -24,8 +25,11 @@ ui_router.include_router(setup_router)
 # Dashboard — /ui/dashboard, /ui/events/stream
 ui_router.include_router(dashboard_router)
 
-# Config CRUD pages — /ui/connectors, /ui/services, /ui/notifications
+# Config CRUD pages — /ui/connectors, /ui/services, /ui/channels
 ui_router.include_router(connectors_router)
+
+# Notification feed — /ui/notifications
+ui_router.include_router(notifications_router)
 
 # Approvals — /ui/approvals
 ui_router.include_router(approvals_router)

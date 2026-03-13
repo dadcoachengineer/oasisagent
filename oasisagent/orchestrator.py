@@ -58,6 +58,7 @@ from oasisagent.models import (
 )
 from oasisagent.notifications.dispatcher import NotificationDispatcher
 from oasisagent.notifications.mqtt import MqttNotificationChannel
+from oasisagent.notifications.web_channel import WebNotificationChannel
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     import aiosqlite
 
     from oasisagent.config import OasisAgentConfig
+    from oasisagent.db.notification_store import NotificationStore
     from oasisagent.handlers.base import Handler
     from oasisagent.ingestion.base import IngestAdapter
     from oasisagent.models import Event
@@ -109,6 +111,8 @@ class Orchestrator:
         self._adapters: list[IngestAdapter] = []
         self._adapter_tasks: list[asyncio.Task[None]] = []
         self._stats_store: StatsStore | None = None
+        self._notification_store: NotificationStore | None = None
+        self._web_channel: WebNotificationChannel | None = None
 
         # Stats — seeded from SQLite on startup when db is available
         self._events_processed: int = 0
@@ -153,10 +157,19 @@ class Orchestrator:
         """
         self._build_components()
 
-        # Upgrade pending queue and load stats from SQLite when available.
-        # Must happen after _build_components and before _start_components.
+        # Upgrade pending queue, notification store, and stats from SQLite
+        # when available. Must happen after _build_components and before
+        # _start_components.
         if self._db is not None:
             self._pending_queue = await PendingQueue.from_db(self._db)
+
+            # Web notification channel — always enabled when db is available
+            from oasisagent.db.notification_store import NotificationStore
+
+            self._notification_store = NotificationStore(self._db)
+            self._web_channel = WebNotificationChannel(self._notification_store)
+            if self._dispatcher is not None:
+                self._dispatcher._channels.append(self._web_channel)
 
             self._stats_store = await StatsStore.from_db(self._db)
             vals = self._stats_store.values
@@ -175,9 +188,14 @@ class Orchestrator:
         Call this as a background task from FastAPI lifespan.
         """
         logger.info("Entering event loop")
+        prune_counter = 0
         try:
             while not self._shutting_down:
                 await self._expire_stale_actions()
+                prune_counter += 1
+                if prune_counter >= 60:
+                    prune_counter = 0
+                    await self._prune_notifications()
 
                 try:
                     assert self._queue is not None
@@ -1223,6 +1241,25 @@ class Orchestrator:
         expired = await self._pending_queue.expire_stale()
         for pending in expired:
             self._schedule_task(self._notify_expired(pending))
+
+    async def _prune_notifications(self) -> None:
+        """Prune old notifications and archive to InfluxDB."""
+        if self._notification_store is None:
+            return
+
+        try:
+            archived = await self._notification_store.prune()
+            if archived and self._audit is not None:
+                for row in archived:
+                    try:
+                        await self._audit.write_notification_archive(row)
+                    except Exception:
+                        logger.debug(
+                            "Failed to archive notification %s to InfluxDB",
+                            row.get("id", "?"),
+                        )
+        except Exception:
+            logger.warning("Notification pruning failed", exc_info=True)
 
     async def _notify_expired(self, pending: PendingAction) -> None:
         """Send notification for an expired pending action and clean up MQTT."""
