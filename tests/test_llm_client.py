@@ -562,3 +562,103 @@ class TestPromptLogging:
             await client.complete(LLMRole.TRIAGE, _MESSAGES)
 
         assert not any("LLM prompt" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Health tracking (last call outcome)
+# ---------------------------------------------------------------------------
+
+
+class TestRoleHealth:
+    """get_role_health() infers status from last call outcome."""
+
+    def test_initial_state_unknown(self) -> None:
+        client = _client()
+        assert client.get_role_health(LLMRole.TRIAGE) == "unknown"
+        assert client.get_role_health(LLMRole.REASONING) == "unknown"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_successful_call_sets_connected(self, mock_acomp: AsyncMock) -> None:
+        mock_acomp.return_value = _mock_response()
+        client = _client()
+
+        await client.complete(LLMRole.TRIAGE, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"
+        assert client.get_role_health(LLMRole.REASONING) == "unknown"
+
+    @patch("oasisagent.llm.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_failed_call_sets_error(
+        self, mock_acomp: AsyncMock, mock_sleep: AsyncMock
+    ) -> None:
+        mock_acomp.side_effect = _timeout()
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=False))
+
+        with pytest.raises(LLMError):
+            await client.complete(LLMRole.TRIAGE, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_auth_error_sets_error(self, mock_acomp: AsyncMock) -> None:
+        mock_acomp.side_effect = litellm.AuthenticationError(
+            message="bad key", model="test", llm_provider="test"
+        )
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=False))
+
+        with pytest.raises(litellm.AuthenticationError):
+            await client.complete(LLMRole.TRIAGE, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+    @patch("oasisagent.llm.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_fallback_sets_both_roles(
+        self, mock_acomp: AsyncMock, mock_sleep: AsyncMock
+    ) -> None:
+        """Reasoning fails, triage fallback succeeds → reasoning=error, triage=connected."""
+        mock_acomp.side_effect = [
+            _timeout(),  # reasoning fails
+            _mock_response(content="fallback"),  # triage succeeds
+        ]
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=True))
+
+        await client.complete(LLMRole.REASONING, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.REASONING) == "error"
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"
+
+    @patch("oasisagent.llm.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_both_fail_sets_both_error(
+        self, mock_acomp: AsyncMock, mock_sleep: AsyncMock
+    ) -> None:
+        """Both reasoning and triage fail → both error."""
+        mock_acomp.side_effect = _timeout()
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=True))
+
+        with pytest.raises(LLMError):
+            await client.complete(LLMRole.REASONING, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.REASONING) == "error"
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_recovery_after_failure(self, mock_acomp: AsyncMock) -> None:
+        """A successful call after a failure flips status back to connected."""
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=False))
+
+        # First call fails
+        mock_acomp.side_effect = litellm.AuthenticationError(
+            message="bad key", model="test", llm_provider="test"
+        )
+        with pytest.raises(litellm.AuthenticationError):
+            await client.complete(LLMRole.TRIAGE, _MESSAGES)
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+        # Second call succeeds
+        mock_acomp.side_effect = None
+        mock_acomp.return_value = _mock_response()
+        await client.complete(LLMRole.TRIAGE, _MESSAGES)
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"

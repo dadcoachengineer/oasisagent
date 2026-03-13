@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
+from oasisagent.llm.client import LLMRole
 from oasisagent.orchestrator import Orchestrator
 
 # ---------------------------------------------------------------------------
@@ -44,15 +45,32 @@ def _mock_channel(name: str, *, healthy: bool | Exception = True) -> MagicMock:
     return channel
 
 
+def _mock_llm_client(
+    *,
+    triage_health: str = "unknown",
+    reasoning_health: str = "unknown",
+) -> MagicMock:
+    """Create a mock LLMClient with configurable per-role health."""
+    client = MagicMock()
+    health_map = {
+        LLMRole.TRIAGE: triage_health,
+        LLMRole.REASONING: reasoning_health,
+    }
+    client.get_role_health.side_effect = lambda role: health_map[role]
+    return client
+
+
 def _make_orchestrator(
     adapters: list[MagicMock] | None = None,
     handlers: dict[str, MagicMock] | None = None,
     channels: list[MagicMock] | None = None,
+    llm_client: MagicMock | None = None,
 ) -> Orchestrator:
     """Create an Orchestrator with mocked components (skip __init__)."""
     orch = object.__new__(Orchestrator)
     orch._adapters = adapters or []
     orch._handlers = handlers or {}
+    orch._llm_client = llm_client
     if channels is not None:
         dispatcher = MagicMock()
         type(dispatcher).channels = PropertyMock(return_value=channels)
@@ -113,14 +131,40 @@ class TestHandlerHealth:
         assert result["services"]["custom_thing"] == "connected"
 
 
+class TestLLMHealth:
+    async def test_no_llm_client_omits_llm_services(self) -> None:
+        orch = _make_orchestrator(llm_client=None)
+        result = await orch.get_component_health()
+        assert "llm_triage" not in result["services"]
+        assert "llm_reasoning" not in result["services"]
+
+    async def test_no_calls_yet_returns_unknown(self) -> None:
+        client = _mock_llm_client(triage_health="unknown", reasoning_health="unknown")
+        orch = _make_orchestrator(llm_client=client)
+        result = await orch.get_component_health()
+        assert result["services"]["llm_triage"] == "unknown"
+        assert result["services"]["llm_reasoning"] == "unknown"
+
+    async def test_successful_call_returns_connected(self) -> None:
+        client = _mock_llm_client(triage_health="connected", reasoning_health="connected")
+        orch = _make_orchestrator(llm_client=client)
+        result = await orch.get_component_health()
+        assert result["services"]["llm_triage"] == "connected"
+        assert result["services"]["llm_reasoning"] == "connected"
+
+    async def test_failed_call_returns_error(self) -> None:
+        client = _mock_llm_client(triage_health="error", reasoning_health="connected")
+        orch = _make_orchestrator(llm_client=client)
+        result = await orch.get_component_health()
+        assert result["services"]["llm_triage"] == "error"
+        assert result["services"]["llm_reasoning"] == "connected"
+
+
 class TestInternalServices:
     async def test_internal_services_report_unknown(self) -> None:
         orch = _make_orchestrator()
         result = await orch.get_component_health()
-        for svc in (
-            "llm_triage", "llm_reasoning", "llm_options",
-            "influxdb", "guardrails", "circuit_breaker",
-        ):
+        for svc in ("influxdb", "guardrails", "circuit_breaker"):
             assert result["services"][svc] == "unknown"
 
 
@@ -189,5 +233,6 @@ class TestEmptyOrchestrator:
         result = await orch.get_component_health()
         assert result["connectors"] == {}
         assert result["notifications"] == {}
-        # Internal services always present
-        assert "llm_triage" in result["services"]
+        # Internal services always present, LLM omitted when no client
+        assert "influxdb" in result["services"]
+        assert "llm_triage" not in result["services"]
