@@ -225,6 +225,11 @@ class AuditWriter:
             return
         self._ensure_started()
 
+        # Use the original notification timestamp so InfluxDB time series
+        # reflects when the notification was created, not when it was pruned.
+        ts_str = row.get("timestamp")
+        ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(UTC)
+
         point = (
             Point("oasis_notification_archive")
             .tag("severity", row.get("severity", "info"))
@@ -233,7 +238,7 @@ class AuditWriter:
             .field("message", row.get("message", ""))
             .field("metadata", json.dumps(row.get("metadata", {}), default=str))
             .field("notification_id", row.get("id", ""))
-            .time(datetime.now(UTC))
+            .time(ts)
         )
 
         await self._write(point, measurement="oasis_notification_archive")

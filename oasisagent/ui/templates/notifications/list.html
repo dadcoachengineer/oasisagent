@@ -27,13 +27,16 @@
      hx-ext="sse"
      sse-connect="/ui/notifications/stream"
      sse-swap="notification"
-     hx-swap="afterbegin">
+     hx-swap="afterbegin"
+     hx-on::sse-message="var e = document.getElementById('empty-state'); if (e) e.remove();">
     {% if notifications %}
     {% for n in notifications %}
     {% include "notifications/_card.html" %}
     {% endfor %}
     {% else %}
+    <div id="empty-state">
     {% include "notifications/_empty.html" %}
+    </div>
     {% endif %}
 </div>
 {% endblock %}

@@ -188,13 +188,13 @@ class Orchestrator:
         Call this as a background task from FastAPI lifespan.
         """
         logger.info("Entering event loop")
-        prune_counter = 0
+        last_prune = time.monotonic()
         try:
             while not self._shutting_down:
                 await self._expire_stale_actions()
-                prune_counter += 1
-                if prune_counter >= 60:
-                    prune_counter = 0
+                now = time.monotonic()
+                if now - last_prune >= 60.0:
+                    last_prune = now
                     await self._prune_notifications()
 
                 try:
