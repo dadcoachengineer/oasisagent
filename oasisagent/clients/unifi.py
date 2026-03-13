@@ -1,12 +1,12 @@
 """UniFi Network controller HTTP client.
 
-Handles session cookie authentication, automatic re-auth on 401,
+Handles session cookie authentication, automatic re-auth on 401/403,
 and UDM/UCG path prefixing. Used by both the UniFi ingestion adapter
 and the UniFi handler.
 
 UniFi local controllers use POST /api/auth/login returning a session
 cookie — not a stateless token. Sessions expire unpredictably, so
-the client retries exactly once on 401 (re-authenticate then replay).
+the client retries exactly once on 401 or 403 (re-authenticate then replay).
 """
 
 from __future__ import annotations
@@ -124,7 +124,7 @@ class UnifiClient:
         *,
         json: dict[str, Any] | None = None,
     ) -> aiohttp.ClientResponse:
-        """Make an authenticated request. Retries exactly once on 401.
+        """Make an authenticated request. Retries exactly once on 401 or 403.
 
         Args:
             method: HTTP method (GET, POST, PUT, DELETE).
@@ -141,7 +141,7 @@ class UnifiClient:
         url = self._build_url(path)
 
         resp = await self._session.request(method, url, json=json)
-        if resp.status == 401:
+        if resp.status in (401, 403):
             resp.release()
             await self._authenticate()
             resp = await self._session.request(method, url, json=json)
