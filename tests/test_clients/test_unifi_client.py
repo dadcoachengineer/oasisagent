@@ -133,7 +133,7 @@ class TestAuthentication:
 
 
 # ---------------------------------------------------------------------------
-# Request with retry-on-401
+# Request with retry-on-401/403
 # ---------------------------------------------------------------------------
 
 
@@ -152,12 +152,13 @@ class TestRequestRetry:
         mock_session.request.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_401_triggers_reauth_and_retry(self) -> None:
+    @pytest.mark.parametrize("status", [401, 403])
+    async def test_auth_failure_triggers_reauth_and_retry(self, status: int) -> None:
         client = _make_client()
         mock_session = AsyncMock(spec=aiohttp.ClientSession)
 
         first_resp = MagicMock()
-        first_resp.status = 401
+        first_resp.status = status
         first_resp.release = MagicMock()
 
         second_resp = MagicMock()
@@ -175,6 +176,30 @@ class TestRequestRetry:
         assert mock_session.request.call_count == 2
         client._authenticate.assert_called_once()
         first_resp.release.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_403_after_reauth_is_returned_as_is(self) -> None:
+        """If re-auth succeeds but the retry also returns 403, return it without looping."""
+        client = _make_client()
+        mock_session = AsyncMock(spec=aiohttp.ClientSession)
+
+        first_resp = MagicMock()
+        first_resp.status = 403
+        first_resp.release = MagicMock()
+
+        second_resp = MagicMock()
+        second_resp.status = 403
+
+        mock_session.request = AsyncMock(side_effect=[first_resp, second_resp])
+
+        client._session = mock_session
+        client._authenticate = AsyncMock()  # type: ignore[method-assign]
+
+        resp = await client.request("GET", "stat/device")
+
+        assert resp.status == 403
+        assert mock_session.request.call_count == 2
+        client._authenticate.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_request_without_connect_raises(self) -> None:
