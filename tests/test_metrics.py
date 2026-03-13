@@ -138,15 +138,24 @@ class TestCallbackGauges:
         queue = EventQueue(max_size=100)
         pending = PendingQueue()
 
-        action = RecommendedAction(
+        action_a = RecommendedAction(
             description="test",
             handler="docker",
             operation="restart_container",
             params={},
             risk_tier=RiskTier.RECOMMEND,
+            target_entity_id="container.nginx",
         )
-        await pending.add("evt-1", action, "test diagnosis", timeout_minutes=30)
-        await pending.add("evt-2", action, "test diagnosis", timeout_minutes=30)
+        action_b = RecommendedAction(
+            description="test",
+            handler="docker",
+            operation="restart_container",
+            params={},
+            risk_tier=RiskTier.RECOMMEND,
+            target_entity_id="container.redis",
+        )
+        await pending.add("evt-1", action_a, "test diagnosis", timeout_minutes=30)
+        await pending.add("evt-2", action_b, "test diagnosis", timeout_minutes=30)
 
         set_callback_sources(queue, pending)
         _update_callback_gauges()
@@ -208,16 +217,20 @@ class TestMetricsServer:
 class TestPendingQueueCount:
     async def test_pending_count_with_mixed_statuses(self) -> None:
         queue = PendingQueue()
-        action = RecommendedAction(
-            description="test",
-            handler="docker",
-            operation="restart_container",
-            params={},
-            risk_tier=RiskTier.RECOMMEND,
-        )
-        p1 = await queue.add("evt-1", action, "diag", timeout_minutes=30)
-        p2 = await queue.add("evt-2", action, "diag", timeout_minutes=30)
-        await queue.add("evt-3", action, "diag", timeout_minutes=30)
+
+        def _action(entity: str) -> RecommendedAction:
+            return RecommendedAction(
+                description="test",
+                handler="docker",
+                operation="restart_container",
+                params={},
+                risk_tier=RiskTier.RECOMMEND,
+                target_entity_id=entity,
+            )
+
+        p1 = await queue.add("evt-1", _action("a"), "diag", timeout_minutes=30)
+        p2 = await queue.add("evt-2", _action("b"), "diag", timeout_minutes=30)
+        await queue.add("evt-3", _action("c"), "diag", timeout_minutes=30)
 
         assert queue.pending_count == 3
 
