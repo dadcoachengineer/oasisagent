@@ -81,6 +81,17 @@ class TelegramChannel(InteractiveNotificationChannel):
     def name(self) -> str:
         return "telegram"
 
+    async def healthy(self) -> bool:
+        """Check bot health by calling getMe."""
+        if not self._config.enabled or self._bot is None:
+            return True  # disabled = healthy (no-op)
+        try:
+            await self._bot.me()
+            return True
+        except Exception:
+            logger.warning("Telegram health check failed")
+            return False
+
     # -----------------------------------------------------------------
     # Lifecycle
     # -----------------------------------------------------------------

@@ -824,6 +824,17 @@ class TelegramNotificationConfig(BaseModel):
     parse_mode: str = "HTML"
 
 
+class DiscordNotificationConfig(BaseModel):
+    """Discord webhook notification channel configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    webhook_url: str = ""
+    username: str = "OasisAgent"
+    avatar_url: str = ""
+
+
 class NotificationsConfig(BaseModel):
     """All notification channel configurations."""
 
@@ -833,6 +844,7 @@ class NotificationsConfig(BaseModel):
     email: EmailNotificationConfig = Field(default_factory=EmailNotificationConfig)
     webhook: WebhookNotificationConfig = Field(default_factory=WebhookNotificationConfig)
     telegram: TelegramNotificationConfig = Field(default_factory=TelegramNotificationConfig)
+    discord: DiscordNotificationConfig = Field(default_factory=DiscordNotificationConfig)
 
 
 # -- Top-level config -------------------------------------------------------
