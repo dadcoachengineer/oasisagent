@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from oasisagent.clients.cloudflare import _GRAPHQL_URL, CloudflareClient
+from oasisagent.clients.cloudflare import _GRAPHQL_PATH, CloudflareClient
 
 
 def _make_client(**overrides: object) -> CloudflareClient:
@@ -263,7 +263,7 @@ class TestGraphql:
 
         assert result == gql_resp
         assert len(captured) == 1
-        assert captured[0][0][0] == _GRAPHQL_URL
+        assert captured[0][0][0] == _GRAPHQL_PATH
         assert captured[0][1]["json"] == {"query": "{ viewer { zones { id } } }"}
 
     @pytest.mark.asyncio

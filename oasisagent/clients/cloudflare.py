@@ -17,7 +17,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.cloudflare.com/client/v4/"
-_GRAPHQL_URL = "https://api.cloudflare.com/graphql"
+_GRAPHQL_PATH = "graphql"
 
 
 class CloudflareClient:
@@ -117,7 +117,7 @@ class CloudflareClient:
     ) -> dict[str, Any]:
         """POST a GraphQL query to the Cloudflare Analytics API.
 
-        Uses the absolute ``_GRAPHQL_URL`` (not the REST ``_BASE_URL``).
+        Uses the ``/client/v4/graphql`` endpoint (relative to base URL).
         Raises on HTTP errors or GraphQL-level errors.
         """
         if self._session is None:
@@ -128,7 +128,7 @@ class CloudflareClient:
         if variables is not None:
             body["variables"] = variables
 
-        async with self._session.post(_GRAPHQL_URL, json=body) as resp:
+        async with self._session.post(_GRAPHQL_PATH, json=body) as resp:
             data = await resp.json()
             if resp.status >= 400:
                 msg = f"Cloudflare GraphQL failed (HTTP {resp.status})"
