@@ -230,10 +230,16 @@ class AuditWriter:
 
     async def _write(self, point: Point, *, measurement: str = "") -> None:
         """Write a point to InfluxDB. Best-effort with transient retry."""
+        if self._write_api is None:
+            logger.warning(
+                "Audit write skipped for %s: write API not initialized",
+                measurement,
+            )
+            return
+
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
-                assert self._write_api is not None
                 await self._write_api.write(bucket=self._bucket, record=point)
                 return
             except Exception as exc:
