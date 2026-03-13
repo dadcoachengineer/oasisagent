@@ -61,6 +61,8 @@ from oasisagent.notifications.mqtt import MqttNotificationChannel
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 
+    import aiosqlite
+
     from oasisagent.config import OasisAgentConfig
     from oasisagent.handlers.base import Handler
     from oasisagent.ingestion.base import IngestAdapter
@@ -76,8 +78,13 @@ class Orchestrator:
     signal is received or ``shutdown()`` is called externally.
     """
 
-    def __init__(self, config: OasisAgentConfig) -> None:
+    def __init__(
+        self,
+        config: OasisAgentConfig,
+        db: aiosqlite.Connection | None = None,
+    ) -> None:
         self._config = config
+        self._db = db
         self._shutting_down = False
 
         # Components — populated by _build_components()
@@ -139,6 +146,13 @@ class Orchestrator:
         handlers — under uvicorn, signal handling belongs to uvicorn.
         """
         self._build_components()
+
+        # Upgrade pending queue to persistent mode if database is available.
+        # Must happen after _build_components (which creates the placeholder)
+        # and before _start_components (which may need the queue).
+        if self._db is not None:
+            self._pending_queue = await PendingQueue.from_db(self._db)
+
         await self._start_components()
         logger.info("OasisAgent started")
 
@@ -151,7 +165,7 @@ class Orchestrator:
         logger.info("Entering event loop")
         try:
             while not self._shutting_down:
-                self._expire_stale_actions()
+                await self._expire_stale_actions()
 
                 try:
                     assert self._queue is not None
@@ -265,6 +279,8 @@ class Orchestrator:
         self._dispatcher = NotificationDispatcher(channels)
 
         # 12. Pending action queue (for RECOMMEND-tier actions)
+        # Initialized as in-memory here; upgraded to persistent in start()
+        # when a database connection is available.
         self._pending_queue = PendingQueue()
 
         # 13. Approval listener (subscribes to MQTT approve/reject topics)
@@ -429,7 +445,7 @@ class Orchestrator:
         # 2. Expire all remaining pending actions
         if self._pending_queue is not None:
             for pending in self._pending_queue.list_pending():
-                self._pending_queue.reject(pending.id)
+                await self._pending_queue.reject(pending.id)
             logger.info("Rejected all remaining pending actions on shutdown")
 
         # 3. Stop ingestion adapters
@@ -759,7 +775,7 @@ class Orchestrator:
         for action in result.recommended_actions:
             # RECOMMEND-tier actions go to the pending queue
             if action.risk_tier == RiskTier.RECOMMEND:
-                pending = self._pending_queue.add(
+                pending = await self._pending_queue.add(
                     event_id=event.id,
                     action=action,
                     diagnosis=result.diagnosis,
@@ -843,7 +859,7 @@ class Orchestrator:
             risk_tier=fix.risk_tier,
         )
 
-        pending = self._pending_queue.add(
+        pending = await self._pending_queue.add(
             event_id=event.id,
             action=action,
             diagnosis=result.diagnosis,
@@ -879,7 +895,7 @@ class Orchestrator:
         assert self._pending_queue is not None
         assert self._circuit_breaker is not None
 
-        pending = self._pending_queue.approve(action_id)
+        pending = await self._pending_queue.approve(action_id)
         if pending is None:
             return
 
@@ -941,7 +957,7 @@ class Orchestrator:
         """Record a rejected pending action."""
         assert self._pending_queue is not None
 
-        pending = self._pending_queue.reject(action_id)
+        pending = await self._pending_queue.reject(action_id)
         if pending is None:
             return
 
@@ -951,12 +967,12 @@ class Orchestrator:
 
         logger.info("Action %s rejected by operator", action_id)
 
-    def _expire_stale_actions(self) -> None:
+    async def _expire_stale_actions(self) -> None:
         """Sweep for expired pending actions and notify."""
         if self._pending_queue is None:
             return
 
-        expired = self._pending_queue.expire_stale()
+        expired = await self._pending_queue.expire_stale()
         for pending in expired:
             self._schedule_task(self._notify_expired(pending))
 

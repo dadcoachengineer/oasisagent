@@ -47,7 +47,7 @@ def _mock_orchestrator_with_queue() -> tuple[MagicMock, PendingQueue]:
     return orch, queue
 
 
-def _add_test_action(queue: PendingQueue, description: str = "Restart nginx") -> str:
+async def _add_test_action(queue: PendingQueue, description: str = "Restart nginx") -> str:
     """Add a test action to the queue and return its ID."""
     action = RecommendedAction(
         description=description,
@@ -57,7 +57,7 @@ def _add_test_action(queue: PendingQueue, description: str = "Restart nginx") ->
         risk_tier=RiskTier.RECOMMEND,
         reasoning="Container is unhealthy for >5 minutes",
     )
-    pending = queue.add(
+    pending = await queue.add(
         event_id="evt-test-001",
         action=action,
         diagnosis="Nginx container health check failing since 14:30",
@@ -172,8 +172,8 @@ class TestApprovalsListPage:
         self, approval_client: AsyncClient,
     ) -> None:
         queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
-        _add_test_action(queue, "Restart nginx")
-        _add_test_action(queue, "Clear DNS cache")
+        await _add_test_action(queue, "Restart nginx")
+        await _add_test_action(queue, "Clear DNS cache")
 
         resp = await approval_client.get("/ui/approvals")
         assert resp.status_code == 200
@@ -185,7 +185,7 @@ class TestApprovalsListPage:
         self, approval_client: AsyncClient,
     ) -> None:
         queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
-        _add_test_action(queue)
+        await _add_test_action(queue)
 
         resp = await approval_client.get("/ui/approvals")
         assert "health check failing since 14:30" in resp.text
@@ -194,7 +194,7 @@ class TestApprovalsListPage:
         self, approval_client: AsyncClient,
     ) -> None:
         queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
-        _add_test_action(queue)
+        await _add_test_action(queue)
 
         resp = await approval_client.get("/ui/approvals")
         assert "Approve" in resp.text
@@ -212,7 +212,7 @@ class TestApproveAction:
     ) -> None:
         queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
         orch: MagicMock = approval_client._test_orch  # type: ignore[attr-defined]
-        action_id = _add_test_action(queue)
+        action_id = await _add_test_action(queue)
 
         resp = await approval_client.post(f"/ui/approvals/{action_id}/approve")
         assert resp.status_code == 200
@@ -222,7 +222,7 @@ class TestApproveAction:
         self, approval_client: AsyncClient,
     ) -> None:
         queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
-        action_id = _add_test_action(queue)
+        action_id = await _add_test_action(queue)
 
         resp = await approval_client.post(f"/ui/approvals/{action_id}/approve")
         assert resp.status_code == 200
@@ -243,7 +243,7 @@ class TestApproveAction:
         """If orchestrator raises during approval, return 409 with error card."""
         queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
         orch: MagicMock = approval_client._test_orch  # type: ignore[attr-defined]
-        action_id = _add_test_action(queue)
+        action_id = await _add_test_action(queue)
         orch._process_approval.side_effect = RuntimeError("handler crashed")
 
         resp = await approval_client.post(f"/ui/approvals/{action_id}/approve")
@@ -265,7 +265,7 @@ class TestRejectAction:
     ) -> None:
         queue: PendingQueue = approval_client._test_queue  # type: ignore[attr-defined]
         orch: MagicMock = approval_client._test_orch  # type: ignore[attr-defined]
-        action_id = _add_test_action(queue)
+        action_id = await _add_test_action(queue)
 
         resp = await approval_client.post(f"/ui/approvals/{action_id}/reject")
         assert resp.status_code == 200
