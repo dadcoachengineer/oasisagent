@@ -304,6 +304,58 @@ class TestLoadConfigNewTypes:
         assert config.notifications.telegram.chat_id == "456"
 
 
+class TestEnabledFlagInjection:
+    """Regression: DB ``enabled`` column must be injected into config dict (#151).
+
+    UI-created rows store ``enabled`` as a DB column, not in ``config_json``.
+    Components whose Pydantic models default ``enabled=False`` would never
+    start without the injection.
+    """
+
+    async def test_connector_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """UniFi connector created without 'enabled' in config_json loads as enabled."""
+        await store.create_connector(
+            "unifi", "oasis-udm",
+            {"url": "https://192.168.1.1", "username": "admin", "password": "pw"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.unifi.enabled is True
+        assert config.ingestion.unifi.url == "https://192.168.1.1"
+
+    async def test_handler_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """Portainer handler created without 'enabled' in config_json loads as enabled."""
+        await store.create_service(
+            "portainer_handler", "portainer",
+            {"url": "https://portainer:9443", "api_key": "ptk"},
+        )
+        config = await store.load_config()
+        assert config.handlers.portainer.enabled is True
+
+    async def test_cloudflare_connector_without_enabled(
+        self, store: ConfigStore,
+    ) -> None:
+        await store.create_connector(
+            "cloudflare", "cf",
+            {"api_token": "tok123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.cloudflare.enabled is True
+
+    async def test_uptime_kuma_without_enabled(
+        self, store: ConfigStore,
+    ) -> None:
+        await store.create_connector(
+            "uptime_kuma", "kuma",
+            {"url": "http://kuma:3001", "api_key": "key123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.uptime_kuma.enabled is True
+
+
 class TestAgentConfig:
     async def test_default_agent_config(self, store: ConfigStore) -> None:
         config = await store.load_config()
