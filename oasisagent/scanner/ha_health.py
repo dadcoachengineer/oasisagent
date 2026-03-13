@@ -55,8 +55,9 @@ class HaHealthScannerAdapter(ScannerIngestAdapter):
         queue: EventQueue,
         interval: int,
         ha_config: HaHandlerConfig,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(queue, interval)
+        super().__init__(queue, interval, **kwargs)
         self._config = config
         self._ha_url = ha_config.url.rstrip("/")
         self._ha_token = ha_config.token

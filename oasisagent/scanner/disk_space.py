@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import shutil
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from oasisagent.models import Event, EventMetadata, Severity
 from oasisagent.scanner.base import ScannerIngestAdapter
@@ -32,9 +32,13 @@ class DiskSpaceScannerAdapter(ScannerIngestAdapter):
     """
 
     def __init__(
-        self, config: DiskSpaceCheckConfig, queue: EventQueue, interval: int,
+        self,
+        config: DiskSpaceCheckConfig,
+        queue: EventQueue,
+        interval: int,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(queue, interval)
+        super().__init__(queue, interval, **kwargs)
         self._config = config
         # State tracking: path -> "ok" | "warning" | "critical"
         self._states: dict[str, str] = {}

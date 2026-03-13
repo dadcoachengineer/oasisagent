@@ -51,8 +51,9 @@ class DockerHealthScannerAdapter(ScannerIngestAdapter):
         queue: EventQueue,
         interval: int,
         docker_config: DockerHandlerConfig,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(queue, interval)
+        super().__init__(queue, interval, **kwargs)
         self._config = config
         self._docker_config = docker_config
         self._session: aiohttp.ClientSession | None = None

@@ -206,6 +206,9 @@ ingestion:
 scanner:
   enabled: false
   interval: 900                    # Global default interval (seconds); per-check overrides below
+  adaptive_enabled: true           # Shorten interval after detecting issues, restore after clean scans
+  adaptive_fast_factor: 0.25       # Multiply interval by this when in fast mode (900s → 225s)
+  adaptive_recovery_scans: 3       # Consecutive clean scans before restoring normal interval
 
   # TLS certificate expiry — checks cert validity from OasisAgent's vantage point
   certificate_expiry:
