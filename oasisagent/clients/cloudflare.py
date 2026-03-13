@@ -16,7 +16,7 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "https://api.cloudflare.com/client/v4"
+_BASE_URL = "https://api.cloudflare.com/client/v4/"
 
 
 class CloudflareClient:

@@ -93,6 +93,9 @@ class UnifiAdapter(IngestAdapter):
 
     async def _poll_loop(self) -> None:
         """Main polling loop — polls all endpoints each interval."""
+        consecutive_failures = 0
+        _MAX_BACKOFF = 300  # 5 minutes cap
+
         while not self._stopping:
             try:
                 await self._poll_devices()
@@ -104,11 +107,25 @@ class UnifiAdapter(IngestAdapter):
                     await self._poll_health()
 
                 self._connected = True
+                consecutive_failures = 0
             except asyncio.CancelledError:
                 return
             except Exception as exc:
-                logger.warning("UniFi poll error: %s", exc)
+                consecutive_failures += 1
+                backoff = min(
+                    self._config.poll_interval * (2 ** (consecutive_failures - 1)),
+                    _MAX_BACKOFF,
+                )
+                logger.warning(
+                    "UniFi poll error (attempt %d, next retry in %ds): %s",
+                    consecutive_failures, backoff, exc,
+                )
                 self._connected = False
+                for _ in range(backoff):
+                    if self._stopping:
+                        return
+                    await asyncio.sleep(1)
+                continue
 
             for _ in range(self._config.poll_interval):
                 if self._stopping:

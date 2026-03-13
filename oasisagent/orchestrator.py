@@ -220,37 +220,66 @@ class Orchestrator:
         "reasoning": "llm_reasoning",
     }
 
+    _HEALTH_CHECK_TIMEOUT: ClassVar[float] = 5.0  # seconds per component
+
     async def get_component_health(self) -> dict[str, dict[str, str]]:
         """Return live health status for all active components.
 
         Returns ``{"connectors": {...}, "services": {...}, "notifications": {...}}``
         where each value maps a DB type string to a health status string:
         ``"connected"``, ``"disconnected"``, ``"error"``, or ``"unknown"``.
+
+        All health checks run in parallel with a per-component timeout so
+        one slow handler (e.g., Proxmox behind VPN) cannot block the
+        entire response.
         """
-        # TODO: Use asyncio.gather with per-component timeout so one slow
-        # handler (e.g., Proxmox behind VPN) doesn't block the entire response.
         connectors: dict[str, str] = {}
         services: dict[str, str] = {}
         notifications: dict[str, str] = {}
         scanner_detail = ""
 
-        # --- Connectors: non-scanner adapters ---
-        scanner_results: list[tuple[str, str]] = []
-        for adapter in self._adapters:
-            status = await self._check_health(adapter)
-            if adapter.name.startswith("scanner."):
-                scanner_results.append((adapter.name, status))
-            else:
-                connectors[adapter.name] = status
+        # Build a list of (key, category, component) tuples to check in
+        # parallel.  Each entry becomes one _check_health coroutine.
+        checks: list[tuple[str, str, object]] = []
 
-        # --- Services: handlers ---
+        # --- Connectors (adapters) ---
+        for adapter in self._adapters:
+            checks.append((adapter.name, "connector", adapter))
+
+        # --- Services (handlers) ---
         for handler in self._handlers.values():
             db_type = self._HANDLER_NAME_TO_TYPE.get(
                 handler.name(), handler.name(),
             )
-            services[db_type] = await self._check_health(handler)
+            checks.append((db_type, "service", handler))
 
-        # --- Services: LLM endpoints — infer from last call ---
+        # --- Notifications ---
+        if self._dispatcher is not None:
+            for channel in self._dispatcher.channels:
+                db_type = self._CHANNEL_NAME_TO_TYPE.get(
+                    channel.name(), channel.name(),
+                )
+                checks.append((db_type, "notification", channel))
+
+        # Fire all checks concurrently with per-component timeout.
+        results = await asyncio.gather(
+            *(self._check_health(comp) for _, _, comp in checks),
+        )
+
+        # Distribute results into the correct category dicts.
+        scanner_results: list[tuple[str, str]] = []
+        for (key, category, _), status in zip(checks, results):
+            if category == "connector":
+                if key.startswith("scanner."):
+                    scanner_results.append((key, status))
+                else:
+                    connectors[key] = status
+            elif category == "service":
+                services[key] = status
+            else:
+                notifications[key] = status
+
+        # --- Services: LLM endpoints — infer from last call (no I/O) ---
         if self._llm_client is not None:
             for role in LLMRole:
                 db_type = self._LLM_ROLE_TO_TYPE.get(role.value, role.value)
@@ -260,7 +289,7 @@ class Orchestrator:
         for svc_type in self._INTERNAL_SERVICE_TYPES:
             services[svc_type] = "unknown"
 
-        # --- Services: scanner aggregate (D2) ---
+        # --- Services: scanner aggregate ---
         if scanner_results:
             statuses = [s for _, s in scanner_results]
             healthy_count = statuses.count("connected")
@@ -273,14 +302,6 @@ class Orchestrator:
             else:
                 services["scanner"] = "connected"
 
-        # --- Notifications ---
-        if self._dispatcher is not None:
-            for channel in self._dispatcher.channels:
-                db_type = self._CHANNEL_NAME_TO_TYPE.get(
-                    channel.name(), channel.name(),
-                )
-                notifications[db_type] = await self._check_health(channel)
-
         result: dict[str, dict[str, str]] = {
             "connectors": connectors,
             "services": services,
@@ -290,12 +311,22 @@ class Orchestrator:
             result["scanner_detail"] = {"detail": scanner_detail}
         return result
 
-    @staticmethod
-    async def _check_health(component: object) -> str:
-        """Call healthy() on a component and map the result to a status string."""
+    @classmethod
+    async def _check_health(cls, component: object) -> str:
+        """Call healthy() on a component with a timeout.
+
+        Returns ``"connected"``, ``"disconnected"``, or ``"error"``.
+        A timeout is treated as ``"error"`` so one slow component never
+        blocks the entire health response.
+        """
         try:
-            is_healthy = await component.healthy()  # type: ignore[union-attr]
+            is_healthy = await asyncio.wait_for(
+                component.healthy(),  # type: ignore[union-attr]
+                timeout=cls._HEALTH_CHECK_TIMEOUT,
+            )
             return "connected" if is_healthy else "disconnected"
+        except asyncio.TimeoutError:
+            return "error"
         except Exception:
             return "error"
 
@@ -1067,6 +1098,11 @@ class Orchestrator:
             source=event.source,
             system=event.system,
         )
+        if pending is None:
+            logger.debug(
+                "Duplicate pending action skipped for event %s", event.id,
+            )
+            return
         await self._publish_pending_action(pending)
         await self._publish_pending_list()
 
