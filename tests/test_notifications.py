@@ -295,6 +295,49 @@ class TestMqttErrors:
 
         await channel.stop()
 
+    async def test_trigger_reconnect_calls_aexit_on_stale_client(self) -> None:
+        """_trigger_reconnect() should schedule __aexit__ on the old client."""
+        channel = _mock_mqtt_channel()
+        old_client = channel._client
+        old_client.__aexit__ = AsyncMock()
+
+        channel._trigger_reconnect()
+
+        # Let the fire-and-forget cleanup task run
+        await asyncio.sleep(0)
+
+        old_client.__aexit__.assert_awaited_once_with(None, None, None)
+        assert channel._client is None
+
+        await channel.stop()
+
+    async def test_trigger_reconnect_suppresses_aexit_error(self) -> None:
+        """If __aexit__ raises on the stale client, it should be suppressed."""
+        channel = _mock_mqtt_channel()
+        old_client = channel._client
+        old_client.__aexit__ = AsyncMock(side_effect=OSError("socket gone"))
+
+        channel._trigger_reconnect()
+
+        # Let the fire-and-forget cleanup task run — should not raise
+        await asyncio.sleep(0)
+
+        old_client.__aexit__.assert_awaited_once_with(None, None, None)
+
+        await channel.stop()
+
+    async def test_trigger_reconnect_skips_cleanup_when_no_client(self) -> None:
+        """If _client is already None, no cleanup task is created."""
+        channel = MqttNotificationChannel(_make_config())
+        assert channel._client is None
+
+        channel._trigger_reconnect()
+
+        # Only the reconnect task should exist, no stale cleanup
+        assert channel._reconnect_task is not None
+
+        await channel.stop()
+
     async def test_duplicate_reconnect_not_spawned(self) -> None:
         """Multiple publish failures should not spawn duplicate reconnect tasks."""
         channel = _mock_mqtt_channel()
