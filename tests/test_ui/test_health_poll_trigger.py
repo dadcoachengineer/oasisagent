@@ -10,25 +10,29 @@ TEMPLATE = (
     / "oasisagent" / "ui" / "templates" / "connectors" / "list.html"
 )
 
+# Regex anchored to the health-poll div (hx-get contains /health)
+# so we don't accidentally match other hx-trigger attributes.
+_HEALTH_DIV_RE = re.compile(
+    r'hx-get="[^"]*?/health"[^>]*?hx-trigger="([^"]+)"',
+    re.DOTALL,
+)
+
+
+def _get_health_trigger() -> str:
+    content = TEMPLATE.read_text()
+    match = _HEALTH_DIV_RE.search(content)
+    assert match is not None, (
+        "No hx-trigger found on health-poll element"
+    )
+    return match.group(1)
+
 
 class TestHealthPollTrigger:
     def test_hx_trigger_does_not_contain_load(self) -> None:
-        content = TEMPLATE.read_text()
-        match = re.search(r'hx-trigger="([^"]+)"', content)
-        assert match is not None, "No hx-trigger attribute found"
-        trigger_value = match.group(1)
-        assert "load" not in trigger_value
+        assert "load" not in _get_health_trigger()
 
     def test_hx_trigger_contains_every(self) -> None:
-        content = TEMPLATE.read_text()
-        match = re.search(r'hx-trigger="([^"]+)"', content)
-        assert match is not None
-        trigger_value = match.group(1)
-        assert "every" in trigger_value
+        assert "every" in _get_health_trigger()
 
     def test_hx_trigger_contains_visibility_guard(self) -> None:
-        content = TEMPLATE.read_text()
-        match = re.search(r'hx-trigger="([^"]+)"', content)
-        assert match is not None
-        trigger_value = match.group(1)
-        assert "document.visibilityState" in trigger_value
+        assert "document.visibilityState" in _get_health_trigger()
