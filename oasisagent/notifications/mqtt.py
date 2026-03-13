@@ -37,6 +37,7 @@ class MqttNotificationChannel(NotificationChannel):
         self._config = config
         self._client: aiomqtt.Client | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._stopping = False
 
     def name(self) -> str:
@@ -94,13 +95,28 @@ class MqttNotificationChannel(NotificationChannel):
                     backoff,
                 )
 
+    async def _close_stale_client(self, client: aiomqtt.Client) -> None:
+        """Best-effort cleanup of a stale MQTT client."""
+        try:
+            await client.__aexit__(None, None, None)
+        except Exception:
+            logger.debug("Stale MQTT client cleanup failed (expected)", exc_info=True)
+
     def _trigger_reconnect(self) -> None:
         """Tear down the dead client and spawn a background reconnect task.
 
         Safe to call multiple times — skips if a reconnect is already running
         or if the channel is shutting down.
         """
+        old_client = self._client
         self._client = None
+        if old_client is not None:
+            task = asyncio.create_task(
+                self._close_stale_client(old_client),
+                name="mqtt-stale-cleanup",
+            )
+            self._cleanup_tasks.add(task)
+            task.add_done_callback(self._cleanup_tasks.discard)
         if self._stopping:
             return
         if self._reconnect_task is not None and not self._reconnect_task.done():
