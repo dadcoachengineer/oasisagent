@@ -112,10 +112,10 @@ class UnifiAdapter(IngestAdapter):
                 return
             except Exception as exc:
                 consecutive_failures += 1
-                backoff = min(
+                backoff = int(min(
                     self._config.poll_interval * (2 ** (consecutive_failures - 1)),
                     _MAX_BACKOFF,
-                )
+                ))
                 logger.warning(
                     "UniFi poll error (attempt %d, next retry in %ds): %s",
                     consecutive_failures, backoff, exc,
