@@ -243,6 +243,26 @@ scanner:
     ignore_containers: []          # Container names to skip (e.g., ["temp-builder"])
     interval: 900                  # Check interval (seconds); min 60
 
+  # Backup freshness — detects stale backups from PBS or local files
+  backup_freshness:
+    enabled: false
+    interval: 3600                 # Check interval (seconds); min 60
+    sources:
+      # Proxmox Backup Server example
+      - name: pbs-nightly
+        type: pbs
+        url: https://pbs.example.com:8007
+        token_id: "${PBS_TOKEN_ID:-}"
+        token_secret: "${PBS_TOKEN_SECRET:-}"
+        datastore: backups
+        verify_ssl: false
+        max_age_hours: 26          # Just over 1 day — allows for scheduling drift
+      # Local file example (glob pattern)
+      - name: local-tarball
+        type: file
+        path: /backup/daily/*.tar.gz
+        max_age_hours: 26
+
 # -----------------------------------------------------------------------------
 # LLM — Language model configuration
 # OasisAgent is provider-agnostic. Any OpenAI-compatible endpoint works:

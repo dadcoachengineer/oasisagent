@@ -477,6 +477,35 @@ class DockerHealthCheckConfig(BaseModel):
     interval: Annotated[int, Field(ge=60)] = 900
 
 
+class BackupSourceConfig(BaseModel):
+    """Configuration for a single backup source to monitor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: Literal["pbs", "file"]
+    # PBS fields
+    url: str = ""
+    token_id: str = ""
+    token_secret: str = ""
+    datastore: str = ""
+    verify_ssl: bool = True
+    # File fields
+    path: str = ""  # glob pattern, e.g. "/backup/daily/*.tar.gz"
+    # Common
+    max_age_hours: int = 26  # just over 1 day
+
+
+class BackupFreshnessCheckConfig(BaseModel):
+    """Backup freshness scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    interval: Annotated[int, Field(ge=60)] = 3600
+    sources: list[BackupSourceConfig] = Field(default_factory=list)
+
+
 class ScannerConfig(BaseModel):
     """Preventive scanning framework configuration."""
 
@@ -491,6 +520,9 @@ class ScannerConfig(BaseModel):
     disk_space: DiskSpaceCheckConfig = Field(default_factory=DiskSpaceCheckConfig)
     ha_health: HaHealthCheckConfig = Field(default_factory=HaHealthCheckConfig)
     docker_health: DockerHealthCheckConfig = Field(default_factory=DockerHealthCheckConfig)
+    backup_freshness: BackupFreshnessCheckConfig = Field(
+        default_factory=BackupFreshnessCheckConfig,
+    )
 
 
 # -- Ingestion (top-level) --------------------------------------------------

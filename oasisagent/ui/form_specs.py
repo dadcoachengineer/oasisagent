@@ -931,7 +931,7 @@ DEFERRED_FIELDS: dict[str, frozenset[str]] = {
     "scanner": frozenset({
         "interval", "adaptive_enabled", "adaptive_fast_factor",
         "adaptive_recovery_scans", "certificate_expiry", "disk_space",
-        "ha_health", "docker_health",
+        "ha_health", "docker_health", "backup_freshness",
     }),
 }
 

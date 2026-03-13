@@ -465,6 +465,17 @@ class Orchestrator:
                     docker_config=cfg.handlers.docker,
                     **adaptive_kw,
                 ))
+            if cfg.scanner.backup_freshness.enabled:
+                from oasisagent.scanner.backup_freshness import (
+                    BackupFreshnessScannerAdapter,
+                )
+
+                interval = (
+                    cfg.scanner.backup_freshness.interval or cfg.scanner.interval
+                )
+                self._adapters.append(BackupFreshnessScannerAdapter(
+                    cfg.scanner.backup_freshness, self._queue, interval,
+                ))
 
         # 15. Metrics server (Prometheus)
         if cfg.agent.metrics_port > 0:
