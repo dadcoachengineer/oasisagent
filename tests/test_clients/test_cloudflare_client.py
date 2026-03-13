@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from oasisagent.clients.cloudflare import CloudflareClient
+from oasisagent.clients.cloudflare import _GRAPHQL_URL, CloudflareClient
 
 
 def _make_client(**overrides: object) -> CloudflareClient:
@@ -232,3 +232,83 @@ class TestDelete:
         client = _make_client()
         with pytest.raises(RuntimeError, match="not started"):
             await client.delete("/test")
+
+
+# ---------------------------------------------------------------------------
+# GraphQL
+# ---------------------------------------------------------------------------
+
+
+class TestGraphql:
+    @pytest.mark.asyncio
+    async def test_graphql_returns_data(self) -> None:
+        gql_resp = {
+            "data": {"viewer": {"zones": [{"firewallEventsAdaptive": []}]}},
+            "errors": None,
+        }
+        resp = _mock_resp(200, gql_resp)
+        client = _make_client()
+        mock_session = MagicMock()
+        captured: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+        @asynccontextmanager
+        async def _tracking_post(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            captured.append((args, kwargs))
+            yield resp
+
+        mock_session.post = _tracking_post
+        client._session = mock_session
+
+        result = await client.graphql("{ viewer { zones { id } } }")
+
+        assert result == gql_resp
+        assert len(captured) == 1
+        assert captured[0][0][0] == _GRAPHQL_URL
+        assert captured[0][1]["json"] == {"query": "{ viewer { zones { id } } }"}
+
+    @pytest.mark.asyncio
+    async def test_graphql_raises_on_http_error(self) -> None:
+        resp = _mock_resp(403, {"errors": [{"message": "Forbidden"}]})
+        _, client = _mock_session_with("post", resp)
+
+        with pytest.raises(aiohttp.ClientResponseError):
+            await client.graphql("{ viewer { zones { id } } }")
+
+    @pytest.mark.asyncio
+    async def test_graphql_raises_on_graphql_errors(self) -> None:
+        resp = _mock_resp(200, {
+            "data": None,
+            "errors": [{"message": "Validation error"}],
+        })
+        _, client = _mock_session_with("post", resp)
+
+        with pytest.raises(aiohttp.ClientResponseError, match="GraphQL errors"):
+            await client.graphql("{ bad }")
+
+    @pytest.mark.asyncio
+    async def test_graphql_not_started_raises(self) -> None:
+        client = _make_client()
+        with pytest.raises(RuntimeError, match="not started"):
+            await client.graphql("{ viewer { zones { id } } }")
+
+    @pytest.mark.asyncio
+    async def test_graphql_no_variables(self) -> None:
+        """When variables is None, body should only contain 'query' key."""
+        resp = _mock_resp(200, {"data": {}, "errors": None})
+        client = _make_client()
+        mock_session = MagicMock()
+        captured: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+        @asynccontextmanager
+        async def _tracking_post(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            captured.append((args, kwargs))
+            yield resp
+
+        mock_session.post = _tracking_post
+        client._session = mock_session
+
+        await client.graphql("{ viewer { zones { id } } }")
+
+        assert len(captured) == 1
+        assert "variables" not in captured[0][1]["json"]
+        assert captured[0][1]["json"] == {"query": "{ viewer { zones { id } } }"}

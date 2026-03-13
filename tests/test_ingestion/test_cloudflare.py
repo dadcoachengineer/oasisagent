@@ -232,6 +232,20 @@ class TestTunnelPolling:
 # ---------------------------------------------------------------------------
 
 
+def _graphql_waf_response(
+    events: list[dict[str, object]],
+) -> dict[str, object]:
+    """Wrap WAF events in the Cloudflare GraphQL response envelope."""
+    return {
+        "data": {
+            "viewer": {
+                "zones": [{"firewallEventsAdaptive": events}],
+            },
+        },
+        "errors": None,
+    }
+
+
 class TestWafPolling:
     @pytest.mark.asyncio
     async def test_waf_spike_event(self) -> None:
@@ -246,9 +260,9 @@ class TestWafPolling:
             {"action": "managed_challenge", "ruleId": "r3", "clientIP": "9.0.1.2"},
         ]
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": waf_events,
-        })
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response(waf_events),
+        )
 
         await adapter._poll_waf()
 
@@ -264,11 +278,11 @@ class TestWafPolling:
     async def test_waf_below_threshold_no_event(self) -> None:
         adapter, queue = _make_adapter(waf_spike_threshold=10)
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": [
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([
                 {"action": "block", "ruleId": "r1", "clientIP": "1.2.3.4"},
-            ],
-        })
+            ]),
+        )
 
         await adapter._poll_waf()
         queue.put_nowait.assert_not_called()
@@ -277,13 +291,13 @@ class TestWafPolling:
     async def test_waf_allow_actions_not_counted(self) -> None:
         adapter, queue = _make_adapter(waf_spike_threshold=3)
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": [
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([
                 {"action": "allow", "ruleId": "r1", "clientIP": "1.2.3.4"},
                 {"action": "log", "ruleId": "r2", "clientIP": "5.6.7.8"},
                 {"action": "block", "ruleId": "r3", "clientIP": "9.0.1.2"},
-            ],
-        })
+            ]),
+        )
 
         await adapter._poll_waf()
         queue.put_nowait.assert_not_called()  # only 1 blocked
@@ -292,41 +306,58 @@ class TestWafPolling:
     async def test_waf_empty_response_no_event(self) -> None:
         adapter, queue = _make_adapter()
 
-        adapter._client.get = AsyncMock(return_value={"result": []})
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([]),
+        )
 
         await adapter._poll_waf()
         queue.put_nowait.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_waf_lookback_uses_last_poll_time(self) -> None:
-        """Second poll should use last poll time, not lookback window."""
+        """Second poll should use datetime_gt in query string."""
         from datetime import UTC, datetime
 
         adapter, _queue = _make_adapter(waf_spike_threshold=100)
         first_time = datetime(2026, 3, 12, 10, 0, 0, tzinfo=UTC)
         adapter._last_waf_poll = first_time
 
-        adapter._client.get = AsyncMock(return_value={"result": []})
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([]),
+        )
 
         await adapter._poll_waf()
 
-        call_kwargs = adapter._client.get.call_args[1]
-        assert call_kwargs["since"] == "2026-03-12T10:00:00Z"
+        query_arg = adapter._client.graphql.call_args[0][0]
+        assert "2026-03-12T10:00:00Z" in query_arg
 
     @pytest.mark.asyncio
     async def test_waf_dedup_key(self) -> None:
         adapter, queue = _make_adapter(waf_spike_threshold=1)
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": [
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([
                 {"action": "block", "ruleId": "r1", "clientIP": "1.2.3.4"},
-            ],
-        })
+            ]),
+        )
 
         await adapter._poll_waf()
 
         event = queue.put_nowait.call_args[0][0]
         assert event.metadata.dedup_key == "cloudflare:waf:zone-456:spike"
+
+    @pytest.mark.asyncio
+    async def test_waf_empty_zones_no_event(self) -> None:
+        """Invalid zone tag returns empty zones list — should not crash."""
+        adapter, queue = _make_adapter()
+
+        adapter._client.graphql = AsyncMock(return_value={
+            "data": {"viewer": {"zones": []}},
+            "errors": None,
+        })
+
+        await adapter._poll_waf()
+        queue.put_nowait.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
