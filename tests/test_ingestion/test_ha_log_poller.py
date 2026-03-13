@@ -42,19 +42,44 @@ def _make_config(**overrides: Any) -> HaLogPollerConfig:
     return HaLogPollerConfig(**defaults)
 
 
+def _make_entry(
+    name: str = "",
+    message: str | list[str] = "",
+    level: str = "ERROR",
+    timestamp: float = 1741624926.123,
+    count: int = 1,
+    first_occurred: float = 1741624926.123,
+    source: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "message": message,
+        "level": level,
+        "timestamp": timestamp,
+        "count": count,
+        "first_occurred": first_occurred,
+        "source": source or [],
+    }
+
+
 # ---------------------------------------------------------------------------
-# Log processing
+# Log processing (structured entries via system_log/list)
 # ---------------------------------------------------------------------------
 
 
 class TestLogProcessing:
-    """Tests for log line matching and event generation."""
+    """Tests for structured log entry matching and event generation."""
 
-    def test_matching_line_emits_event(self) -> None:
+    def test_matching_entry_emits_event(self) -> None:
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(_make_config(), queue)
 
-        adapter._process_log("Error setting up integration 'zwave_js'")
+        adapter._process_entries([
+            _make_entry(
+                name="homeassistant.components.zwave_js",
+                message="Error setting up integration 'zwave_js'",
+            )
+        ])
 
         assert queue.size == 1
         event = queue.drain()[0]
@@ -63,7 +88,7 @@ class TestLogProcessing:
         assert event.event_type == "integration_failure"
         assert event.entity_id == "zwave_js"
         assert event.severity == Severity.ERROR
-        assert event.payload["log_line"] == "Error setting up integration 'zwave_js'"
+        assert event.payload["component"] == "homeassistant.components.zwave_js"
         assert event.payload["match_groups"] == ["zwave_js"]
         assert event.metadata.dedup_key == "ha_log:zwave_js:integration_failure"
 
@@ -71,38 +96,50 @@ class TestLogProcessing:
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(_make_config(), queue)
 
-        log_text = (
-            "Error setting up integration 'zwave_js'\n"
-            "sensor.outdoor_temp is unavailable\n"
-        )
-        adapter._process_log(log_text)
+        adapter._process_entries([
+            _make_entry(
+                name="homeassistant.components.zwave_js",
+                message="Error setting up integration 'zwave_js'",
+            ),
+            _make_entry(
+                name="homeassistant.components.sensor",
+                message="sensor.outdoor_temp is unavailable",
+                level="WARNING",
+            ),
+        ])
 
         assert queue.size == 2
         events = queue.drain()
         assert events[0].event_type == "integration_failure"
         assert events[0].entity_id == "zwave_js"
         assert events[1].event_type == "state_unavailable"
-        assert events[1].entity_id == "sensor.outdoor_temp"
+        # (.+) captures from the combined "name: message" match text
+        assert "sensor.outdoor_temp" in events[1].entity_id
 
-    def test_non_matching_line_ignored(self) -> None:
+    def test_non_matching_entry_ignored(self) -> None:
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(_make_config(), queue)
 
-        adapter._process_log("INFO: Home Assistant started successfully")
+        adapter._process_entries([
+            _make_entry(
+                name="homeassistant.core",
+                message="Home Assistant started successfully",
+                level="INFO",
+            )
+        ])
 
         assert queue.size == 0
 
-    def test_empty_log_produces_no_events(self) -> None:
+    def test_empty_entries_produces_no_events(self) -> None:
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(_make_config(), queue)
 
-        adapter._process_log("")
-        adapter._process_log("\n\n\n")
+        adapter._process_entries([])
 
         assert queue.size == 0
 
     def test_first_matching_pattern_wins(self) -> None:
-        """If a line matches multiple patterns, only the first fires."""
+        """If an entry matches multiple patterns, only the first fires."""
         config = _make_config(
             patterns=[
                 LogPattern(
@@ -120,7 +157,12 @@ class TestLogProcessing:
         queue = EventQueue(max_size=10)
         adapter = HaLogPollerAdapter(config, queue)
 
-        adapter._process_log("sensor.temp is unavailable")
+        adapter._process_entries([
+            _make_entry(
+                name="homeassistant.components.sensor",
+                message="sensor.temp is unavailable",
+            )
+        ])
 
         assert queue.size == 1
         assert queue.drain()[0].event_type == "first_match"
@@ -138,8 +180,12 @@ class TestDeduplication:
         queue = EventQueue(max_size=10, dedup_window_seconds=0)  # Disable queue dedup
         adapter = HaLogPollerAdapter(_make_config(dedup_window=300), queue)
 
-        adapter._process_log("Error setting up integration 'zwave_js'")
-        adapter._process_log("Error setting up integration 'zwave_js'")
+        entry = _make_entry(
+            name="homeassistant.components.zwave_js",
+            message="Error setting up integration 'zwave_js'",
+        )
+        adapter._process_entries([entry])
+        adapter._process_entries([entry])
 
         assert queue.size == 1
 
@@ -147,22 +193,36 @@ class TestDeduplication:
         queue = EventQueue(max_size=10, dedup_window_seconds=0)
         adapter = HaLogPollerAdapter(_make_config(dedup_window=1), queue)
 
-        adapter._process_log("Error setting up integration 'zwave_js'")
+        entry = _make_entry(
+            name="homeassistant.components.zwave_js",
+            message="Error setting up integration 'zwave_js'",
+        )
+        adapter._process_entries([entry])
 
         # Age the seen entry past the window
         for key in adapter._seen:
             adapter._seen[key] = time.monotonic() - 2
 
-        adapter._process_log("Error setting up integration 'zwave_js'")
+        adapter._process_entries([entry])
 
         assert queue.size == 2
 
-    def test_different_lines_not_deduped(self) -> None:
+    def test_different_entries_not_deduped(self) -> None:
         queue = EventQueue(max_size=10, dedup_window_seconds=0)
         adapter = HaLogPollerAdapter(_make_config(dedup_window=300), queue)
 
-        adapter._process_log("Error setting up integration 'zwave_js'")
-        adapter._process_log("Error setting up integration 'mqtt'")
+        adapter._process_entries([
+            _make_entry(
+                name="homeassistant.components.zwave_js",
+                message="Error setting up integration 'zwave_js'",
+            )
+        ])
+        adapter._process_entries([
+            _make_entry(
+                name="homeassistant.components.mqtt",
+                message="Error setting up integration 'mqtt'",
+            )
+        ])
 
         assert queue.size == 2
 
@@ -264,7 +324,12 @@ class TestCrossAdapterIntegration:
         log_adapter = HaLogPollerAdapter(log_config, queue)
 
         # Both push to the same queue
-        log_adapter._process_log("Error setting up integration 'zwave_js'")
+        log_adapter._process_entries([
+            _make_entry(
+                name="homeassistant.components.zwave_js",
+                message="Error setting up integration 'zwave_js'",
+            )
+        ])
 
         import json
         from unittest.mock import MagicMock
