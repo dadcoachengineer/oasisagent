@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Events — OasisAgent{% endblock %}
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Event Explorer</h1>
+    <p class="text-sm text-gray-500">Search and filter historical events from the audit trail</p>
+</div>
+
+{% if not audit_configured %}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+    <p class="text-gray-500">Event explorer requires audit (InfluxDB) to be configured.</p>
+    <p class="text-xs text-gray-400 mt-1">Configure InfluxDB in Services to enable event recording.</p>
+</div>
+{% elif filter_options is none and page is none %}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+    <p class="text-gray-500">Unable to query InfluxDB. Check connection settings.</p>
+</div>
+{% else %}
+{# Filter bar #}
+<div class="bg-white rounded-lg shadow p-4 mb-4">
+    <form hx-get="/ui/events/table" hx-target="#event-table" hx-swap="innerHTML"
+          class="flex flex-wrap items-end gap-3">
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Time Range</label>
+            <select name="duration" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                {% for val, label in [("1h", "Last hour"), ("6h", "Last 6h"), ("24h", "Last 24h"), ("7d", "Last 7d"), ("30d", "Last 30d")] %}
+                <option value="{{ val }}" {% if filters.duration == val %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% if filter_options %}
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Severity</label>
+            <select name="severity" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                <option value="">All</option>
+                {% for s in filter_options.severities %}
+                <option value="{{ s }}" {% if filters.severity == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Source</label>
+            <select name="source" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                <option value="">All</option>
+                {% for s in filter_options.sources %}
+                <option value="{{ s }}" {% if filters.source == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">System</label>
+            <select name="system" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                <option value="">All</option>
+                {% for s in filter_options.systems %}
+                <option value="{{ s }}" {% if filters.system == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Event Type</label>
+            <select name="event_type" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                <option value="">All</option>
+                {% for s in filter_options.event_types %}
+                <option value="{{ s }}" {% if filters.event_type == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <div class="flex gap-2">
+            <button type="submit"
+                    class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">
+                Filter
+            </button>
+            <a href="/ui/events"
+               class="bg-gray-100 text-gray-600 px-4 py-1.5 rounded text-sm hover:bg-gray-200">
+                Clear
+            </a>
+        </div>
+    </form>
+</div>
+
+{# Table container — swapped by HTMX #}
+<div id="event-table">
+    {% include "events/_table.html" %}
+</div>
+{% endif %}
+{% endblock %}

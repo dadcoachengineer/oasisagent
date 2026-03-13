@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if mode == "edit" else "New" }} {{ type_display_name }} — OasisAgent{% endblock %}
+{% block content %}
+<div class="mb-6">
+    <a href="/ui/{{ table }}" class="text-sm text-gray-500 hover:text-gray-700">&larr; Back to {{ title }}</a>
+    <h1 class="text-2xl font-bold text-gray-900 mt-2">
+        {{ "Edit" if mode == "edit" else "New" }} {{ type_display_name }}
+    </h1>
+</div>
+
+{% if errors %}
+<div class="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
+    <h3 class="text-sm font-medium text-red-800">Validation errors</h3>
+    <ul class="mt-2 text-sm text-red-700 list-disc pl-5 space-y-1">
+        {% for err in errors %}
+        <li>{{ err }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="bg-white rounded-lg shadow p-6 max-w-2xl"
+     x-data="formData()">
+    <form method="post"
+          action="{% if mode == 'edit' %}/ui/{{ table }}/{{ row_id }}{% else %}/ui/{{ table }}{% endif %}"
+          hx-post="{% if mode == 'edit' %}/ui/{{ table }}/{{ row_id }}{% else %}/ui/{{ table }}{% endif %}"
+          hx-target="body"
+          class="space-y-6">
+        {% if mode == "create" %}
+        <input type="hidden" name="type" value="{{ type_name }}">
+        {% endif %}
+
+        {# Name field — always present #}
+        <div>
+            <label for="name" class="block text-sm font-medium text-gray-700">Name</label>
+            <input type="text" id="name" name="name" value="{{ name }}"
+                   required
+                   class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                          focus:ring-blue-500 focus:border-blue-500
+                          border px-3 py-2">
+            <p class="mt-1 text-xs text-gray-400">Unique identifier for this configuration</p>
+        </div>
+
+        {# Dynamic fields from FieldSpec #}
+        {% set current_group = namespace(value="") %}
+        {% for spec in specs %}
+
+        {# Group header #}
+        {% if spec.group and spec.group != current_group.value %}
+        {% set current_group.value = spec.group %}
+        <div class="border-t border-gray-200 pt-4 mt-4">
+            <h3 class="text-sm font-semibold text-gray-700">{{ spec.group }}</h3>
+        </div>
+        {% endif %}
+
+        {# Conditional visibility via Alpine.js #}
+        {% if spec.show_when %}
+        <div x-show="{{ spec.show_when[0] }} === '{{ spec.show_when[1] }}'">
+        {% else %}
+        <div>
+        {% endif %}
+
+        {% if spec.input_type == "checkbox" %}
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="{{ spec.name }}"
+                       {% if config.get(spec.name, spec.default) %}checked{% endif %}
+                       class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                <span class="text-sm text-gray-700">{{ spec.label }}</span>
+            </label>
+            {% if spec.help_text %}
+            <p class="mt-1 text-xs text-gray-400 ml-6">{{ spec.help_text }}</p>
+            {% endif %}
+
+        {% elif spec.input_type == "select" %}
+            <label for="{{ spec.name }}" class="block text-sm font-medium text-gray-700">{{ spec.label }}</label>
+            <select id="{{ spec.name }}" name="{{ spec.name }}"
+                    {% if spec.show_when %}x-model="{{ spec.name }}"{% endif %}
+                    @change="$data['{{ spec.name }}'] = $event.target.value"
+                    x-init="$data['{{ spec.name }}'] = '{{ config.get(spec.name, spec.default) | default('', true) }}'"
+                    class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                           focus:ring-blue-500 focus:border-blue-500
+                           border px-3 py-2">
+                {% for val, label in spec.options %}
+                <option value="{{ val }}"
+                        {% if config.get(spec.name, spec.default) | string == val %}selected{% endif %}>
+                    {{ label }}
+                </option>
+                {% endfor %}
+            </select>
+            {% if spec.help_text %}
+            <p class="mt-1 text-xs text-gray-400">{{ spec.help_text }}</p>
+            {% endif %}
+
+        {% elif spec.input_type == "password" %}
+            <label for="{{ spec.name }}" class="block text-sm font-medium text-gray-700">{{ spec.label }}</label>
+            <input type="password" id="{{ spec.name }}" name="{{ spec.name }}"
+                   value=""
+                   placeholder="{% if mode == 'edit' %}Re-enter to change{% else %}{% if spec.required %}Required{% else %}Optional{% endif %}{% endif %}"
+                   {% if mode == "create" and spec.required %}required{% endif %}
+                   class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                          focus:ring-blue-500 focus:border-blue-500
+                          border px-3 py-2">
+            {% if spec.help_text %}
+            <p class="mt-1 text-xs text-gray-400">{{ spec.help_text }}</p>
+            {% endif %}
+
+        {% elif spec.input_type == "list_str" %}
+            <label for="{{ spec.name }}" class="block text-sm font-medium text-gray-700">{{ spec.label }}</label>
+            <textarea id="{{ spec.name }}" name="{{ spec.name }}" rows="4"
+                      {% if spec.required %}required{% endif %}
+                      class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm font-mono
+                             focus:ring-blue-500 focus:border-blue-500
+                             border px-3 py-2"
+                      placeholder="One entry per line">{{ (config.get(spec.name, []) or []) | join('\n') }}</textarea>
+            {% if spec.help_text %}
+            <p class="mt-1 text-xs text-gray-400">{{ spec.help_text }}</p>
+            {% endif %}
+
+        {% elif spec.input_type in ("number", "float") %}
+            <label for="{{ spec.name }}" class="block text-sm font-medium text-gray-700">{{ spec.label }}</label>
+            <input type="number" id="{{ spec.name }}" name="{{ spec.name }}"
+                   value="{{ config.get(spec.name, spec.default) | default('', true) }}"
+                   {% if spec.input_type == "float" %}step="any"{% endif %}
+                   {% if spec.min_val is not none %}min="{{ spec.min_val }}"{% endif %}
+                   {% if spec.max_val is not none %}max="{{ spec.max_val }}"{% endif %}
+                   {% if spec.required %}required{% endif %}
+                   class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                          focus:ring-blue-500 focus:border-blue-500
+                          border px-3 py-2">
+            {% if spec.help_text %}
+            <p class="mt-1 text-xs text-gray-400">{{ spec.help_text }}</p>
+            {% endif %}
+
+        {% else %}
+            {# text, textarea #}
+            <label for="{{ spec.name }}" class="block text-sm font-medium text-gray-700">{{ spec.label }}</label>
+            <input type="text" id="{{ spec.name }}" name="{{ spec.name }}"
+                   value="{{ config.get(spec.name, spec.default) | default('', true) }}"
+                   {% if spec.required %}required{% endif %}
+                   class="mt-1 block w-full rounded border-gray-300 shadow-sm text-sm
+                          focus:ring-blue-500 focus:border-blue-500
+                          border px-3 py-2">
+            {% if spec.help_text %}
+            <p class="mt-1 text-xs text-gray-400">{{ spec.help_text }}</p>
+            {% endif %}
+        {% endif %}
+
+        </div>
+        {% endfor %}
+
+        {# Submit #}
+        <div class="flex items-center gap-3 pt-4 border-t border-gray-200">
+            <button type="submit"
+                    class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                {% if mode == "edit" %}Save Changes{% else %}Create{% endif %}
+            </button>
+            <a href="/ui/{{ table }}" class="text-sm text-gray-500 hover:text-gray-700">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<script>
+function formData() {
+    // Alpine.js data object for conditional field visibility
+    return {
+        {% for spec in specs if spec.show_when %}
+        {% set ctrl = spec.show_when[0] %}
+        {{ ctrl }}: '{{ config.get(ctrl, '') | default('', true) }}',
+        {% endfor %}
+    };
+}
+</script>
+{% endblock %}

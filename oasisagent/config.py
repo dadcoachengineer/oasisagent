@@ -9,10 +9,10 @@ from __future__ import annotations
 import os
 import re
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -249,6 +249,247 @@ class HaLogPollerConfig(BaseModel):
     dedup_window: Annotated[int, Field(ge=0)] = 300
 
 
+# -- Ingestion: Webhook Receiver --------------------------------------------
+
+
+_SeverityLiteral = Literal["info", "warning", "error", "critical"]
+
+
+class WebhookEventMapping(BaseModel):
+    """Maps a source event name to canonical event_type and severity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_event: str
+    event_type: str
+    severity: _SeverityLiteral = "warning"
+
+
+class WebhookSourceConfig(BaseModel):
+    """Per-source webhook receiver configuration.
+
+    Stored as a connector in SQLite. The connector ``name`` becomes the
+    URL slug: ``POST /ingest/webhook/{name}``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    auth_mode: Literal["none", "header_secret", "api_key"] = "none"
+    auth_header: str = ""
+    auth_secret: str = ""
+    system: str = ""
+    event_type_field: str = "eventType"
+    entity_id_field: str = ""
+    default_severity: _SeverityLiteral = "warning"
+    event_mappings: list[WebhookEventMapping] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_auth_secret(self) -> WebhookSourceConfig:
+        if self.auth_mode != "none" and not self.auth_secret:
+            msg = f"auth_secret is required when auth_mode is '{self.auth_mode}'"
+            raise ValueError(msg)
+        return self
+
+
+# -- Ingestion: HTTP Poller -------------------------------------------------
+
+
+class ExtractMapping(BaseModel):
+    """JMESPath extraction rules for ``mode=extract``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    event_type: str
+    severity_expr: str | None = None
+    payload_expr: str | None = None
+
+
+class ThresholdConfig(BaseModel):
+    """Threshold crossing rules for ``mode=threshold``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value_expr: str
+    warning: float
+    critical: float
+    entity_id: str
+    event_type: str = "threshold_exceeded"
+
+    @model_validator(mode="after")
+    def _check_threshold_order(self) -> ThresholdConfig:
+        if self.critical <= self.warning:
+            msg = f"critical ({self.critical}) must be greater than warning ({self.warning})"
+            raise ValueError(msg)
+        return self
+
+
+class HttpPollerTargetConfig(BaseModel):
+    """Per-target HTTP polling configuration.
+
+    Stored as a connector in SQLite. Supports three response modes:
+    ``health_check``, ``extract``, and ``threshold``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    url: str
+    system: str
+    mode: Literal["health_check", "extract", "threshold"] = "health_check"
+    interval: Annotated[int, Field(ge=5)] = 60
+    timeout: Annotated[int, Field(ge=1)] = 10
+    auth_mode: Literal["none", "basic", "token"] = "none"
+    auth_username: str = ""
+    auth_password: str = ""
+    auth_header: str = "Authorization"
+    auth_value: str = ""
+    extract: ExtractMapping | None = None
+    threshold: ThresholdConfig | None = None
+
+    @model_validator(mode="after")
+    def _check_mode_config(self) -> HttpPollerTargetConfig:
+        if self.mode == "extract" and self.extract is None:
+            msg = "extract config is required when mode is 'extract'"
+            raise ValueError(msg)
+        if self.mode == "threshold" and self.threshold is None:
+            msg = "threshold config is required when mode is 'threshold'"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _check_auth_credentials(self) -> HttpPollerTargetConfig:
+        if self.auth_mode == "basic" and not (self.auth_username and self.auth_password):
+            msg = "auth_username and auth_password required when auth_mode is 'basic'"
+            raise ValueError(msg)
+        if self.auth_mode == "token" and not self.auth_value:
+            msg = "auth_value required when auth_mode is 'token'"
+            raise ValueError(msg)
+        return self
+
+
+# -- UniFi ------------------------------------------------------------------
+
+
+class UnifiAdapterConfig(BaseModel):
+    """UniFi Network controller polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://192.168.1.1"
+    username: str = ""
+    password: str = ""
+    site: str = "default"
+    verify_ssl: bool = False
+    is_udm: bool = True
+    poll_interval: int = 30
+    poll_alarms: bool = True
+    poll_health: bool = True
+    timeout: int = 10
+    cpu_threshold: float = 90.0
+    memory_threshold: float = 90.0
+
+
+# -- Cloudflare -------------------------------------------------------------
+
+
+class CloudflareAdapterConfig(BaseModel):
+    """Cloudflare API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    api_token: str = ""
+    account_id: str = ""
+    zone_id: str = ""
+    poll_interval: int = 300
+    poll_tunnels: bool = True
+    poll_waf: bool = True
+    poll_ssl: bool = True
+    waf_lookback_minutes: int = 10
+    waf_spike_threshold: int = 50
+    timeout: int = 30
+
+
+# -- Uptime Kuma ------------------------------------------------------------
+
+
+class UptimeKumaAdapterConfig(BaseModel):
+    """Uptime Kuma Prometheus metrics polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    response_time_threshold_ms: int = 5000
+    cert_warning_days: int = 30
+    cert_critical_days: int = 7
+
+
+# -- Scanner ----------------------------------------------------------------
+
+
+class CertExpiryCheckConfig(BaseModel):
+    """TLS certificate expiry scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    endpoints: list[str] = Field(default_factory=list)
+    warning_days: int = 30
+    critical_days: int = 7
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
+class DiskSpaceCheckConfig(BaseModel):
+    """Disk space usage scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    paths: list[str] = Field(default_factory=list)
+    warning_threshold_pct: int = 85
+    critical_threshold_pct: int = 95
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
+class HaHealthCheckConfig(BaseModel):
+    """Home Assistant integration health scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
+class DockerHealthCheckConfig(BaseModel):
+    """Docker container health scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    ignore_containers: list[str] = Field(default_factory=list)
+    interval: Annotated[int, Field(ge=60)] = 900
+
+
+class ScannerConfig(BaseModel):
+    """Preventive scanning framework configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    interval: Annotated[int, Field(ge=60)] = 900
+    certificate_expiry: CertExpiryCheckConfig = Field(default_factory=CertExpiryCheckConfig)
+    disk_space: DiskSpaceCheckConfig = Field(default_factory=DiskSpaceCheckConfig)
+    ha_health: HaHealthCheckConfig = Field(default_factory=HaHealthCheckConfig)
+    docker_health: DockerHealthCheckConfig = Field(default_factory=DockerHealthCheckConfig)
+
+
 # -- Ingestion (top-level) --------------------------------------------------
 
 
@@ -260,6 +501,14 @@ class IngestionConfig(BaseModel):
     mqtt: MqttIngestionConfig = Field(default_factory=MqttIngestionConfig)
     ha_websocket: HaWebSocketConfig = Field(default_factory=HaWebSocketConfig)
     ha_log_poller: HaLogPollerConfig = Field(default_factory=HaLogPollerConfig)
+    http_poller_targets: list[HttpPollerTargetConfig] = Field(default_factory=list)
+    unifi: UnifiAdapterConfig = Field(default_factory=UnifiAdapterConfig)
+    cloudflare: CloudflareAdapterConfig = Field(
+        default_factory=CloudflareAdapterConfig,
+    )
+    uptime_kuma: UptimeKumaAdapterConfig = Field(
+        default_factory=UptimeKumaAdapterConfig,
+    )
 
 
 # -- LLM -------------------------------------------------------------------
@@ -358,6 +607,62 @@ class ProxmoxHandlerConfig(BaseModel):
     verify_ssl: bool = False
 
 
+class PortainerHandlerConfig(BaseModel):
+    """Portainer handler configuration.
+
+    Proxies Docker operations through the Portainer REST API, which
+    routes requests to a specific environment (endpoint) via
+    ``/api/endpoints/{endpoint_id}/docker/...``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://localhost:9443"
+    api_key: str = ""
+    endpoint_id: Annotated[int, Field(ge=1)] = 1
+    verify_ssl: bool = False
+    verify_timeout: Annotated[int, Field(ge=1)] = 30
+    verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
+
+
+class UnifiHandlerConfig(BaseModel):
+    """UniFi Network handler configuration.
+
+    Executes actions against the UniFi controller: restart devices,
+    block/unblock clients, gather device context.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://192.168.1.1"
+    username: str = ""
+    password: str = ""
+    site: str = "default"
+    verify_ssl: bool = False
+    is_udm: bool = True
+    timeout: int = 10
+    verify_timeout: Annotated[int, Field(ge=1)] = 30
+    verify_poll_interval: Annotated[float, Field(gt=0.0)] = 2.0
+
+
+class CloudflareHandlerConfig(BaseModel):
+    """Cloudflare handler configuration.
+
+    Executes actions against the Cloudflare API: purge cache,
+    block/unblock IPs via firewall rules, gather zone context.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    api_token: str = ""
+    zone_id: str = ""
+    account_id: str = ""
+    timeout: int = 30
+
+
 class HandlersConfig(BaseModel):
     """All handler configurations."""
 
@@ -365,7 +670,12 @@ class HandlersConfig(BaseModel):
 
     homeassistant: HaHandlerConfig = Field(default_factory=HaHandlerConfig)
     docker: DockerHandlerConfig = Field(default_factory=DockerHandlerConfig)
+    portainer: PortainerHandlerConfig = Field(default_factory=PortainerHandlerConfig)
     proxmox: ProxmoxHandlerConfig = Field(default_factory=ProxmoxHandlerConfig)
+    unifi: UnifiHandlerConfig = Field(default_factory=UnifiHandlerConfig)
+    cloudflare: CloudflareHandlerConfig = Field(
+        default_factory=CloudflareHandlerConfig,
+    )
 
 
 # -- Guardrails -------------------------------------------------------------
@@ -468,6 +778,17 @@ class WebhookNotificationConfig(BaseModel):
     urls: list[str] = Field(default_factory=list)
 
 
+class TelegramNotificationConfig(BaseModel):
+    """Telegram bot notification channel configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    bot_token: str = ""
+    chat_id: str = ""
+    parse_mode: str = "HTML"
+
+
 class NotificationsConfig(BaseModel):
     """All notification channel configurations."""
 
@@ -476,6 +797,7 @@ class NotificationsConfig(BaseModel):
     mqtt: MqttNotificationConfig = Field(default_factory=MqttNotificationConfig)
     email: EmailNotificationConfig = Field(default_factory=EmailNotificationConfig)
     webhook: WebhookNotificationConfig = Field(default_factory=WebhookNotificationConfig)
+    telegram: TelegramNotificationConfig = Field(default_factory=TelegramNotificationConfig)
 
 
 # -- Top-level config -------------------------------------------------------
@@ -492,6 +814,7 @@ class OasisAgentConfig(BaseModel):
 
     agent: AgentConfig = Field(default_factory=AgentConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    scanner: ScannerConfig = Field(default_factory=ScannerConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     handlers: HandlersConfig = Field(default_factory=HandlersConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)

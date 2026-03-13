@@ -1,0 +1,54 @@
+fixes:
+  - id: uptime-kuma-monitor-down
+    match:
+      system: uptime_kuma
+      event_type: monitor_down
+    diagnosis: "Uptime Kuma reports monitor is down — service may be unreachable"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Monitor down detected by Uptime Kuma. Checklist:
+          1. Verify the target service is running
+          2. Check network connectivity to the monitored endpoint
+          3. Review Uptime Kuma dashboard for error details
+          4. Check if DNS resolution is working for the target
+    risk_tier: escalate
+
+  - id: uptime-kuma-monitor-slow
+    match:
+      system: uptime_kuma
+      event_type: monitor_slow
+    diagnosis: "Uptime Kuma reports high response time — service may be degraded"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Slow response detected by Uptime Kuma. Consider:
+          1. Check service resource usage (CPU, memory, disk I/O)
+          2. Review recent deployments or config changes
+          3. Check for upstream dependency issues
+          4. Monitor for sustained degradation vs transient spike
+    risk_tier: recommend
+
+  - id: uptime-kuma-cert-expiring
+    match:
+      system: uptime_kuma
+      event_type: certificate_expiry
+    diagnosis: "Uptime Kuma reports TLS certificate nearing expiry"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Certificate expiring soon (reported by Uptime Kuma). Actions:
+          1. Check if auto-renewal (e.g., Certbot, ACME) is configured
+          2. Verify renewal cron/timer is running
+          3. Check for renewal errors in certbot logs
+          4. Manually trigger renewal if needed
+    risk_tier: recommend

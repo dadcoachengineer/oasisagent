@@ -1,0 +1,45 @@
+{% extends "base_minimal.html" %}
+{% block title %}Set Up Two-Factor Authentication — OasisAgent{% endblock %}
+{% block content %}
+<div class="bg-white rounded-lg shadow-md p-8" x-data="{ step: 'scan' }">
+    <div class="text-center mb-6">
+        <h1 class="text-xl font-bold text-gray-900">Set Up Two-Factor Authentication</h1>
+        <p class="text-sm text-gray-500 mt-1">
+            {% if mandatory %}Required for {{ role }} accounts{% else %}Optional security enhancement{% endif %}
+        </p>
+    </div>
+
+    {% if error %}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- Step 1: Scan QR code -->
+    <div x-show="step === 'scan'">
+        <div class="flex justify-center mb-4">
+            <img src="{{ qr_data_url }}" alt="TOTP QR Code" class="w-48 h-48">
+        </div>
+        <div class="mb-4 p-3 bg-gray-50 rounded border">
+            <p class="text-xs text-gray-500 text-center mb-1">Or enter this key manually:</p>
+            <p class="text-sm font-mono text-center select-all break-all">{{ totp_secret }}</p>
+        </div>
+        <form method="post" action="{{ confirm_url }}" class="space-y-4">
+            <input type="hidden" name="totp_secret" value="{{ totp_secret }}">
+            <div>
+                <label for="totp_code" class="block text-sm font-medium text-gray-700">
+                    Enter the 6-digit code from your authenticator
+                </label>
+                <input type="text" id="totp_code" name="totp_code" required
+                       autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}"
+                       maxlength="6"
+                       class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center text-lg tracking-widest">
+            </div>
+            <button type="submit"
+                    class="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 font-medium">
+                Verify and Enable 2FA
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

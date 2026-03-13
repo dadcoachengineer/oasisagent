@@ -1,0 +1,5 @@
+{# HTMX partial: returned after toggle to swap the entire row #}
+<tr id="row-{{ row.id }}" class="hover:bg-gray-50"
+    hx-target="#row-{{ row.id }}" hx-swap="outerHTML">
+    {% include "connectors/_row_cells.html" %}
+</tr>

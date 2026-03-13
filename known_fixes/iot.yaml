@@ -1,0 +1,235 @@
+# Known fixes for IoT service failures.
+# Covers Zigbee2MQTT, Frigate, ESPresense, Valetudo, WLED, and ESPHome.
+# Evaluated by the T0 match engine — first match wins.
+# See ARCHITECTURE.md §5 for match semantics.
+#
+# Pattern: escalation ladder per service
+#   1. Bridge/coordinator failures (highest urgency — affects all devices)
+#   2. Single device/sensor failures (diagnostic checklist, notify)
+#   3. Informational events (low urgency, recommend)
+
+fixes:
+
+  # =========================================================================
+  # Zigbee2MQTT — bridge first, then individual devices
+  # =========================================================================
+
+  - id: z2m-bridge-offline
+    match:
+      system: zigbee2mqtt
+      event_type: bridge_state
+      payload_contains: "offline"
+    diagnosis: "Zigbee2MQTT bridge is offline — coordinator may be disconnected or the service crashed"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Zigbee2MQTT bridge offline. Escalation steps:
+          1. Check if the Zigbee2MQTT container/add-on is running
+          2. Verify the Zigbee coordinator USB stick is connected
+          3. Check dmesg for USB disconnect events
+          4. Review Zigbee2MQTT logs for startup errors
+          5. If the coordinator is confirmed connected, restart Zigbee2MQTT
+          6. If USB issues persist, try a different USB port or extension cable
+    risk_tier: escalate
+
+  - id: z2m-device-offline
+    match:
+      system: zigbee2mqtt
+      event_type: device_availability
+      payload_contains: "offline"
+      min_duration: 300
+    diagnosis: "Zigbee device offline for >5 min — likely device-level issue, not coordinator"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Zigbee device offline. Diagnostic checklist:
+          1. Check device battery level (if battery-powered)
+          2. Verify device is within Zigbee mesh range
+          3. Check if the device needs re-pairing
+          4. Look for interference from WiFi on overlapping channels (2.4 GHz)
+          5. If multiple devices drop, check coordinator health instead
+          6. Try power-cycling the device
+    risk_tier: recommend
+
+  # =========================================================================
+  # Frigate NVR — service health, then camera-level
+  # =========================================================================
+
+  - id: frigate-service-offline
+    match:
+      system: frigate
+      event_type: service_availability
+      payload_contains: "offline"
+    diagnosis: "Frigate NVR service is offline — no camera processing or detection"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Frigate NVR offline. Escalation steps:
+          1. Check if the Frigate container is running
+          2. Review Frigate container logs for startup errors
+          3. Verify Coral TPU is detected (if used for detection)
+          4. Check available memory and disk space on the host
+          5. Restart the Frigate container
+    risk_tier: escalate
+
+  - id: frigate-camera-fps-zero
+    match:
+      system: frigate
+      event_type: stats
+      payload_contains: "\"camera_fps\":0"
+    diagnosis: "Camera FPS dropped to 0 — stream disconnected or camera offline"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Camera FPS is 0. Diagnostic checklist:
+          1. Verify the camera is powered on and connected to the network
+          2. Test the RTSP stream URL directly (e.g., with VLC)
+          3. Check for camera firmware updates that may have changed stream paths
+          4. Verify camera credentials haven't expired
+          5. Check network bandwidth — multiple HD streams can saturate links
+          6. Review Frigate logs for stream connection errors
+    risk_tier: recommend
+
+  - id: frigate-detector-overload
+    match:
+      system: frigate
+      event_type: stats
+      payload_contains: "skipped_fps"
+    diagnosis: "Frigate detection is overloaded — skipping frames, may miss events"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Detection pipeline overloaded. Diagnostic checklist:
+          1. Check Coral TPU utilization and temperature
+          2. Reduce detection resolution or FPS in Frigate config
+          3. Limit motion detection zones to reduce processing load
+          4. Consider adding a second Coral TPU for load sharing
+          5. Check CPU usage — software detection is much slower than TPU
+    risk_tier: recommend
+
+  # =========================================================================
+  # WLED — device health
+  # =========================================================================
+
+  - id: wled-low-heap
+    match:
+      system: wled
+      event_type: device_status
+      payload_contains: "freeheap"
+    diagnosis: "WLED device has low free heap memory — may become unstable or crash"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          WLED low heap memory. Diagnostic checklist:
+          1. Reduce the number of active effects and segments
+          2. Disable unused features (Alexa, Blynk, Hue sync)
+          3. Reduce LED count if using long strips
+          4. Update to the latest WLED firmware
+          5. If persistent, the device may need a reboot
+    risk_tier: recommend
+
+  - id: wled-wifi-weak
+    match:
+      system: wled
+      event_type: device_status
+      payload_contains: "signal"
+    diagnosis: "WLED device has weak WiFi signal — may cause intermittent connectivity"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          WLED weak WiFi signal. Diagnostic checklist:
+          1. Check RSSI value — below -75 dBm is poor
+          2. Move the device closer to a WiFi access point
+          3. Add a WiFi repeater or mesh node near the device
+          4. Check for channel congestion with a WiFi analyzer
+          5. Consider using a device with an external antenna
+    risk_tier: recommend
+
+  # =========================================================================
+  # Valetudo — robot vacuum
+  # =========================================================================
+
+  - id: valetudo-error-state
+    match:
+      system: valetudo
+      event_type: vacuum_status
+      payload_contains: "error"
+    diagnosis: "Robot vacuum entered error state — stuck, lifted, or hardware fault"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Robot vacuum error. Diagnostic checklist:
+          1. Check the robot for physical obstructions (wheels, brushes, cliff sensors)
+          2. Verify the robot is not stuck on a threshold or cable
+          3. Clean sensors (cliff, bumper, LiDAR if applicable)
+          4. Check the dustbin — a full bin can trigger errors on some models
+          5. Restart the robot via the physical button
+          6. If error persists, check Valetudo logs for specific error codes
+    risk_tier: recommend
+
+  - id: valetudo-consumable-expired
+    match:
+      system: valetudo
+      event_type: vacuum_event
+      payload_contains: "consumable"
+    diagnosis: "Robot vacuum consumable is depleted — filter, brush, or mop needs replacement"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Consumable replacement needed. Actions:
+          1. Check which consumable is depleted (filter, main brush, side brush, mop)
+          2. Replace the consumable
+          3. Reset the consumable counter in Valetudo after replacement
+    risk_tier: recommend
+
+  # =========================================================================
+  # ESPHome / ESPresense — device health
+  # =========================================================================
+
+  - id: espresense-node-offline
+    match:
+      system: espresense
+      event_type: room_status
+      payload_contains: "offline"
+    diagnosis: "ESPresense node offline — room presence tracking unavailable for this room"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          ESPresense node offline. Diagnostic checklist:
+          1. Check if the ESP32 device has power
+          2. Verify WiFi connectivity — check router client list
+          3. Check for OTA update failures that may have bricked the firmware
+          4. Try power-cycling the device
+          5. If multiple nodes are offline, check the MQTT broker
+          6. Flash firmware via USB if the device won't reconnect
+    risk_tier: recommend

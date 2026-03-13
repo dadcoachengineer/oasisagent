@@ -534,12 +534,13 @@ class TestErrorIsolation:
 
 
 class TestSignalHandling:
-    async def test_shutdown_sets_flag(self) -> None:
+    async def test_stop_sets_flag(self) -> None:
         orchestrator = _setup_orchestrator()
+        _mock_components(orchestrator)
 
         assert orchestrator._shutting_down is False
 
-        await orchestrator.shutdown()
+        await orchestrator.stop()
 
         assert orchestrator._shutting_down is True
 
@@ -574,7 +575,7 @@ class TestMainLoop:
         # Schedule shutdown after a short delay
         async def delayed_shutdown() -> None:
             await asyncio.sleep(0.1)
-            await orchestrator.shutdown()
+            orchestrator._shutting_down = True
 
         # Start components
         await orchestrator._start_components()

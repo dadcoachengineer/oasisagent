@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — OasisAgent{% endblock %}
+{% block content %}
+<div class="mb-6 flex items-center justify-between">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">{{ title }}</h1>
+        <p class="text-sm text-gray-500">{{ rows | length }} configured</p>
+    </div>
+    {% if current_user.role == "admin" %}
+    <a href="/ui/{{ table }}/new"
+       class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+        Add New
+    </a>
+    {% endif %}
+</div>
+
+{% if rows %}
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Health</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                {% if current_user.role == "admin" %}
+                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200">
+            {% for row in rows %}
+            <tr id="row-{{ row.id }}" class="hover:bg-gray-50"
+                hx-target="#row-{{ row.id }}" hx-swap="outerHTML">
+                {% include "connectors/_row_cells.html" %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div hx-get="/ui/{{ table }}/health"
+         hx-trigger="load, every {{ health_poll_interval|default(5) }}s [document.visibilityState === 'visible']"
+         hx-swap="none"
+         style="display:none"></div>
+</div>
+{% else %}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+    <p class="text-gray-500 mb-4">No {{ title | lower }} configured yet.</p>
+    {% if current_user.role == "admin" %}
+    <a href="/ui/{{ table }}/new"
+       class="inline-block bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+        Get Started
+    </a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

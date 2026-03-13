@@ -1,8 +1,8 @@
 # OasisAgent — Architecture Specification
 
 > **Version**: 0.3.0
-> **Status**: Phase 2 complete (v0.2.0)
-> **Last updated**: March 9, 2026
+> **Status**: Phase 2 complete (v0.2.7). Phase 3 planned.
+> **Last updated**: March 11, 2026
 
 This document defines the architecture for OasisAgent, an autonomous infrastructure operations agent for home lab environments. It serves as the implementation contract — all code should conform to these designs.
 
@@ -1461,47 +1461,147 @@ agent:
 ## 17. Phase 3 — Production Operations
 
 Phase 3 transforms OasisAgent from an operator tool into a production home
-lab platform with proper authentication, a web interface, rich messaging
-integrations, and advanced autonomous capabilities.
+lab platform with a web admin UI as the primary configuration surface,
+40+ service integrations, rich messaging channels, and advanced autonomous
+capabilities.
 
-### Priority Order
+See `docs/research/PHASE3-PLAN.md` for the comprehensive plan with API
+research, integration catalog, and implementation details.
 
-1. Web admin UI (authentication, RBAC, approval dashboard)
-2. Messaging integrations (Telegram, Slack, WhatsApp)
-3. Proxmox handler
-4. Preventive scanning
-5. Learning loop (T2 → T0 promotion)
-6. Multi-instance coordination
-7. Plugin system
+### Key Architectural Decisions
+
+- **UI-first config**: Web UI is the primary config surface. Bootstrap with
+  4 env vars → runtime config in SQLite (Fernet-encrypted secrets) → known
+  fixes as YAML content files. See §17.0.
+- **Single process**: FastAPI serves web UI + webhook receiver + REST API on
+  one port. No separate webhook process.
+- **WhatsApp dropped**: See ADR-001 in §17.4.
+
+### Milestone Plan
+
+| Version | Content | Tracking |
+|---------|---------|----------|
+| v0.3.0 | Foundation: config backend (SQLite + Fernet), FastAPI scaffold, webhook receiver, HTTP poller, Proxmox handler, Docker handler, MQTT expansion | Issues #47–#55 |
+| v0.3.1 | Web Admin UI: HTMX + Jinja2, auth, setup wizard, dashboard, connectors, approval queue | Issue #56 |
+| v0.3.2 | Messaging: InteractiveNotificationChannel ABC, Telegram, Slack, Discord | Issues #57–#60 |
+| v0.3.3 | Networking: UniFi, Cloudflare, Servarr (Radarr + Sonarr) | Issues #61–#63 |
+| v0.3.4 | Preventive scanning: certs, disk, backups, health sweeps | Issue #64 |
+| v0.3.5 | Learning loop: T2→T0 candidate generation + promotion | Issue #65 |
+| v0.3.6 | Plugins, multi-instance coordination, Tier 3 integrations | Issues #66–#68 |
+| v1.0.0 | Full test pass, documentation, migration guide | Epic #70 |
 
 ### Phase 3 Checklist
 
+- [ ] Config backend: SQLite schema + Fernet encryption + connector CRUD API (§17.0)
+- [ ] Config import/export CLI commands (§17.0)
+- [ ] First-run setup wizard API (§17.0)
+- [ ] FastAPI application scaffold — single process (§17.1)
+- [ ] Webhook receiver ingestion adapter (§17.1a)
+- [ ] HTTP polling ingestion adapter with JMESPath (§17.1b)
+- [ ] Proxmox VE handler (§17.5)
+- [ ] Docker/Portainer handler
+- [ ] MQTT topic expansion (Zigbee2MQTT, Frigate, ESPresence, Valetudo)
 - [ ] Web admin UI with auth + RBAC (§17.1)
 - [ ] Telegram notification + approval channel (§17.2)
 - [ ] Slack notification + approval channel (§17.3)
-- [ ] WhatsApp notification channel (§17.4)
-- [ ] Proxmox handler (§17.5)
+- [ ] Discord webhook notification channel
+- [ ] UniFi, Cloudflare, Servarr integrations
 - [ ] Preventive scanning (§17.6)
 - [ ] Learning loop (§17.7)
 - [ ] Multi-instance coordination (§17.8)
 - [ ] Plugin system (§17.9)
+- [ ] Tier 3 integrations (Stalwart, EMQX, Synology, N8N, Nextcloud, Ollama)
 - [ ] Phase 3 test pass + documentation update
 - [ ] Tag v1.0.0
 
 ---
 
+### 17.0 Configuration Architecture — UI-First
+
+**What**: The web UI is the primary configuration surface for OasisAgent.
+Operators never need to edit YAML or manage dozens of env vars to configure
+integrations. This follows the pattern established by Home Assistant, Grafana,
+Portainer, and Uptime Kuma.
+
+**Three-layer config model**:
+
+| Layer | What | Where | Managed By |
+|-------|------|-------|------------|
+| Bootstrap | Port, data dir, secret key, log level | 4 env vars | `docker-compose.yml` |
+| Runtime config | All integrations, core services (MQTT, InfluxDB), notification channels, scanner settings | SQLite (secrets encrypted with Fernet) | Web UI + REST API |
+| Content | Known fixes YAML, prompt templates | Files on disk (mountable volume) | Git / file mount |
+
+**Bootstrap env vars (exhaustive list)**:
+
+- `OASIS_PORT` — Listen port (default: `8080`)
+- `OASIS_DATA_DIR` — SQLite + data directory (default: `/data`)
+- `OASIS_SECRET_KEY` — Fernet key for encrypting secrets at rest
+  (auto-generated on first run if missing)
+- `OASIS_LOG_LEVEL` — Logging level (default: `info`)
+
+Everything else — MQTT broker URL, InfluxDB endpoint, HA token, Proxmox
+connections, Telegram bot token, polling intervals — is configured through
+the web UI and stored in SQLite.
+
+**Secrets handling**: All tokens, passwords, and API keys entered through the
+UI are encrypted at rest using Fernet symmetric encryption (from the
+`cryptography` package, already a transitive dependency). The
+`OASIS_SECRET_KEY` env var is the sole root of trust. Secrets are decrypted
+in-memory only when an adapter or handler needs them.
+
+**First-run experience**: Container starts → setup wizard:
+
+1. Admin account creation (username, password, optional TOTP)
+2. Core services (MQTT broker URL + credentials, InfluxDB endpoint + token)
+3. "Add your first integration" → connectors page
+
+**config.yaml becomes optional import/export**:
+
+```bash
+# Seed database for automated/headless deployment
+oasisagent config import seed.yaml
+
+# Export current config for backup or migration
+oasisagent config export > backup.yaml
+
+# Normal operation — no config file needed
+docker run -e OASIS_SECRET_KEY=... -v oasis_data:/data oasisagent
+```
+
+**SQLite migration strategy**: A `schema_version` integer is stored in the
+database. On startup, the agent checks the version and runs sequential
+migration scripts from `migrations/` (`001_initial.py`,
+`002_add_scanner_config.py`, etc.). No Alembic — simple numbered scripts.
+Config export embeds the schema version for import compatibility checks.
+
+**Files**: `oasisagent/db/` package (schema.py, crypto.py, migrations/)
+
+---
+
 ### 17.1 Web Admin UI
 
-**What**: A web-based dashboard for managing OasisAgent. This replaces the
-Phase 2 CLI as the primary operator interface (CLI remains available).
+**What**: A web-based dashboard and configuration interface for OasisAgent.
+This is the primary operator interface (CLI remains available for automation).
 
 **Stack**:
 
 - Backend: FastAPI (async, integrates naturally with existing aiohttp/asyncio)
-- Frontend: Lightweight SPA (React or Svelte — decide at implementation time)
-- Auth: Local user database with bcrypt password hashing
+- Frontend: HTMX + Jinja2 templates (no JavaScript build toolchain)
+- Client-side interactivity: Alpine.js (3KB)
+- Styling: Tailwind CSS via CDN
+- Auth: Local user database (SQLite) with bcrypt password hashing
 - 2FA: TOTP (Google Authenticator, Authy, etc.) via `pyotp`
 - Sessions: JWT with httpOnly cookies, configurable expiry
+- Real-time: Server-Sent Events (SSE) via `sse-starlette`
+
+**Single process**: The web UI, REST API, and webhook receiver run as a
+single FastAPI application, single uvicorn process, single port. Route
+mount points:
+
+- `/` — Admin UI (HTMX pages)
+- `/api/v1/` — REST API (consumed by UI + external automation)
+- `/ingest/webhook/{source}` — Webhook receiver for push-based ingestion
+- `/healthz` — Health check
 
 **RBAC roles**:
 
@@ -1513,36 +1613,24 @@ Phase 2 CLI as the primary operator interface (CLI remains available).
 
 **Pages**:
 
-- **Dashboard**: Real-time event feed, queue depth, circuit breaker status,
-  recent actions (pulls from InfluxDB audit bucket + live MQTT subscription)
+- **Setup Wizard**: First-run flow — admin account → core services → first
+  integration
+- **Dashboard**: Real-time event feed (SSE), queue depth, circuit breaker
+  status, recent actions
+- **Connectors**: Add/configure/test integrations (frontend to connector
+  CRUD API in §17.0)
 - **Approval Queue**: List pending actions, approve/reject with optional
   comment, bulk operations
 - **Event Explorer**: Search and filter historical events, drill into
   decision chain and audit trail
-- **Configuration**: View current config (read-only in v1, editable in
-  future), known fixes browser
+- **Known Fixes Browser**: Read-only view of YAML fix registry
 - **Users**: User management (admin only), role assignment, 2FA enrollment
 
 **API**: REST endpoints under `/api/v1/` — the UI consumes these, but they're
 also available for external automation. Authenticated with the same JWT tokens.
 
-**Config addition**:
-
-```yaml
-ui:
-  enabled: false                    # Disabled by default
-  host: 0.0.0.0
-  port: 8080
-  secret_key: ${UI_SECRET_KEY}      # JWT signing key
-  session_timeout_minutes: 480      # 8 hours
-  require_2fa: true                 # Enforce TOTP for all users
-  initial_admin:
-    username: admin
-    password: ${UI_ADMIN_PASSWORD}  # Set on first run, force change on login
-```
-
-**Files**: `oasisagent/ui/` package (app.py, auth.py, routes/, templates/),
-`tests/test_ui/`
+**Files**: `oasisagent/ui/` package (app.py, auth.py, routes/, templates/,
+static/), `tests/test_ui/`
 
 ---
 
@@ -1615,36 +1703,31 @@ notifications:
 
 ---
 
-### 17.4 WhatsApp Integration
+### 17.4 WhatsApp Integration — DROPPED (ADR-001)
 
-**What**: Outbound notifications via WhatsApp Business API (Cloud API).
-WhatsApp is notification-only (no interactive approval) due to API
-limitations on structured responses.
+**Status**: Dropped from Phase 3 scope.
 
-**Capabilities**:
+**Decision**: WhatsApp Business API integration is not viable for a
+self-hosted home lab tool.
 
-- Send templated messages to configured phone numbers
-- Severity-based routing (only CRITICAL/ERROR to WhatsApp to avoid noise)
-- Message templates must be pre-approved in Meta Business Manager
+**Rationale**:
 
-**Library**: `aiohttp` POST to WhatsApp Cloud API endpoints.
+- Meta has effectively killed the self-hosted (on-premise) WhatsApp Business
+  API. Cloud API is the only viable path.
+- Message templates must go through Meta's approval process (24–48 hours per
+  template). Every notification format change requires re-approval.
+- The 24-hour messaging window means you can only send template messages to
+  users who haven't messaged the bot recently. For a monitoring system that
+  sends unsolicited alerts, this is a significant constraint.
+- Per-message cost ($0.005–0.05 depending on region and message type) adds
+  ongoing OpEx for a home lab tool.
+- No interactive components for approvals — would be notification-only.
+- Telegram and Slack fully cover the interactive approval use case with zero
+  per-message cost.
 
-**Config addition**:
-
-```yaml
-notifications:
-  whatsapp:
-    enabled: false
-    api_url: https://graph.facebook.com/v18.0
-    phone_number_id: ${WHATSAPP_PHONE_ID}
-    access_token: ${WHATSAPP_ACCESS_TOKEN}
-    recipients:
-      - "+1234567890"
-    min_severity: error                # WhatsApp reserved for high-severity
-    template_name: oasis_alert         # Pre-approved message template
-```
-
-**Files**: `oasisagent/notifications/whatsapp.py`, `tests/test_notification_whatsapp.py`
+**Alternative**: If an operator needs WhatsApp alerts, the existing webhook
+notification channel can POST to WhatsApp Cloud API with minimal custom code.
+This doesn't require first-class integration.
 
 ---
 
@@ -1737,6 +1820,16 @@ T2 DiagnosisResult → handler executes → verify succeeds
 Candidates are NOT automatically loaded into the registry. The operator
 reviews, edits if needed, and moves to `known_fixes/` to activate.
 
+**Versioning**: File-based with `_meta.status` (candidate/promoted/rejected).
+The agent never shells out to git (ADR-004). External git hooks can track the
+`candidates/` directory if desired.
+
+**Promotion thresholds** (configurable via web UI):
+
+- `min_confidence`: 0.8 — T2 confidence threshold
+- `min_verified_count`: 3 — must succeed N times before becoming a candidate
+- `auto_promote`: false — human review always required in v1
+
 **Candidate format**: Same YAML schema as known_fixes, with additional
 metadata:
 
@@ -1746,6 +1839,7 @@ _meta:
   generated_by: t2_learning_loop
   source_event_id: "abc-123"
   confidence: 0.87
+  verified_count: 3
   generated_at: "2026-03-15T14:30:00Z"
   status: candidate                   # candidate → promoted → rejected
 

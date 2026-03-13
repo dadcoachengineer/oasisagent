@@ -44,6 +44,10 @@ class Handler(ABC):
     async def get_context(self, event: Event) -> dict[str, Any]:
         """Gather system-specific context for diagnosis (called by T1/T2)."""
 
+    async def healthy(self) -> bool:
+        """Check handler health. Default returns True — override for real checks."""
+        return True
+
     async def start(self) -> None:  # noqa: B027 — intentional non-abstract default
         """Initialize handler resources (e.g., HTTP sessions).
 

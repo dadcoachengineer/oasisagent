@@ -19,7 +19,8 @@ LABEL org.opencontainers.image.description="Autonomous infrastructure operations
 LABEL org.opencontainers.image.licenses="MIT"
 
 RUN groupadd --gid 1000 oasis && \
-    useradd --uid 1000 --gid oasis --create-home oasis
+    useradd --uid 1000 --gid oasis --create-home oasis && \
+    mkdir -p /data && chown oasis:oasis /data
 
 COPY --from=builder /install /usr/local
 COPY --from=builder /build/known_fixes /app/known_fixes

@@ -16,11 +16,12 @@ import signal
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from oasisagent.approval.listener import ApprovalListener
 from oasisagent.approval.pending import PendingAction, PendingQueue
 from oasisagent.audit.influxdb import AuditWriter
+from oasisagent.db.stats_store import StatsStore
 from oasisagent.engine.circuit_breaker import CircuitBreaker
 from oasisagent.engine.correlator import EventCorrelator
 from oasisagent.engine.decision import (
@@ -36,6 +37,7 @@ from oasisagent.handlers.docker import DockerHandler
 from oasisagent.handlers.homeassistant import HomeAssistantHandler
 from oasisagent.ingestion.ha_log_poller import HaLogPollerAdapter
 from oasisagent.ingestion.ha_websocket import HaWebSocketAdapter
+from oasisagent.ingestion.http_poller import HttpPollerAdapter
 from oasisagent.ingestion.mqtt import MqttAdapter
 from oasisagent.llm.client import LLMClient
 from oasisagent.llm.reasoning import ReasoningService
@@ -48,6 +50,7 @@ from oasisagent.metrics import observe_processing_time as _observe_processing_ti
 from oasisagent.models import (
     ActionResult,
     ActionStatus,
+    Event,
     Notification,
     RecommendedAction,
     RiskTier,
@@ -58,6 +61,8 @@ from oasisagent.notifications.mqtt import MqttNotificationChannel
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
+
+    import aiosqlite
 
     from oasisagent.config import OasisAgentConfig
     from oasisagent.handlers.base import Handler
@@ -74,8 +79,13 @@ class Orchestrator:
     signal is received or ``shutdown()`` is called externally.
     """
 
-    def __init__(self, config: OasisAgentConfig) -> None:
+    def __init__(
+        self,
+        config: OasisAgentConfig,
+        db: aiosqlite.Connection | None = None,
+    ) -> None:
         self._config = config
+        self._db = db
         self._shutting_down = False
 
         # Components — populated by _build_components()
@@ -98,27 +108,76 @@ class Orchestrator:
         self._metrics_server: MetricsServer | None = None
         self._adapters: list[IngestAdapter] = []
         self._adapter_tasks: list[asyncio.Task[None]] = []
+        self._stats_store: StatsStore | None = None
 
-        # Stats
+        # Stats — seeded from SQLite on startup when db is available
         self._events_processed: int = 0
         self._actions_taken: int = 0
         self._errors: int = 0
 
+    def enqueue(self, event: Event) -> None:
+        """Submit an event for processing.
+
+        Raises:
+            RuntimeError: If the queue is not initialized.
+            asyncio.QueueFull: If the queue is at capacity.
+        """
+        if self._queue is None:
+            msg = "Orchestrator not started"
+            raise RuntimeError(msg)
+        self._queue.put_nowait(event)
+
+    def _get_stats(self) -> tuple[int, int, int]:
+        """Return current counter values for the stats flush loop."""
+        return self._events_processed, self._actions_taken, self._errors
+
     async def run(self) -> None:
         """Start all components and enter the main event loop.
 
-        Blocks until shutdown signal. This is the application entry point.
+        Blocks until shutdown signal. This is the standalone entry point
+        (``oasisagent run``). Under FastAPI, use ``start()`` / ``run_loop()``
+        / ``stop()`` instead — the lifespan manages the lifecycle.
+        """
+        await self.start()
+        self._install_signal_handlers()
+        try:
+            await self.run_loop()
+        finally:
+            await self.stop()
+
+    async def start(self) -> None:
+        """Build and start all components without entering the event loop.
+
+        Call this from FastAPI lifespan startup. Does NOT install signal
+        handlers — under uvicorn, signal handling belongs to uvicorn.
         """
         self._build_components()
+
+        # Upgrade pending queue and load stats from SQLite when available.
+        # Must happen after _build_components and before _start_components.
+        if self._db is not None:
+            self._pending_queue = await PendingQueue.from_db(self._db)
+
+            self._stats_store = await StatsStore.from_db(self._db)
+            vals = self._stats_store.values
+            self._events_processed = vals["events_processed"]
+            self._actions_taken = vals["actions_taken"]
+            self._errors = vals["errors"]
+            self._stats_store.start(self._get_stats)
+
         await self._start_components()
-        self._install_signal_handlers()
+        logger.info("OasisAgent started")
 
-        logger.info("OasisAgent started — entering event loop")
+    async def run_loop(self) -> None:
+        """Run the main event processing loop.
 
+        Blocks until ``_shutting_down`` is set or the task is cancelled.
+        Call this as a background task from FastAPI lifespan.
+        """
+        logger.info("Entering event loop")
         try:
             while not self._shutting_down:
-                # Sweep expired pending actions each tick
-                self._expire_stale_actions()
+                await self._expire_stale_actions()
 
                 try:
                     assert self._queue is not None
@@ -131,15 +190,115 @@ class Orchestrator:
                 self._queue.task_done()
         except asyncio.CancelledError:
             pass
-        finally:
-            await self._shutdown()
 
-    async def shutdown(self) -> None:
-        """Graceful shutdown. Called by signal handler or externally."""
+    # Maps handler name() → DB service type for health lookups.
+    _HANDLER_NAME_TO_TYPE: ClassVar[dict[str, str]] = {
+        "homeassistant": "ha_handler",
+        "docker": "docker_handler",
+        "portainer": "portainer_handler",
+        "proxmox": "proxmox_handler",
+        "unifi": "unifi_handler",
+        "cloudflare": "cloudflare_handler",
+    }
+
+    # Maps notification channel name() → DB notification type.
+    # Only mqtt differs (name()="mqtt", DB type="mqtt_notification").
+    # email, webhook, telegram name() values match their DB types directly
+    # and fall through via the .get() fallback.
+    _CHANNEL_NAME_TO_TYPE: ClassVar[dict[str, str]] = {
+        "mqtt": "mqtt_notification",
+    }
+
+    # Internal service types that lack a real health check.
+    _INTERNAL_SERVICE_TYPES: tuple[str, ...] = (
+        "llm_triage", "llm_reasoning", "llm_options",
+        "influxdb", "guardrails", "circuit_breaker",
+    )
+
+    async def get_component_health(self) -> dict[str, dict[str, str]]:
+        """Return live health status for all active components.
+
+        Returns ``{"connectors": {...}, "services": {...}, "notifications": {...}}``
+        where each value maps a DB type string to a health status string:
+        ``"connected"``, ``"disconnected"``, ``"error"``, or ``"unknown"``.
+        """
+        # TODO: Use asyncio.gather with per-component timeout so one slow
+        # handler (e.g., Proxmox behind VPN) doesn't block the entire response.
+        connectors: dict[str, str] = {}
+        services: dict[str, str] = {}
+        notifications: dict[str, str] = {}
+        scanner_detail = ""
+
+        # --- Connectors: non-scanner adapters ---
+        scanner_results: list[tuple[str, str]] = []
+        for adapter in self._adapters:
+            status = await self._check_health(adapter)
+            if adapter.name.startswith("scanner."):
+                scanner_results.append((adapter.name, status))
+            else:
+                connectors[adapter.name] = status
+
+        # --- Services: handlers ---
+        for handler in self._handlers.values():
+            db_type = self._HANDLER_NAME_TO_TYPE.get(
+                handler.name(), handler.name(),
+            )
+            services[db_type] = await self._check_health(handler)
+
+        # --- Services: internal components → "unknown" ---
+        for svc_type in self._INTERNAL_SERVICE_TYPES:
+            services[svc_type] = "unknown"
+
+        # --- Services: scanner aggregate (D2) ---
+        if scanner_results:
+            statuses = [s for _, s in scanner_results]
+            healthy_count = statuses.count("connected")
+            total = len(statuses)
+            scanner_detail = f"{healthy_count}/{total} scanners healthy"
+            if any(s == "error" for s in statuses):
+                services["scanner"] = "error"
+            elif any(s == "disconnected" for s in statuses):
+                services["scanner"] = "disconnected"
+            else:
+                services["scanner"] = "connected"
+
+        # --- Notifications ---
+        if self._dispatcher is not None:
+            for channel in self._dispatcher.channels:
+                db_type = self._CHANNEL_NAME_TO_TYPE.get(
+                    channel.name(), channel.name(),
+                )
+                notifications[db_type] = await self._check_health(channel)
+
+        result: dict[str, dict[str, str]] = {
+            "connectors": connectors,
+            "services": services,
+            "notifications": notifications,
+        }
+        if scanner_detail:
+            result["scanner_detail"] = {"detail": scanner_detail}
+        return result
+
+    @staticmethod
+    async def _check_health(component: object) -> str:
+        """Call healthy() on a component and map the result to a status string."""
+        try:
+            is_healthy = await component.healthy()  # type: ignore[union-attr]
+            return "connected" if is_healthy else "disconnected"
+        except Exception:
+            return "error"
+
+    async def stop(self) -> None:
+        """Signal shutdown and tear down all components.
+
+        Safe to call multiple times. Called by FastAPI lifespan shutdown
+        or by ``run()`` in standalone mode.
+        """
         if self._shutting_down:
             return
         self._shutting_down = True
         logger.info("Shutdown requested")
+        await self._shutdown()
 
     # -------------------------------------------------------------------
     # Component construction
@@ -200,6 +359,16 @@ class Orchestrator:
         if cfg.handlers.docker.enabled:
             docker = DockerHandler(cfg.handlers.docker)
             self._handlers[docker.name()] = docker
+        if cfg.handlers.portainer.enabled:
+            from oasisagent.handlers.portainer import PortainerHandler
+
+            portainer = PortainerHandler(cfg.handlers.portainer)
+            self._handlers[portainer.name()] = portainer
+        if cfg.handlers.proxmox.enabled:
+            from oasisagent.handlers.proxmox import ProxmoxHandler
+
+            proxmox = ProxmoxHandler(cfg.handlers.proxmox)
+            self._handlers[proxmox.name()] = proxmox
 
         # 10. Audit writer
         self._audit = AuditWriter(cfg.audit)
@@ -219,6 +388,8 @@ class Orchestrator:
         self._dispatcher = NotificationDispatcher(channels)
 
         # 12. Pending action queue (for RECOMMEND-tier actions)
+        # Initialized as in-memory here; upgraded to persistent in start()
+        # when a database connection is available.
         self._pending_queue = PendingQueue()
 
         # 13. Approval listener (subscribes to MQTT approve/reject topics)
@@ -233,13 +404,58 @@ class Orchestrator:
         if cfg.ingestion.mqtt.enabled:
             self._adapters.append(MqttAdapter(cfg.ingestion.mqtt, self._queue))
         if cfg.ingestion.ha_websocket.enabled:
+            logger.info("Starting HA WebSocket adapter: url=%s", cfg.ingestion.ha_websocket.url)
             self._adapters.append(
                 HaWebSocketAdapter(cfg.ingestion.ha_websocket, self._queue)
             )
         if cfg.ingestion.ha_log_poller.enabled:
+            logger.info("Starting HA Log Poller adapter: url=%s", cfg.ingestion.ha_log_poller.url)
             self._adapters.append(
                 HaLogPollerAdapter(cfg.ingestion.ha_log_poller, self._queue)
             )
+        if cfg.ingestion.http_poller_targets:
+            self._adapters.append(
+                HttpPollerAdapter(cfg.ingestion.http_poller_targets, self._queue)
+            )
+        if cfg.ingestion.uptime_kuma.enabled:
+            from oasisagent.ingestion.uptime_kuma import UptimeKumaAdapter
+
+            self._adapters.append(
+                UptimeKumaAdapter(cfg.ingestion.uptime_kuma, self._queue)
+            )
+
+        # 14b. Scanner adapters (each scanner is its own adapter)
+        if cfg.scanner.enabled:
+            if cfg.scanner.certificate_expiry.enabled:
+                from oasisagent.scanner.cert_expiry import CertExpiryScannerAdapter
+
+                interval = cfg.scanner.certificate_expiry.interval or cfg.scanner.interval
+                self._adapters.append(CertExpiryScannerAdapter(
+                    cfg.scanner.certificate_expiry, self._queue, interval,
+                ))
+            if cfg.scanner.disk_space.enabled:
+                from oasisagent.scanner.disk_space import DiskSpaceScannerAdapter
+
+                interval = cfg.scanner.disk_space.interval or cfg.scanner.interval
+                self._adapters.append(DiskSpaceScannerAdapter(
+                    cfg.scanner.disk_space, self._queue, interval,
+                ))
+            if cfg.scanner.ha_health.enabled and cfg.handlers.homeassistant.enabled:
+                from oasisagent.scanner.ha_health import HaHealthScannerAdapter
+
+                interval = cfg.scanner.ha_health.interval or cfg.scanner.interval
+                self._adapters.append(HaHealthScannerAdapter(
+                    cfg.scanner.ha_health, self._queue, interval,
+                    ha_config=cfg.handlers.homeassistant,
+                ))
+            if cfg.scanner.docker_health.enabled and cfg.handlers.docker.enabled:
+                from oasisagent.scanner.docker_health import DockerHealthScannerAdapter
+
+                interval = cfg.scanner.docker_health.interval or cfg.scanner.interval
+                self._adapters.append(DockerHealthScannerAdapter(
+                    cfg.scanner.docker_health, self._queue, interval,
+                    docker_config=cfg.handlers.docker,
+                ))
 
         # 15. Metrics server (Prometheus)
         if cfg.agent.metrics_port > 0:
@@ -338,7 +554,7 @@ class Orchestrator:
         # 2. Expire all remaining pending actions
         if self._pending_queue is not None:
             for pending in self._pending_queue.list_pending():
-                self._pending_queue.reject(pending.id)
+                await self._pending_queue.reject(pending.id)
             logger.info("Rejected all remaining pending actions on shutdown")
 
         # 3. Stop ingestion adapters
@@ -396,7 +612,19 @@ class Orchestrator:
             except Exception:
                 logger.exception("Error stopping audit writer")
 
-        # 8. Log final stats
+        # 9. Final stats flush + stop
+        if self._stats_store is not None:
+            try:
+                await self._stats_store.flush(
+                    events_processed=self._events_processed,
+                    actions_taken=self._actions_taken,
+                    errors=self._errors,
+                )
+                await self._stats_store.stop()
+            except Exception:
+                logger.exception("Error flushing stats on shutdown")
+
+        # 10. Log final stats
         logger.info(
             "OasisAgent stopped — events=%d, actions=%d, errors=%d",
             self._events_processed,
@@ -668,11 +896,15 @@ class Orchestrator:
         for action in result.recommended_actions:
             # RECOMMEND-tier actions go to the pending queue
             if action.risk_tier == RiskTier.RECOMMEND:
-                pending = self._pending_queue.add(
+                pending = await self._pending_queue.add(
                     event_id=event.id,
                     action=action,
                     diagnosis=result.diagnosis,
                     timeout_minutes=self._config.guardrails.approval_timeout_minutes,
+                    entity_id=event.entity_id,
+                    severity=event.severity.value,
+                    source=event.source,
+                    system=event.system,
                 )
                 await self._publish_pending_action(pending)
                 await self._publish_pending_list()
@@ -748,11 +980,15 @@ class Orchestrator:
             risk_tier=fix.risk_tier,
         )
 
-        pending = self._pending_queue.add(
+        pending = await self._pending_queue.add(
             event_id=event.id,
             action=action,
             diagnosis=result.diagnosis,
             timeout_minutes=self._config.guardrails.approval_timeout_minutes,
+            entity_id=event.entity_id,
+            severity=event.severity.value,
+            source=event.source,
+            system=event.system,
         )
         await self._publish_pending_action(pending)
         await self._publish_pending_list()
@@ -780,7 +1016,7 @@ class Orchestrator:
         assert self._pending_queue is not None
         assert self._circuit_breaker is not None
 
-        pending = self._pending_queue.approve(action_id)
+        pending = await self._pending_queue.approve(action_id)
         if pending is None:
             return
 
@@ -842,7 +1078,7 @@ class Orchestrator:
         """Record a rejected pending action."""
         assert self._pending_queue is not None
 
-        pending = self._pending_queue.reject(action_id)
+        pending = await self._pending_queue.reject(action_id)
         if pending is None:
             return
 
@@ -852,12 +1088,12 @@ class Orchestrator:
 
         logger.info("Action %s rejected by operator", action_id)
 
-    def _expire_stale_actions(self) -> None:
+    async def _expire_stale_actions(self) -> None:
         """Sweep for expired pending actions and notify."""
         if self._pending_queue is None:
             return
 
-        expired = self._pending_queue.expire_stale()
+        expired = await self._pending_queue.expire_stale()
         for pending in expired:
             self._schedule_task(self._notify_expired(pending))
 

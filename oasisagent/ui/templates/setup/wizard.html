@@ -1,0 +1,130 @@
+{% extends "base_minimal.html" %}
+{% block title %}Setup Wizard — OasisAgent{% endblock %}
+{% block content %}
+<div class="bg-white rounded-lg shadow-md p-8 max-w-lg mx-auto" x-data="{ step: {{ step | default(1) }} }">
+    <div class="text-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-900">Welcome to OasisAgent</h1>
+        <p class="text-sm text-gray-500 mt-1">Let's get your agent configured</p>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="flex items-center justify-center mb-8 space-x-2">
+        <template x-for="s in [1, 2, 3]" :key="s">
+            <div class="flex items-center">
+                <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium"
+                     :class="step >= s ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'"
+                     x-text="s"></div>
+                <div x-show="s < 3" class="w-12 h-0.5"
+                     :class="step > s ? 'bg-blue-600' : 'bg-gray-200'"></div>
+            </div>
+        </template>
+    </div>
+
+    {% if error %}
+    <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <!-- Step 1: Create admin account -->
+    <div x-show="step === 1">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Create Admin Account</h2>
+        <form method="post" action="/ui/setup/admin" id="admin-form" class="space-y-4">
+            <div>
+                <label for="username" class="block text-sm font-medium text-gray-700">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="username"
+                       class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div>
+                <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                <input type="password" id="password" name="password" required minlength="8"
+                       autocomplete="new-password"
+                       class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <p class="mt-1 text-xs text-gray-500">Minimum 8 characters</p>
+            </div>
+            <div>
+                <label for="password_confirm" class="block text-sm font-medium text-gray-700">Confirm Password</label>
+                <input type="password" id="password_confirm" name="password_confirm" required minlength="8"
+                       autocomplete="new-password"
+                       class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <button type="submit"
+                    class="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 font-medium">
+                Create Admin Account
+            </button>
+        </form>
+    </div>
+
+    <!-- Step 2: TOTP enrollment (shown after admin creation redirect) -->
+    <!-- TOTP enrollment happens on a separate page after admin creation -->
+
+    <!-- Step 3: Core services (shown after TOTP enrollment) -->
+    <div x-show="step === 3" x-cloak>
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Configure Core Services</h2>
+        <p class="text-sm text-gray-500 mb-4">Optional — you can configure these later through the UI.</p>
+        <form method="post" action="/ui/setup/core-services" class="space-y-4">
+            <fieldset class="border rounded p-4">
+                <legend class="text-sm font-medium text-gray-700 px-2">MQTT Broker</legend>
+                <div class="space-y-3">
+                    <div>
+                        <label for="mqtt_broker" class="block text-xs text-gray-600">Broker URL</label>
+                        <input type="text" id="mqtt_broker" name="mqtt_broker" value="mqtt://localhost:1883"
+                               class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label for="mqtt_username" class="block text-xs text-gray-600">Username</label>
+                            <input type="text" id="mqtt_username" name="mqtt_username"
+                                   class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border text-sm">
+                        </div>
+                        <div>
+                            <label for="mqtt_password" class="block text-xs text-gray-600">Password</label>
+                            <input type="password" id="mqtt_password" name="mqtt_password"
+                                   class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border text-sm">
+                        </div>
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset class="border rounded p-4">
+                <legend class="text-sm font-medium text-gray-700 px-2">InfluxDB</legend>
+                <div class="space-y-3">
+                    <div>
+                        <label for="influxdb_url" class="block text-xs text-gray-600">URL</label>
+                        <input type="text" id="influxdb_url" name="influxdb_url" value="http://localhost:8086"
+                               class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border text-sm">
+                    </div>
+                    <div>
+                        <label for="influxdb_token" class="block text-xs text-gray-600">Token</label>
+                        <input type="password" id="influxdb_token" name="influxdb_token"
+                               class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label for="influxdb_org" class="block text-xs text-gray-600">Organization</label>
+                            <input type="text" id="influxdb_org" name="influxdb_org" value="myorg"
+                                   class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border text-sm">
+                        </div>
+                        <div>
+                            <label for="influxdb_bucket" class="block text-xs text-gray-600">Bucket</label>
+                            <input type="text" id="influxdb_bucket" name="influxdb_bucket" value="oasisagent"
+                                   class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border text-sm">
+                        </div>
+                    </div>
+                </div>
+            </fieldset>
+
+            <div class="flex gap-3">
+                <a href="/ui/setup/complete"
+                   class="flex-1 text-center py-2 px-4 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium text-sm">
+                    Skip for now
+                </a>
+                <button type="submit"
+                        class="flex-1 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 font-medium text-sm">
+                    Save & Continue
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

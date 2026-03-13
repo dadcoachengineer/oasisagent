@@ -50,6 +50,70 @@ ingestion:
         event_type: auto
         severity: auto
 
+      # --- Zigbee2MQTT ---
+      - pattern: "zigbee2mqtt/bridge/state"
+        system: zigbee2mqtt
+        event_type: bridge_state
+        severity: auto
+      - pattern: "zigbee2mqtt/bridge/logging"
+        system: zigbee2mqtt
+        event_type: bridge_log
+        severity: auto
+      - pattern: "zigbee2mqtt/+/availability"
+        system: zigbee2mqtt
+        event_type: device_availability
+        severity: auto
+
+      # --- Frigate NVR ---
+      - pattern: "frigate/available"
+        system: frigate
+        event_type: service_availability
+        severity: auto
+      - pattern: "frigate/events"
+        system: frigate
+        event_type: detection_event
+        severity: info
+      - pattern: "frigate/stats"
+        system: frigate
+        event_type: stats
+        severity: auto
+
+      # --- ESPresense ---
+      - pattern: "espresense/rooms/+/status"
+        system: espresense
+        event_type: room_status
+        severity: auto
+      - pattern: "espresense/rooms/+/telemetry"
+        system: espresense
+        event_type: room_telemetry
+        severity: info
+
+      # --- Valetudo (robot vacuums) ---
+      - pattern: "valetudo/+/StatusStateAttribute/status"
+        system: valetudo
+        event_type: vacuum_status
+        severity: auto
+      - pattern: "valetudo/+/BatteryStateAttribute/level"
+        system: valetudo
+        event_type: vacuum_battery
+        severity: info
+      - pattern: "valetudo/+/events"
+        system: valetudo
+        event_type: vacuum_event
+        severity: auto
+
+      # --- WLED ---
+      - pattern: "wled/+/status"
+        system: wled
+        event_type: device_status
+        severity: auto
+
+      # --- BirdNET ---
+      - pattern: "birdnet/sightings"
+        system: birdnet
+        event_type: sighting
+        severity: info
+
   # Home Assistant WebSocket — real-time state changes and automation failures
   ha_websocket:
     enabled: true
@@ -123,6 +187,59 @@ ingestion:
         event_type: state_unavailable
         severity: warning
 
+  # Uptime Kuma — external monitoring via Prometheus /metrics endpoint
+  uptime_kuma:
+    enabled: false
+    url: http://uptime-kuma:3001       # Uptime Kuma base URL
+    api_key: "${UPTIME_KUMA_API_KEY:-}"  # API key (v1.21+, used as Basic auth password)
+    poll_interval: 60                  # Seconds between polls
+    timeout: 10
+    response_time_threshold_ms: 5000   # Emit WARNING when response time exceeds this
+    cert_warning_days: 30              # Certificate expiry warning threshold
+    cert_critical_days: 7              # Certificate expiry critical threshold
+
+# -----------------------------------------------------------------------------
+# Scanner — Preventive scanning framework
+# Proactive health checks that catch issues before they cause outages.
+# Each scanner runs as its own ingestion adapter on a configurable interval.
+# -----------------------------------------------------------------------------
+scanner:
+  enabled: false
+  interval: 900                    # Global default interval (seconds); per-check overrides below
+
+  # TLS certificate expiry — checks cert validity from OasisAgent's vantage point
+  certificate_expiry:
+    enabled: false
+    endpoints:                     # hostname or hostname:port
+      - example.com
+      - nas.example.com:8443
+    warning_days: 30               # Emit WARNING when cert expires within N days
+    critical_days: 7               # Emit ERROR when cert expires within N days
+    interval: 900                  # Check interval (seconds); min 60
+
+  # Disk space usage — monitors local filesystem paths
+  disk_space:
+    enabled: false
+    paths:
+      - /
+      - /var/lib/docker
+    warning_threshold_pct: 85      # Emit WARNING when usage >= N%
+    critical_threshold_pct: 95     # Emit ERROR when usage >= N%
+    interval: 900                  # Check interval (seconds); min 60
+
+  # Home Assistant integration health — detects integrations in error state
+  # Requires handlers.homeassistant to be enabled (uses its URL and token)
+  ha_health:
+    enabled: false
+    interval: 900                  # Check interval (seconds); min 60
+
+  # Docker container health — detects unhealthy, exited, or restarting containers
+  # Requires handlers.docker to be enabled (uses its socket/URL)
+  docker_health:
+    enabled: false
+    ignore_containers: []          # Container names to skip (e.g., ["temp-builder"])
+    interval: 900                  # Check interval (seconds); min 60
+
 # -----------------------------------------------------------------------------
 # LLM — Language model configuration
 # OasisAgent is provider-agnostic. Any OpenAI-compatible endpoint works:
@@ -188,6 +305,14 @@ handlers:
     # tls_key: /certs/key.pem
     verify_timeout: 30           # Seconds to wait after restart to verify container running
     verify_poll_interval: 2.0    # Seconds between verification polls
+
+  # Portainer — Docker management via Portainer REST API (Phase 3)
+  portainer:
+    enabled: false
+    url: https://localhost:9443
+    api_key: ${PORTAINER_API_KEY:-}
+    endpoint_id: 1               # Portainer environment ID
+    verify_ssl: false
 
   # Proxmox — VM/CT management (Phase 3)
   proxmox:

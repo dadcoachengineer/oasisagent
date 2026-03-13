@@ -1,9 +1,11 @@
 """Entry point for running OasisAgent as a module: python -m oasisagent.
 
 Sub-command routing:
-    oasisagent              Start the agent (default)
-    oasisagent run          Start the agent (explicit)
+    oasisagent              Start the web server (default)
+    oasisagent serve        Start the web server (explicit)
+    oasisagent run          Start the agent without web server (legacy)
     oasisagent queue ...    Approval queue CLI commands
+    oasisagent config ...   Config import/export CLI commands
 """
 
 from __future__ import annotations
@@ -15,7 +17,11 @@ import os
 import sys
 from pathlib import Path
 
+import uvicorn
+
+from oasisagent.bootstrap import configure_logging, load_file_secrets
 from oasisagent.cli import build_queue_parser, run_queue_command
+from oasisagent.cli_config import build_config_parser, run_config_command
 from oasisagent.config import ConfigError, load_config
 from oasisagent.orchestrator import Orchestrator
 
@@ -28,37 +34,36 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("run", help="Start the agent (default)")
+    subparsers.add_parser("serve", help="Start the web server (default)")
+    subparsers.add_parser("run", help="Start the agent without web server (legacy)")
     build_queue_parser(subparsers)
+    build_config_parser(subparsers)
 
     return parser
 
 
-def _load_file_secrets() -> None:
-    """Load Docker/Swarm secrets from *_FILE env vars.
+def _serve() -> None:
+    """Start the FastAPI web server with uvicorn."""
+    port = int(os.environ.get("OASIS_PORT", "8080"))
+    log_level = os.environ.get("OASIS_LOG_LEVEL", "info").lower()
 
-    For each env var ending in ``_FILE``, read the file contents and
-    set the corresponding env var (without the ``_FILE`` suffix).
-    This is the standard Docker secret pattern: the orchestrator mounts
-    secrets as files at ``/run/secrets/``, and services read them via
-    ``*_FILE`` environment variables.
-    """
-    for key in list(os.environ):
-        if key.endswith("_FILE"):
-            file_path = os.environ[key]
-            target_key = key.removesuffix("_FILE")
-            try:
-                value = Path(file_path).read_text().strip()
-                os.environ[target_key] = value
-            except OSError:
-                logging.getLogger(__name__).debug(
-                    "Skipped %s: file %s not found", key, file_path,
-                )
+    uvicorn.run(
+        "oasisagent.web.app:create_app",
+        factory=True,
+        host="0.0.0.0",
+        port=port,
+        log_level=log_level,
+    )
 
 
 def _run_agent() -> None:
-    """Load config, create orchestrator, and run the event loop."""
-    _load_file_secrets()
+    """Load config, create orchestrator, and run the event loop (legacy).
+
+    This is the standalone mode without a web server. Kept for
+    debugging and backward compatibility. Production deployments
+    should use ``oasisagent serve`` (the default).
+    """
+    load_file_secrets()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -72,14 +77,7 @@ def _run_agent() -> None:
         logging.getLogger(__name__).error("Configuration error: %s", exc)
         sys.exit(1)
 
-    log_level = config.agent.log_level.value.upper()
-    logging.getLogger().setLevel(log_level)
-
-    # Suppress noisy LiteLLM logs ("Provider List: ..." on every call)
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
-    import litellm
-    litellm.suppress_debug_info = True
+    configure_logging(config)
 
     orchestrator = Orchestrator(config)
     asyncio.run(orchestrator.run())
@@ -92,9 +90,13 @@ def main() -> None:
 
     if args.command == "queue":
         run_queue_command(args)
-    else:
-        # Default: run agent (no command or "run" command)
+    elif args.command == "config":
+        run_config_command(args)
+    elif args.command == "run":
         _run_agent()
+    else:
+        # Default: serve (no command or "serve" command)
+        _serve()
 
 
 if __name__ == "__main__":
