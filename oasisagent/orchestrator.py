@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from oasisagent.approval.listener import ApprovalListener
 from oasisagent.approval.pending import PendingAction, PendingQueue
 from oasisagent.audit.influxdb import AuditWriter
+from oasisagent.db.stats_store import StatsStore
 from oasisagent.engine.circuit_breaker import CircuitBreaker
 from oasisagent.engine.correlator import EventCorrelator
 from oasisagent.engine.decision import (
@@ -107,8 +108,9 @@ class Orchestrator:
         self._metrics_server: MetricsServer | None = None
         self._adapters: list[IngestAdapter] = []
         self._adapter_tasks: list[asyncio.Task[None]] = []
+        self._stats_store: StatsStore | None = None
 
-        # Stats
+        # Stats — seeded from SQLite on startup when db is available
         self._events_processed: int = 0
         self._actions_taken: int = 0
         self._errors: int = 0
@@ -124,6 +126,10 @@ class Orchestrator:
             msg = "Orchestrator not started"
             raise RuntimeError(msg)
         self._queue.put_nowait(event)
+
+    def _get_stats(self) -> tuple[int, int, int]:
+        """Return current counter values for the stats flush loop."""
+        return self._events_processed, self._actions_taken, self._errors
 
     async def run(self) -> None:
         """Start all components and enter the main event loop.
@@ -147,11 +153,17 @@ class Orchestrator:
         """
         self._build_components()
 
-        # Upgrade pending queue to persistent mode if database is available.
-        # Must happen after _build_components (which creates the placeholder)
-        # and before _start_components (which may need the queue).
+        # Upgrade pending queue and load stats from SQLite when available.
+        # Must happen after _build_components and before _start_components.
         if self._db is not None:
             self._pending_queue = await PendingQueue.from_db(self._db)
+
+            self._stats_store = await StatsStore.from_db(self._db)
+            vals = self._stats_store.values
+            self._events_processed = vals["events_processed"]
+            self._actions_taken = vals["actions_taken"]
+            self._errors = vals["errors"]
+            self._stats_store.start(self._get_stats)
 
         await self._start_components()
         logger.info("OasisAgent started")
@@ -503,7 +515,19 @@ class Orchestrator:
             except Exception:
                 logger.exception("Error stopping audit writer")
 
-        # 8. Log final stats
+        # 9. Final stats flush + stop
+        if self._stats_store is not None:
+            try:
+                await self._stats_store.flush(
+                    events_processed=self._events_processed,
+                    actions_taken=self._actions_taken,
+                    errors=self._errors,
+                )
+                await self._stats_store.stop()
+            except Exception:
+                logger.exception("Error flushing stats on shutdown")
+
+        # 10. Log final stats
         logger.info(
             "OasisAgent stopped — events=%d, actions=%d, errors=%d",
             self._events_processed,
