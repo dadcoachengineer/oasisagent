@@ -239,9 +239,21 @@ class CloudflareAdapter(IngestAdapter):
         self._last_waf_poll = now
 
         since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
-        path = f"/zones/{self._config.zone_id}/security/events"
-        data = await self._client.get(path, since=since_str)
-        events: list[dict[str, Any]] = data.get("result", [])
+        query = (
+            "{ viewer { zones(filter: {zoneTag: \""
+            + self._config.zone_id
+            + "\"}) { firewallEventsAdaptive("
+            + "filter: {datetime_gt: \""
+            + since_str
+            + "\"} limit: 100 orderBy: [datetime_DESC]"
+            + ") { action clientIP ruleId datetime } } } }"
+        )
+
+        resp = await self._client.graphql(query)
+        zones = resp.get("data", {}).get("viewer", {}).get("zones", [])
+        events: list[dict[str, Any]] = (
+            zones[0].get("firewallEventsAdaptive", []) if zones else []
+        )
 
         if not events:
             return
