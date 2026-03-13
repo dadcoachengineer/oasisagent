@@ -147,6 +147,7 @@ class RecommendedAction(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     risk_tier: RiskTier
     reasoning: str = ""
+    target_entity_id: str | None = None
 
 
 class DiagnosisResult(BaseModel):

@@ -373,6 +373,58 @@ class TestDiagnosisResult:
 
 
 # ---------------------------------------------------------------------------
+# RecommendedAction.target_entity_id
+# ---------------------------------------------------------------------------
+
+
+class TestRecommendedActionTargetEntityId:
+    """Tests for the optional target_entity_id field on RecommendedAction."""
+
+    def test_target_entity_id_defaults_none(self) -> None:
+        action = RecommendedAction(
+            description="test",
+            handler="test",
+            operation="test",
+            risk_tier=RiskTier.AUTO_FIX,
+        )
+        assert action.target_entity_id is None
+
+    def test_target_entity_id_set_explicitly(self) -> None:
+        action = RecommendedAction(
+            description="Restart lock integration",
+            handler="homeassistant",
+            operation="restart_integration",
+            risk_tier=RiskTier.AUTO_FIX,
+            target_entity_id="lock.front_door",
+        )
+        assert action.target_entity_id == "lock.front_door"
+
+    def test_target_entity_id_roundtrip(self) -> None:
+        action = RecommendedAction(
+            description="Restart",
+            handler="homeassistant",
+            operation="restart_integration",
+            risk_tier=RiskTier.RECOMMEND,
+            target_entity_id="switch.heater",
+        )
+        data = action.model_dump()
+        restored = RecommendedAction.model_validate(data)
+        assert restored.target_entity_id == "switch.heater"
+
+    def test_target_entity_id_none_roundtrip(self) -> None:
+        action = RecommendedAction(
+            description="test",
+            handler="test",
+            operation="test",
+            risk_tier=RiskTier.AUTO_FIX,
+        )
+        data = action.model_dump()
+        assert data["target_entity_id"] is None
+        restored = RecommendedAction.model_validate(data)
+        assert restored.target_entity_id is None
+
+
+# ---------------------------------------------------------------------------
 # ActionResult and VerifyResult
 # ---------------------------------------------------------------------------
 

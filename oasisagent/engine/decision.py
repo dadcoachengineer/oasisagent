@@ -311,8 +311,9 @@ class DecisionEngine:
         blocked_count = 0
 
         for action in diagnosis.recommended_actions:
+            check_entity = action.target_entity_id or event.entity_id
             guardrail_result = self._guardrails.check(
-                entity_id=event.entity_id,
+                entity_id=check_entity,
                 risk_tier=action.risk_tier,
             )
 

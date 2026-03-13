@@ -41,12 +41,17 @@ Respond with a JSON object matching this exact schema:
       "operation": "restart_integration",
       "params": {"integration": "zwave_js"},
       "risk_tier": "auto_fix",
-      "reasoning": "Why this action is appropriate"
+      "reasoning": "Why this action is appropriate",
+      "target_entity_id": "sensor.zwave_js_status"
     }
   ],
   "risk_assessment": "Overall risk analysis of the situation",
   "additional_context": "Any other relevant observations"
 }
+
+Include "target_entity_id" when the action targets a different entity than the \
+event source (e.g., event on sensor.temperature but action targets \
+switch.heater). Omit it or set to null when the action targets the event entity.
 
 Valid risk_tier values (choose carefully):
 - "auto_fix" — Safe to execute automatically (e.g., restart a non-critical integration)

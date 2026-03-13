@@ -138,7 +138,8 @@ class HomeAssistantHandler(Handler):
             return VerifyResult(verified=True, message="No verification needed")
 
         self._ensure_started()
-        return await self._verify_entity_recovery(event.entity_id)
+        entity = action.target_entity_id or event.entity_id
+        return await self._verify_entity_recovery(entity)
 
     async def get_context(self, event: Event) -> dict[str, Any]:
         """Gather HA-specific context for diagnosis."""
@@ -168,10 +169,11 @@ class HomeAssistantHandler(Handler):
     ) -> ActionResult:
         """Notify — no system changes. Returns the diagnosis message."""
         message = action.params.get("message", action.description)
-        logger.info("HA notify: %s (entity=%s)", message, event.entity_id)
+        entity = action.target_entity_id or event.entity_id
+        logger.info("HA notify: %s (entity=%s)", message, entity)
         return ActionResult(
             status=ActionStatus.SUCCESS,
-            details={"message": message, "entity_id": event.entity_id},
+            details={"message": message, "entity_id": entity},
         )
 
     async def _op_restart_integration(
@@ -245,7 +247,10 @@ class HomeAssistantHandler(Handler):
         self, event: Event, action: RecommendedAction
     ) -> ActionResult:
         """Read entity state — context-gathering, not a mutating action."""
-        entity_id = action.params.get("entity_id", event.entity_id)
+        entity_id = (
+            action.target_entity_id
+            or action.params.get("entity_id", event.entity_id)
+        )
         state = await self._get_state(entity_id)
         return ActionResult(
             status=ActionStatus.SUCCESS,

@@ -937,6 +937,8 @@ class Orchestrator:
         assert self._pending_queue is not None
 
         for action in result.recommended_actions:
+            cb_entity = action.target_entity_id or event.entity_id
+
             # RECOMMEND-tier actions go to the pending queue
             if action.risk_tier == RiskTier.RECOMMEND:
                 pending = await self._pending_queue.add(
@@ -944,7 +946,7 @@ class Orchestrator:
                     action=action,
                     diagnosis=result.diagnosis,
                     timeout_minutes=self._config.guardrails.approval_timeout_minutes,
-                    entity_id=event.entity_id,
+                    entity_id=cb_entity,
                     severity=event.severity.value,
                     source=event.source,
                     system=event.system,
@@ -966,7 +968,7 @@ class Orchestrator:
                 action_result = await handler.execute(event, action)
                 success = action_result.status == ActionStatus.SUCCESS
                 self._circuit_breaker.record_attempt(
-                    event.entity_id, success=success
+                    cb_entity, success=success
                 )
                 if success:
                     self._actions_taken += 1
@@ -993,7 +995,7 @@ class Orchestrator:
                     event.id,
                 )
                 self._circuit_breaker.record_attempt(
-                    event.entity_id, success=False
+                    cb_entity, success=False
                 )
 
     # -------------------------------------------------------------------
