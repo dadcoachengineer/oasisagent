@@ -141,7 +141,7 @@ class TestNotificationHealth:
         self, auth_client: AsyncClient,
     ) -> None:
         await auth_client.post(
-            "/ui/notifications",
+            "/ui/channels",
             data={
                 "type": "mqtt_notification",
                 "name": "mqtt-notify",
@@ -155,6 +155,6 @@ class TestNotificationHealth:
             "notifications": {"mqtt_notification": "error"},
         })
 
-        resp = await auth_client.get("/ui/notifications/health")
+        resp = await auth_client.get("/ui/channels/health")
         assert resp.status_code == 200
         assert "Error" in resp.text

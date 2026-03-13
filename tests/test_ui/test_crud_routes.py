@@ -244,19 +244,19 @@ class TestServiceRoutes:
 
 class TestNotificationRoutes:
     async def test_list_page_renders(self, auth_client: AsyncClient) -> None:
-        resp = await auth_client.get("/ui/notifications")
+        resp = await auth_client.get("/ui/channels")
         assert resp.status_code == 200
         assert "Notification" in resp.text
 
     async def test_type_picker_renders(self, auth_client: AsyncClient) -> None:
-        resp = await auth_client.get("/ui/notifications/new")
+        resp = await auth_client.get("/ui/channels/new")
         assert resp.status_code == 200
 
     async def test_create_notification(
         self, auth_client: AsyncClient,
     ) -> None:
         resp = await auth_client.post(
-            "/ui/notifications",
+            "/ui/channels",
             data={
                 "type": "telegram",
                 "name": "test-telegram",
@@ -265,7 +265,7 @@ class TestNotificationRoutes:
             },
         )
         assert resp.status_code == 204
-        assert resp.headers.get("hx-redirect") == "/ui/notifications"
+        assert resp.headers.get("hx-redirect") == "/ui/channels"
 
 
 # ---------------------------------------------------------------------------

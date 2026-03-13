@@ -111,6 +111,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.db = db
     app.state.start_time = time.monotonic()
     app.state.jwt_signing_key = derive_jwt_key(secret_key)
+    app.state.notification_store = orchestrator._notification_store
+    app.state.web_notification_channel = orchestrator._web_channel
 
     # Audit reader for Event Explorer UI (None if InfluxDB disabled)
     audit_reader: AuditReader | None = None

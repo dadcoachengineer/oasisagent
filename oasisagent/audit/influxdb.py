@@ -23,7 +23,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from influxdb_client import Point
 from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
@@ -216,6 +216,32 @@ class AuditWriter:
         )
 
         await self._write(point, measurement="oasis_verify")
+
+    async def write_notification_archive(
+        self, row: dict[str, Any],
+    ) -> None:
+        """Archive a pruned notification to InfluxDB (oasis_notification_archive)."""
+        if not self._enabled:
+            return
+        self._ensure_started()
+
+        # Use the original notification timestamp so InfluxDB time series
+        # reflects when the notification was created, not when it was pruned.
+        ts_str = row.get("timestamp")
+        ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(UTC)
+
+        point = (
+            Point("oasis_notification_archive")
+            .tag("severity", row.get("severity", "info"))
+            .tag("event_id", row.get("event_id", ""))
+            .field("title", row.get("title", ""))
+            .field("message", row.get("message", ""))
+            .field("metadata", json.dumps(row.get("metadata", {}), default=str))
+            .field("notification_id", row.get("id", ""))
+            .time(ts)
+        )
+
+        await self._write(point, measurement="oasis_notification_archive")
 
     # -------------------------------------------------------------------
     # Internal helpers

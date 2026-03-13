@@ -13,6 +13,7 @@ from httpx import ASGITransport, AsyncClient
 
 from oasisagent.db.config_store import ConfigStore
 from oasisagent.db.crypto import CryptoProvider
+from oasisagent.db.notification_store import NotificationStore
 from oasisagent.db.schema import run_migrations
 from oasisagent.ui.auth import (
     create_access_token,
@@ -62,6 +63,8 @@ async def setup_client(db_and_store: tuple[Any, ConfigStore, str, str]) -> Async
     app.state.start_time = time.monotonic()
     app.state.orchestrator = _mock_orchestrator()
     app.state.jwt_signing_key = jwt_key
+    app.state.notification_store = NotificationStore(db)
+    app.state.web_notification_channel = None
 
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -93,6 +96,8 @@ async def auth_client(
     app.state.start_time = time.monotonic()
     app.state.orchestrator = _mock_orchestrator()
     app.state.jwt_signing_key = jwt_key
+    app.state.notification_store = NotificationStore(db)
+    app.state.web_notification_channel = None
 
     # Create JWT token for admin
     jwt_token, csrf_token = create_access_token(
@@ -138,6 +143,8 @@ async def viewer_client(
     app.state.start_time = time.monotonic()
     app.state.orchestrator = _mock_orchestrator()
     app.state.jwt_signing_key = jwt_key
+    app.state.notification_store = NotificationStore(db)
+    app.state.web_notification_channel = None
 
     jwt_token, csrf_token = create_access_token(
         user_id=2, username="viewer", role="viewer",

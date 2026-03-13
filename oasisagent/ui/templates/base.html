@@ -47,6 +47,7 @@
                 ("/ui/dashboard", "Dashboard", "viewer"),
                 ("/ui/connectors", "Connectors", "viewer"),
                 ("/ui/services", "Services", "viewer"),
+                ("/ui/channels", "Channels", "operator"),
                 ("/ui/notifications", "Notifications", "viewer"),
                 ("/ui/approvals", "Approvals", "operator"),
                 ("/ui/events", "Events", "viewer"),
@@ -59,7 +60,10 @@
                   (min_role == "admin" and current_user.role == "admin") %}
             <a href="{{ href }}"
                class="block px-3 py-2 rounded text-sm {% if request.url.path.startswith(href) %}bg-gray-800 text-white{% else %}hover:bg-gray-800 hover:text-white{% endif %}">
-                {{ label }}
+                {{ label }}{% if label == "Notifications" %}<span
+                    hx-get="/ui/notifications/unread-count"
+                    hx-trigger="load, every 10s"
+                    hx-swap="innerHTML"></span>{% endif %}
             </a>
             {% endif %}
             {% endfor %}

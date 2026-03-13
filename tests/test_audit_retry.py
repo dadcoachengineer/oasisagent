@@ -142,3 +142,33 @@ class TestIsRetryable:
 
     def test_generic_exception_not_retryable(self) -> None:
         assert AuditWriter._is_retryable(ValueError("oops")) is False
+
+
+class TestNotificationArchive:
+    @pytest.mark.asyncio
+    async def test_write_notification_archive(self) -> None:
+        """Archive a notification row to InfluxDB."""
+        writer, mock_api = _make_writer()
+        mock_api.write = AsyncMock(return_value=None)
+
+        row = {
+            "id": "notif-123",
+            "event_id": "evt-456",
+            "severity": "warning",
+            "title": "Test alert",
+            "message": "Something happened",
+            "metadata": {"entity_id": "sensor.test"},
+        }
+        await writer.write_notification_archive(row)
+
+        assert mock_api.write.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_write_notification_archive_disabled(self) -> None:
+        """No-op when InfluxDB is disabled."""
+        config = AuditConfig(
+            influxdb=InfluxDbConfig(enabled=False),
+        )
+        writer = AuditWriter(config)
+        # Should not raise
+        await writer.write_notification_archive({"id": "x", "severity": "info"})

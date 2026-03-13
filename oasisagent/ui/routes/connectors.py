@@ -154,6 +154,7 @@ def _build_ui_crud(
     create_method: str,
     update_method: str,
     delete_method: str,
+    health_key: str | None = None,
 ) -> None:
     """Register all CRUD UI routes for a category on the module-level router."""
 
@@ -476,7 +477,8 @@ def _build_ui_crud(
             try:
                 health = await orchestrator.get_component_health()
                 # The category key matches: connectors, services, notifications
-                health_map = health.get(url_prefix, {})
+                _key = health_key or url_prefix
+                health_map = health.get(_key, {})
                 scanner_detail = health.get("scanner_detail", {}).get("detail", "")
             except Exception:
                 pass  # All will show "not_running"
@@ -746,7 +748,7 @@ _build_ui_crud(
 )
 
 _build_ui_crud(
-    url_prefix="notifications",
+    url_prefix="channels",
     table="notification_channels",
     title="Notification Channels",
     type_registry=NOTIFICATION_TYPES,
@@ -755,4 +757,5 @@ _build_ui_crud(
     create_method="create_notification",
     update_method="update_notification",
     delete_method="delete_notification",
+    health_key="notifications",
 )
