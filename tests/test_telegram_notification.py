@@ -115,6 +115,37 @@ class TestTelegramChannelIdentity:
 
 
 # ---------------------------------------------------------------------------
+# Health check tests
+# ---------------------------------------------------------------------------
+
+
+class TestTelegramHealthy:
+    async def test_healthy_disabled(self) -> None:
+        channel = TelegramChannel(_make_config(enabled=False))
+        assert await channel.healthy() is True
+
+    async def test_healthy_no_bot(self) -> None:
+        channel = TelegramChannel(_make_config())
+        # _bot is None (not started)
+        assert await channel.healthy() is True
+
+    async def test_healthy_success(self) -> None:
+        channel, mock_bot = _make_channel_with_mock_bot()
+        mock_me = MagicMock()
+        mock_me.username = "oasis_bot"
+        mock_bot.me = AsyncMock(return_value=mock_me)
+
+        assert await channel.healthy() is True
+        mock_bot.me.assert_awaited_once()
+
+    async def test_healthy_failure(self) -> None:
+        channel, mock_bot = _make_channel_with_mock_bot()
+        mock_bot.me = AsyncMock(side_effect=Exception("Unauthorized"))
+
+        assert await channel.healthy() is False
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle tests
 # ---------------------------------------------------------------------------
 
