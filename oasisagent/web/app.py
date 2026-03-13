@@ -86,17 +86,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db = await run_migrations(data_dir / "oasisagent.db")
     store = ConfigStore(db, crypto)
 
-    # Load config: SQLite or YAML fallback for virgin databases
+    # Load config: SQLite is the single source of truth.
+    # On first run with a virgin DB, import config.yaml into SQLite
+    # so both the orchestrator and the web UI read the same data.
     if await store.is_virgin():
         yaml_path = Path("config.yaml")
         if yaml_path.exists():
-            logger.info("Virgin database — loading config from %s", yaml_path)
-            config = load_config(yaml_path)
+            logger.info("Virgin database — importing %s into SQLite", yaml_path)
+            yaml_config = load_config(yaml_path)
+            await store.import_yaml(yaml_config)
         else:
             logger.info("Virgin database, no config.yaml — using defaults")
-            config = await store.load_config()
-    else:
-        config = await store.load_config()
+    config = await store.load_config()
 
     configure_logging(config)
 

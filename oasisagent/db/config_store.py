@@ -98,6 +98,141 @@ class ConfigStore:
         return True
 
     # ------------------------------------------------------------------
+    # YAML → SQLite import (one-way door for virgin databases)
+    # ------------------------------------------------------------------
+
+    async def import_yaml(self, config: OasisAgentConfig) -> None:
+        """Seed SQLite from a parsed YAML config.
+
+        Imports all enabled connectors, services, and notification channels
+        into the database so the orchestrator and UI share a single source
+        of truth.  Only call this on a virgin database — once rows exist
+        the YAML is permanently ignored.
+        """
+        async with self.transaction():
+            # --- Agent config ---
+            agent = config.agent
+            await self._db.execute(
+                "UPDATE agent_config SET name=?, log_level=?, "
+                "event_queue_size=?, dedup_window_seconds=?, "
+                "shutdown_timeout=?, event_ttl=?, known_fixes_dir=?, "
+                "correlation_window=?, metrics_port=? WHERE id=1",
+                (
+                    agent.name, agent.log_level,
+                    agent.event_queue_size, agent.dedup_window_seconds,
+                    agent.shutdown_timeout, agent.event_ttl,
+                    agent.known_fixes_dir, agent.correlation_window,
+                    agent.metrics_port,
+                ),
+            )
+
+            # --- Connectors ---
+            connector_map: list[tuple[str, str, Any]] = [
+                ("mqtt", "mqtt", config.ingestion.mqtt),
+                ("ha_websocket", "ha-websocket", config.ingestion.ha_websocket),
+                ("ha_log_poller", "ha-log-poller", config.ingestion.ha_log_poller),
+                ("unifi", "unifi", config.ingestion.unifi),
+                ("cloudflare", "cloudflare", config.ingestion.cloudflare),
+                ("uptime_kuma", "uptime-kuma", config.ingestion.uptime_kuma),
+            ]
+            for type_name, default_name, sub_cfg in connector_map:
+                if sub_cfg.enabled:
+                    await self._create_row(
+                        "connectors", type_name, default_name,
+                        sub_cfg.model_dump(),
+                    )
+            # http_poller: multi-row
+            for i, target in enumerate(config.ingestion.http_poller_targets):
+                name = target.system or f"http-poller-{i}"
+                await self._create_row(
+                    "connectors", "http_poller", name,
+                    target.model_dump(),
+                )
+
+            # --- Core services ---
+            # LLM endpoints have no `enabled` flag — always import
+            await self._create_row(
+                "core_services", "llm_triage", "llm-triage",
+                config.llm.triage.model_dump(),
+            )
+            await self._create_row(
+                "core_services", "llm_reasoning", "llm-reasoning",
+                config.llm.reasoning.model_dump(),
+            )
+            await self._create_row(
+                "core_services", "llm_options", "llm-options",
+                config.llm.options.model_dump(),
+            )
+
+            # Handlers + audit — only import if enabled
+            service_map: list[tuple[str, str, Any]] = [
+                ("ha_handler", "ha-handler", config.handlers.homeassistant),
+                ("docker_handler", "docker-handler", config.handlers.docker),
+                ("portainer_handler", "portainer-handler", config.handlers.portainer),
+                ("proxmox_handler", "proxmox-handler", config.handlers.proxmox),
+                ("unifi_handler", "unifi-handler", config.handlers.unifi),
+                ("cloudflare_handler", "cloudflare-handler", config.handlers.cloudflare),
+                ("influxdb", "influxdb", config.audit.influxdb),
+            ]
+            for type_name, default_name, sub_cfg in service_map:
+                if sub_cfg.enabled:
+                    await self._create_row(
+                        "core_services", type_name, default_name,
+                        sub_cfg.model_dump(),
+                    )
+
+            # Guardrails + circuit breaker
+            gr = config.guardrails
+            gr_dict = gr.model_dump(exclude={"circuit_breaker"})
+            await self._create_row(
+                "core_services", "guardrails", "guardrails", gr_dict,
+            )
+            await self._create_row(
+                "core_services", "circuit_breaker", "circuit-breaker",
+                gr.circuit_breaker.model_dump(),
+            )
+
+            # Scanner (if any check is enabled)
+            sc = config.scanner
+            if any([
+                sc.certificate_expiry.enabled,
+                sc.disk_space.enabled,
+                sc.ha_health.enabled,
+                sc.docker_health.enabled,
+                sc.backup_freshness.enabled,
+            ]):
+                await self._create_row(
+                    "core_services", "scanner", "scanner",
+                    sc.model_dump(),
+                )
+
+            # --- Notifications ---
+            notif_map: list[tuple[str, str, Any]] = [
+                ("mqtt_notification", "mqtt-notify", config.notifications.mqtt),
+                ("email", "email", config.notifications.email),
+                ("webhook", "webhook", config.notifications.webhook),
+                ("telegram", "telegram", config.notifications.telegram),
+            ]
+            for type_name, default_name, sub_cfg in notif_map:
+                if sub_cfg.enabled:
+                    await self._create_row(
+                        "notification_channels", type_name, default_name,
+                        sub_cfg.model_dump(),
+                    )
+
+        imported = await self._count_imported()
+        logger.info("YAML config imported to SQLite: %s", imported)
+
+    async def _count_imported(self) -> str:
+        """Return a summary string of imported row counts."""
+        counts = []
+        for table in ("connectors", "core_services", "notification_channels"):
+            cursor = await self._db.execute(f"SELECT COUNT(*) FROM {table}")
+            row = await cursor.fetchone()
+            counts.append(f"{table}={row[0]}" if row else f"{table}=0")
+        return ", ".join(counts)
+
+    # ------------------------------------------------------------------
     # Load full config
     # ------------------------------------------------------------------
 
