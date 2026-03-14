@@ -240,12 +240,3 @@ class TautulliAdapter(IngestAdapter):
         """Build Tautulli API URL with command and API key."""
         return f"{self._config.url}/api/v2?apikey={self._config.api_key}&cmd={cmd}"
 
-    def _enqueue(self, event: Event) -> None:
-        """Enqueue an event, logging on failure."""
-        try:
-            self._queue.put_nowait(event)
-        except Exception:
-            logger.warning(
-                "Tautulli: failed to enqueue event: %s/%s",
-                event.system, event.event_type,
-            )

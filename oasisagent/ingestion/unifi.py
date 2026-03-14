@@ -766,12 +766,3 @@ class UnifiAdapter(IngestAdapter):
         """Return True if the exception represents an HTTP 404 response."""
         return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 404
 
-    def _enqueue(self, event: Event) -> None:
-        """Enqueue an event, logging on failure."""
-        try:
-            self._queue.put_nowait(event)
-        except Exception:
-            logger.warning(
-                "UniFi adapter: failed to enqueue event: %s/%s",
-                event.system, event.event_type,
-            )

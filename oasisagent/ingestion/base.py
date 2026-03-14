@@ -6,11 +6,15 @@ manages adapter lifecycle via start() and stop().
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from oasisagent.engine.queue import EventQueue
+    from oasisagent.models.event import Event
+
+logger = logging.getLogger(__name__)
 
 
 class IngestAdapter(ABC):
@@ -50,3 +54,15 @@ class IngestAdapter(ABC):
 
         Used by the agent for health checks and status reporting.
         """
+
+    def _enqueue(self, event: Event) -> None:
+        """Enqueue an event, logging on failure."""
+        try:
+            self._queue.put_nowait(event)
+        except Exception:
+            logger.warning(
+                "%s: failed to enqueue event: %s/%s",
+                self.name,
+                event.system,
+                event.event_type,
+            )

@@ -253,16 +253,3 @@ class ServarrAdapter(IngestAdapter):
         self._failed_ids = current_failed
         self._stuck_ids = current_stuck
 
-    # -----------------------------------------------------------------
-    # Helpers
-    # -----------------------------------------------------------------
-
-    def _enqueue(self, event: Event) -> None:
-        """Enqueue an event, logging on failure."""
-        try:
-            self._queue.put_nowait(event)
-        except Exception:
-            logger.warning(
-                "Servarr %s: failed to enqueue event: %s/%s",
-                self._config.app_type, event.system, event.event_type,
-            )
