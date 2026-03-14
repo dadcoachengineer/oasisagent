@@ -73,6 +73,79 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Suffixes that indicate a recovery/resolution event.  When an event_type
+# ends with one of these, suppression for the corresponding entity is reset.
+_RECOVERY_SUFFIXES: tuple[str, ...] = ("_recovered", "_reconnected", "_renewed")
+
+
+class EventSuppressionTracker:
+    """Track consecutive identical events per (entity_id, event_type).
+
+    After *threshold* consecutive identical events the tracker suppresses
+    further occurrences until the entity produces a different event_type
+    (typically a recovery event).
+
+    This is a lightweight, in-memory tracker — no persistence needed.
+    """
+
+    def __init__(self, threshold: int = 3) -> None:
+        self._threshold = threshold
+        # key → consecutive count
+        self._counts: dict[tuple[str, str], int] = {}
+
+    # -----------------------------------------------------------------
+
+    def check(self, event: Event) -> bool:
+        """Return True if the event should be suppressed (dropped).
+
+        Side-effects:
+        * Increments the counter for (entity_id, event_type).
+        * Resets *all* counters for the entity_id when a recovery event
+          or a different event_type is seen.
+        """
+        entity_id = event.entity_id
+        event_type = event.event_type
+        key = (entity_id, event_type)
+
+        # Recovery events reset suppression for the whole entity.
+        if any(event_type.endswith(s) for s in _RECOVERY_SUFFIXES):
+            self._reset_entity(entity_id)
+            return False
+
+        # Different event_type for the same entity resets previous key.
+        self._reset_entity(entity_id, keep=key)
+
+        count = self._counts.get(key, 0) + 1
+        self._counts[key] = count
+
+        if count == self._threshold:
+            logger.warning(
+                "Suppressing repeated %s events for %s (seen %d consecutive)",
+                event_type,
+                entity_id,
+                count,
+            )
+
+        return count > self._threshold
+
+    def reset(self) -> None:
+        """Clear all tracking state."""
+        self._counts.clear()
+
+    # -----------------------------------------------------------------
+    # Internal helpers
+    # -----------------------------------------------------------------
+
+    def _reset_entity(
+        self, entity_id: str, *, keep: tuple[str, str] | None = None
+    ) -> None:
+        """Remove all counters for *entity_id* except *keep*."""
+        to_remove = [
+            k for k in self._counts if k[0] == entity_id and k != keep
+        ]
+        for k in to_remove:
+            del self._counts[k]
+
 
 class Orchestrator:
     """Builds, starts, and runs all OasisAgent components.
@@ -113,6 +186,11 @@ class Orchestrator:
         self._stats_store: StatsStore | None = None
         self._notification_store: NotificationStore | None = None
         self._web_channel: WebNotificationChannel | None = None
+
+        # Repeated-event suppression (§ issue #168)
+        self._suppression = EventSuppressionTracker(
+            threshold=config.agent.max_consecutive_identical,
+        )
 
         # Stats — seeded from SQLite on startup when db is available
         self._events_processed: int = 0
@@ -810,7 +888,17 @@ class Orchestrator:
                 logger.info("Event %s expired (TTL), dropping", event.id)
                 return
 
-            # 1b. Metrics: count ingested event
+            # 1b. Repeated-event suppression — drop before any processing
+            if self._suppression.check(event):
+                logger.debug(
+                    "Event %s suppressed (repeated %s for %s)",
+                    event.id,
+                    event.event_type,
+                    event.entity_id,
+                )
+                return
+
+            # 1c. Metrics: count ingested event
             _inc_events(event.source, event.severity.value)
 
             # 2. Correlation check

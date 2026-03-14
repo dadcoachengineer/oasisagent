@@ -116,13 +116,14 @@ class ConfigStore:
                 "UPDATE agent_config SET name=?, log_level=?, "
                 "event_queue_size=?, dedup_window_seconds=?, "
                 "shutdown_timeout=?, event_ttl=?, known_fixes_dir=?, "
-                "correlation_window=?, metrics_port=? WHERE id=1",
+                "correlation_window=?, metrics_port=?, "
+                "max_consecutive_identical=? WHERE id=1",
                 (
                     agent.name, agent.log_level,
                     agent.event_queue_size, agent.dedup_window_seconds,
                     agent.shutdown_timeout, agent.event_ttl,
                     agent.known_fixes_dir, agent.correlation_window,
-                    agent.metrics_port,
+                    agent.metrics_port, agent.max_consecutive_identical,
                 ),
             )
 
@@ -281,6 +282,7 @@ class ConfigStore:
             known_fixes_dir=row["known_fixes_dir"],
             correlation_window=row["correlation_window"],
             metrics_port=row["metrics_port"],
+            max_consecutive_identical=row["max_consecutive_identical"],
         )
 
     async def update_agent_config(self, updates: dict[str, Any]) -> AgentConfig:
