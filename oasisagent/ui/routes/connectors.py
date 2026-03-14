@@ -178,7 +178,7 @@ def _build_ui_crud(
                 "rows": masked,
                 "table": url_prefix,
                 "title": title,
-                "health_poll_interval": 5,
+                "health_poll_interval": 10,
             },
         )
 
