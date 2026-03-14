@@ -307,7 +307,7 @@ class Orchestrator:
 
     # Internal service types that lack a real health check.
     _INTERNAL_SERVICE_TYPES: tuple[str, ...] = (
-        "influxdb", "guardrails", "circuit_breaker",
+        "influxdb", "guardrails", "circuit_breaker", "llm_options",
     )
 
     # Maps LLM roles to DB service types for health lookups.
@@ -517,6 +517,16 @@ class Orchestrator:
 
             proxmox = ProxmoxHandler(cfg.handlers.proxmox)
             self._handlers[proxmox.name()] = proxmox
+        if cfg.handlers.unifi.enabled:
+            from oasisagent.handlers.unifi import UnifiHandler
+
+            unifi_h = UnifiHandler(cfg.handlers.unifi)
+            self._handlers[unifi_h.name()] = unifi_h
+        if cfg.handlers.cloudflare.enabled:
+            from oasisagent.handlers.cloudflare import CloudflareHandler
+
+            cf_h = CloudflareHandler(cfg.handlers.cloudflare)
+            self._handlers[cf_h.name()] = cf_h
 
         # 10. Audit writer
         self._audit = AuditWriter(cfg.audit)
