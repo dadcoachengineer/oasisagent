@@ -1,7 +1,6 @@
 fixes:
   - id: servarr-health-issue
     match:
-      system: sonarr
       event_type: servarr_health_issue
     diagnosis: "Servarr app reports a health check failure — may indicate disk space, indexer, or import problems"
     action:
