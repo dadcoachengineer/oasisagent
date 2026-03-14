@@ -440,6 +440,23 @@ class UptimeKumaAdapterConfig(BaseModel):
     cert_critical_days: int = 7
 
 
+# -- Frigate NVR -------------------------------------------------------------
+
+
+class FrigateAdapterConfig(BaseModel):
+    """Frigate NVR polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    poll_interval: int = 60
+    poll_events: bool = False
+    detector_fps_threshold: float = 5.0
+    detection_spike_threshold: int = 20
+    timeout: int = 10
+
+
 # -- Nginx Proxy Manager ----------------------------------------------------
 
 
@@ -700,6 +717,7 @@ class IngestionConfig(BaseModel):
     uptime_kuma: UptimeKumaAdapterConfig = Field(
         default_factory=UptimeKumaAdapterConfig,
     )
+    frigate: FrigateAdapterConfig = Field(default_factory=FrigateAdapterConfig)
     npm: NpmAdapterConfig = Field(default_factory=NpmAdapterConfig)
     servarr: list[ServarrAdapterConfig] = Field(default_factory=list)
     qbittorrent: QBittorrentAdapterConfig = Field(

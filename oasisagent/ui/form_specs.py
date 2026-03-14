@@ -45,6 +45,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "unifi": "UniFi Network",
     "cloudflare": "Cloudflare",
     "uptime_kuma": "Uptime Kuma",
+    "frigate": "Frigate NVR",
     "npm": "Nginx Proxy Manager",
     "servarr": "Servarr (Sonarr/Radarr/Prowlarr/Bazarr)",
     "qbittorrent": "qBittorrent",
@@ -100,6 +101,10 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "uptime_kuma": (
         "Pull monitor status from Uptime Kuma's"
         " Prometheus endpoint"
+    ),
+    "frigate": (
+        "Monitor Frigate NVR camera health"
+        " and detection events"
     ),
     "npm": (
         "Monitor Nginx Proxy Manager proxy hosts,"
@@ -590,6 +595,50 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
     ],
 
+    "frigate": [
+        FieldSpec(
+            "url", "Frigate URL", "text",
+            help_text="e.g. http://192.168.1.130:8971",
+            required=True,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60, min_val=5,
+        ),
+        FieldSpec(
+            "poll_events", "Poll Detection Events",
+            "checkbox",
+            help_text=(
+                "Track detection event spikes"
+                " (disabled by default)"
+            ),
+            default=False, group="Polling",
+        ),
+        FieldSpec(
+            "detector_fps_threshold",
+            "Detector FPS Threshold", "float",
+            help_text=(
+                "Alert when detector inference FPS"
+                " drops below this value"
+            ),
+            default=5.0, min_val=0.1,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "detection_spike_threshold",
+            "Detection Spike Threshold", "number",
+            help_text=(
+                "Detections per poll interval to"
+                " trigger a spike alert"
+            ),
+            default=20, min_val=1,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
     "npm": [
         FieldSpec(
             "url", "NPM URL", "text",
