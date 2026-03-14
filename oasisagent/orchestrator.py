@@ -1030,7 +1030,12 @@ class Orchestrator:
         for action in result.recommended_actions:
             cb_entity = action.target_entity_id or event.entity_id
 
-            # RECOMMEND-tier actions go to the pending queue
+            # RECOMMEND-tier actions go to the pending queue — except
+            # notify-only actions which are auto-executed (no state mutation).
+            if action.risk_tier == RiskTier.RECOMMEND and action.operation == "notify":
+                await self._auto_execute_notify(event, result, action)
+                continue
+
             if action.risk_tier == RiskTier.RECOMMEND:
                 pending = await self._pending_queue.add(
                     event_id=event.id,
@@ -1090,6 +1095,46 @@ class Orchestrator:
                 )
 
     # -------------------------------------------------------------------
+    # Notify auto-execution
+    # -------------------------------------------------------------------
+
+    async def _auto_execute_notify(
+        self, event: Event, result: DecisionResult, action: RecommendedAction
+    ) -> None:
+        """Auto-execute a notify action, bypassing the approval queue.
+
+        Notify actions log a message but never mutate system state, so
+        requiring operator approval adds no safety value and causes
+        infinite enqueue/expire loops when the pending action times out.
+        """
+        handler = self._handlers.get(action.handler)
+        if handler is None:
+            logger.warning(
+                "No handler registered for '%s' (auto-execute notify, event %s)",
+                action.handler,
+                event.id,
+            )
+            return
+
+        logger.info(
+            "Auto-executing notify action (no approval needed): %s [event=%s]",
+            action.description[:80],
+            event.id,
+        )
+
+        try:
+            action_result = await handler.execute(event, action)
+            if action_result.status == ActionStatus.SUCCESS:
+                self._actions_taken += 1
+        except Exception:
+            logger.exception(
+                "Auto-execute notify failed for event %s", event.id
+            )
+
+        # Still send the notification so it appears in the feed
+        await self._send_notification(event, result)
+
+    # -------------------------------------------------------------------
     # Approval queue
     # -------------------------------------------------------------------
 
@@ -1115,6 +1160,12 @@ class Orchestrator:
             params=fix.action.details,
             risk_tier=fix.risk_tier,
         )
+
+        # Notify-only actions don't mutate state — skip the approval queue
+        # and execute directly to avoid infinite enqueue/expire loops.
+        if action.operation == "notify":
+            await self._auto_execute_notify(event, result, action)
+            return
 
         pending = await self._pending_queue.add(
             event_id=event.id,
