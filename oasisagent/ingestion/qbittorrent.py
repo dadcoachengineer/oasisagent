@@ -281,16 +281,3 @@ class QBittorrentAdapter(IngestAdapter):
 
         self._stalled_hashes = current_stalled
 
-    # -----------------------------------------------------------------
-    # Helpers
-    # -----------------------------------------------------------------
-
-    def _enqueue(self, event: Event) -> None:
-        """Enqueue an event, logging on failure."""
-        try:
-            self._queue.put_nowait(event)
-        except Exception:
-            logger.warning(
-                "qBittorrent: failed to enqueue event: %s/%s",
-                event.system, event.event_type,
-            )
