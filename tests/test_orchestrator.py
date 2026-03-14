@@ -36,6 +36,7 @@ from oasisagent.models import (
     ActionStatus,
     Event,
     EventMetadata,
+    RecommendedAction,
     RiskTier,
     Severity,
 )
@@ -813,3 +814,208 @@ class TestEventCorrelation:
         await orchestrator._process_one(event)
 
         assert event.metadata.correlation_id is not None
+
+
+# ---------------------------------------------------------------------------
+# Notify auto-execution (issue #167)
+# ---------------------------------------------------------------------------
+
+
+class TestNotifyAutoExecution:
+    """Notify-only RECOMMEND actions bypass the approval queue."""
+
+    async def test_t0_notify_action_auto_executes(self) -> None:
+        """T0 RECOMMEND + operation=notify executes handler directly."""
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        event = _make_event()
+        mocks["decision"].process_event.return_value = _matched_result(
+            event.id, risk_tier=RiskTier.RECOMMEND
+        )
+
+        mock_handler = AsyncMock()
+        mock_handler.execute.return_value = ActionResult(
+            status=ActionStatus.SUCCESS
+        )
+        orchestrator._handlers["homeassistant"] = mock_handler
+
+        # Mock registry to return a fix with operation=notify
+        mock_registry = MagicMock()
+        mock_fix = MagicMock()
+        mock_fix.action.handler = "homeassistant"
+        mock_fix.action.operation = "notify"
+        mock_fix.action.details = {"message": "Entity unavailable"}
+        mock_fix.diagnosis = "Entity is unavailable"
+        mock_fix.risk_tier = RiskTier.RECOMMEND
+        mock_registry.get_fix_by_id.return_value = mock_fix
+        orchestrator._registry = mock_registry
+
+        await orchestrator._process_one(event)
+
+        # Handler should be called (auto-executed)
+        mock_handler.execute.assert_called_once()
+        # Should NOT be enqueued to pending queue
+        assert orchestrator._pending_queue is not None
+        assert len(orchestrator._pending_queue.list_pending()) == 0
+        # Notification should still be sent
+        mocks["dispatcher"].dispatch.assert_called()
+        # Actions counter incremented
+        assert orchestrator._actions_taken == 1
+
+    async def test_t0_non_notify_recommend_still_enqueues(self) -> None:
+        """T0 RECOMMEND + operation!=notify still goes to pending queue."""
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        event = _make_event()
+        mocks["decision"].process_event.return_value = _matched_result(
+            event.id, risk_tier=RiskTier.RECOMMEND
+        )
+
+        mock_handler = AsyncMock()
+        orchestrator._handlers["homeassistant"] = mock_handler
+
+        mock_registry = MagicMock()
+        mock_fix = MagicMock()
+        mock_fix.action.handler = "homeassistant"
+        mock_fix.action.operation = "restart_integration"
+        mock_fix.action.details = {}
+        mock_fix.diagnosis = "Restart integration"
+        mock_fix.risk_tier = RiskTier.RECOMMEND
+        mock_registry.get_fix_by_id.return_value = mock_fix
+        orchestrator._registry = mock_registry
+
+        await orchestrator._process_one(event)
+
+        # Handler should NOT be called
+        mock_handler.execute.assert_not_called()
+        # Should be enqueued
+        assert orchestrator._pending_queue is not None
+        assert len(orchestrator._pending_queue.list_pending()) == 1
+
+    async def test_t2_notify_action_auto_executes(self) -> None:
+        """T2 RECOMMEND + operation=notify executes handler directly."""
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        event = _make_event()
+
+        notify_action = RecommendedAction(
+            description="Entity unavailable notification",
+            handler="homeassistant",
+            operation="notify",
+            params={"message": "Entity unavailable"},
+            risk_tier=RiskTier.RECOMMEND,
+        )
+        result = DecisionResult(
+            event_id=event.id,
+            tier=DecisionTier.T2,
+            disposition=DecisionDisposition.MATCHED,
+            diagnosis="T2 diagnosis",
+            recommended_actions=[notify_action],
+        )
+        mocks["decision"].process_event.return_value = result
+
+        mock_handler = AsyncMock()
+        mock_handler.execute.return_value = ActionResult(
+            status=ActionStatus.SUCCESS
+        )
+        orchestrator._handlers["homeassistant"] = mock_handler
+
+        await orchestrator._process_one(event)
+
+        # Handler should be called (auto-executed)
+        mock_handler.execute.assert_called_once()
+        # Should NOT be enqueued
+        assert orchestrator._pending_queue is not None
+        assert len(orchestrator._pending_queue.list_pending()) == 0
+        assert orchestrator._actions_taken == 1
+
+    async def test_t2_non_notify_recommend_still_enqueues(self) -> None:
+        """T2 RECOMMEND + operation!=notify still goes to pending queue."""
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        event = _make_event()
+
+        restart_action = RecommendedAction(
+            description="Restart integration",
+            handler="homeassistant",
+            operation="restart_integration",
+            params={},
+            risk_tier=RiskTier.RECOMMEND,
+        )
+        result = DecisionResult(
+            event_id=event.id,
+            tier=DecisionTier.T2,
+            disposition=DecisionDisposition.MATCHED,
+            diagnosis="T2 diagnosis",
+            recommended_actions=[restart_action],
+        )
+        mocks["decision"].process_event.return_value = result
+
+        mock_handler = AsyncMock()
+        orchestrator._handlers["homeassistant"] = mock_handler
+
+        await orchestrator._process_one(event)
+
+        # Handler should NOT be called
+        mock_handler.execute.assert_not_called()
+        # Should be enqueued
+        assert orchestrator._pending_queue is not None
+        assert len(orchestrator._pending_queue.list_pending()) == 1
+
+    async def test_notify_auto_execute_no_handler_logs_warning(self) -> None:
+        """Auto-execute notify with missing handler logs warning, no crash."""
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        event = _make_event()
+        mocks["decision"].process_event.return_value = _matched_result(
+            event.id, risk_tier=RiskTier.RECOMMEND
+        )
+
+        # No handler registered — orchestrator._handlers is empty
+        mock_registry = MagicMock()
+        mock_fix = MagicMock()
+        mock_fix.action.handler = "homeassistant"
+        mock_fix.action.operation = "notify"
+        mock_fix.action.details = {}
+        mock_fix.diagnosis = "Entity unavailable"
+        mock_fix.risk_tier = RiskTier.RECOMMEND
+        mock_registry.get_fix_by_id.return_value = mock_fix
+        orchestrator._registry = mock_registry
+
+        # Should not raise
+        await orchestrator._process_one(event)
+
+        # No pending actions created
+        assert orchestrator._pending_queue is not None
+        assert len(orchestrator._pending_queue.list_pending()) == 0
+        # Actions counter NOT incremented (handler missing)
+        assert orchestrator._actions_taken == 0
+
+    async def test_notify_auto_execute_handler_failure_does_not_crash(self) -> None:
+        """Handler exception during auto-execute notify is caught gracefully."""
+        orchestrator = _setup_orchestrator()
+        mocks = _mock_components(orchestrator)
+        event = _make_event()
+        mocks["decision"].process_event.return_value = _matched_result(
+            event.id, risk_tier=RiskTier.RECOMMEND
+        )
+
+        mock_handler = AsyncMock()
+        mock_handler.execute.side_effect = RuntimeError("handler crashed")
+        orchestrator._handlers["homeassistant"] = mock_handler
+
+        mock_registry = MagicMock()
+        mock_fix = MagicMock()
+        mock_fix.action.handler = "homeassistant"
+        mock_fix.action.operation = "notify"
+        mock_fix.action.details = {}
+        mock_fix.diagnosis = "Entity unavailable"
+        mock_fix.risk_tier = RiskTier.RECOMMEND
+        mock_registry.get_fix_by_id.return_value = mock_fix
+        orchestrator._registry = mock_registry
+
+        # Should not raise
+        await orchestrator._process_one(event)
+
+        # Actions counter NOT incremented (handler failed)
+        assert orchestrator._actions_taken == 0
