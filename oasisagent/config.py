@@ -536,6 +536,20 @@ class OverseerrAdapterConfig(BaseModel):
     timeout: int = 10
 
 
+# -- Vaultwarden -------------------------------------------------------------
+
+
+class VaultwardenAdapterConfig(BaseModel):
+    """Vaultwarden (Bitwarden) health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
 # -- Scanner ----------------------------------------------------------------
 
 
@@ -660,6 +674,9 @@ class IngestionConfig(BaseModel):
     tdarr: TdarrAdapterConfig = Field(default_factory=TdarrAdapterConfig)
     overseerr: OverseerrAdapterConfig = Field(
         default_factory=OverseerrAdapterConfig,
+    )
+    vaultwarden: VaultwardenAdapterConfig = Field(
+        default_factory=VaultwardenAdapterConfig,
     )
 
 
