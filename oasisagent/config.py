@@ -388,6 +388,14 @@ class UnifiAdapterConfig(BaseModel):
     poll_interval: int = 30
     poll_alarms: bool = True
     poll_health: bool = True
+    poll_ips: bool = True
+    poll_rogue_ap: bool = True
+    poll_clients: bool = False
+    poll_anomalies: bool = True
+    poll_events: bool = True
+    poll_dpi: bool = False
+    client_spike_threshold: float = 20.0
+    dpi_bandwidth_threshold_mbps: float = 100.0
     timeout: int = 10
     cpu_threshold: float = 90.0
     memory_threshold: float = 90.0

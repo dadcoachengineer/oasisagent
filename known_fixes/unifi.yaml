@@ -74,3 +74,57 @@ fixes:
       details:
         message: "UniFi alarm detected — check controller for details"
     risk_tier: recommend
+
+  - id: unifi-ids-alert
+    match:
+      system: unifi
+      event_type: ids_alert
+    diagnosis: "IDS/IPS detection — potential intrusion or malicious traffic identified"
+    action:
+      type: recommend
+      handler: unifi
+      operation: notify
+      details:
+        message: |
+          IDS/IPS alert triggered. Review:
+          1. Check source and destination IPs
+          2. Evaluate threat signature and category
+          3. Determine if traffic is legitimate or malicious
+          4. Consider blocking source IP if confirmed threat
+    risk_tier: recommend
+
+  - id: unifi-rogue-ap
+    match:
+      system: unifi
+      event_type: rogue_ap_detected
+    diagnosis: "Rogue access point detected — unauthorized wireless device on network perimeter"
+    action:
+      type: escalate
+      handler: unifi
+      operation: notify
+      details:
+        message: |
+          Rogue AP detected. Investigation steps:
+          1. Identify the BSSID and SSID of the rogue AP
+          2. Check if this is a known neighbor or legitimate device
+          3. Assess signal strength to determine proximity
+          4. If unauthorized, locate and remove or block the device
+    risk_tier: escalate
+
+  - id: unifi-network-anomaly
+    match:
+      system: unifi
+      event_type: network_anomaly
+    diagnosis: "Network traffic anomaly detected — unusual pattern may indicate issue or attack"
+    action:
+      type: recommend
+      handler: unifi
+      operation: notify
+      details:
+        message: |
+          Network anomaly detected. Review:
+          1. Check anomaly type and affected metrics
+          2. Correlate with recent network changes
+          3. Review client activity for unusual patterns
+          4. Monitor for recurrence
+    risk_tier: recommend
