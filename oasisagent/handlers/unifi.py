@@ -3,7 +3,7 @@
 Operations: notify, restart_device, block_client, unblock_client.
 
 Uses the shared UnifiClient for session cookie auth and automatic
-re-auth on 401.
+re-auth on 401/403.
 """
 
 from __future__ import annotations

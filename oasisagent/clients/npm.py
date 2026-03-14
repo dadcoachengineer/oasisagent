@@ -2,7 +2,8 @@
 
 JWT-based authentication: POST /api/tokens with email/password returns
 a JWT token used as ``Authorization: Bearer <token>``.  Tokens expire
-after a configurable period; the client transparently refreshes on 401.
+after a configurable period; the client transparently refreshes on
+401 or 403.
 
 Used by the NPM ingestion adapter to poll proxy hosts, certificates,
 and dead hosts.

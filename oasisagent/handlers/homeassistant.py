@@ -1,6 +1,6 @@
 """Home Assistant handler — executes actions via the HA REST API.
 
-Phase 1 operations: notify, restart_integration, reload_automations,
+Operations: notify, restart_integration, reload_automations,
 call_service, get_entity_state, get_error_log.
 
 ARCHITECTURE.md §8 defines the handler interface and HA-specific operations.

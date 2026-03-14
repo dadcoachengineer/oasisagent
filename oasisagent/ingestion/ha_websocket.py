@@ -1,7 +1,7 @@
 """Home Assistant WebSocket ingestion adapter.
 
-Connects to HA's WebSocket API, subscribes to state_changed,
-automation_triggered, and call_service events, and transforms
+Connects to HA's WebSocket API, subscribes to all events, and filters
+for state_changed, automation_triggered, and call_service. Transforms
 relevant events into canonical Event objects.
 """
 
