@@ -440,6 +440,102 @@ class UptimeKumaAdapterConfig(BaseModel):
     cert_critical_days: int = 7
 
 
+# -- Servarr (Sonarr/Radarr/Prowlarr/Bazarr) --------------------------------
+
+
+class ServarrAdapterConfig(BaseModel):
+    """Servarr app polling adapter configuration.
+
+    A single config model for Sonarr, Radarr, Prowlarr, and Bazarr since
+    they all share the same API pattern (differing only in API version).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    app_type: Literal["sonarr", "radarr", "prowlarr", "bazarr"] = "sonarr"
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- qBittorrent ------------------------------------------------------------
+
+
+class QBittorrentAdapterConfig(BaseModel):
+    """qBittorrent Web API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    username: str = "admin"
+    password: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- Plex -------------------------------------------------------------------
+
+
+class PlexAdapterConfig(BaseModel):
+    """Plex Media Server polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    token: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- Tautulli ---------------------------------------------------------------
+
+
+class TautulliAdapterConfig(BaseModel):
+    """Tautulli API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    bandwidth_threshold_kbps: int = 100_000
+
+
+# -- Tdarr ------------------------------------------------------------------
+
+
+class TdarrAdapterConfig(BaseModel):
+    """Tdarr API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- Overseerr ---------------------------------------------------------------
+
+
+class OverseerrAdapterConfig(BaseModel):
+    """Overseerr API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
 # -- Scanner ----------------------------------------------------------------
 
 
@@ -552,6 +648,18 @@ class IngestionConfig(BaseModel):
     )
     uptime_kuma: UptimeKumaAdapterConfig = Field(
         default_factory=UptimeKumaAdapterConfig,
+    )
+    servarr: list[ServarrAdapterConfig] = Field(default_factory=list)
+    qbittorrent: QBittorrentAdapterConfig = Field(
+        default_factory=QBittorrentAdapterConfig,
+    )
+    plex: PlexAdapterConfig = Field(default_factory=PlexAdapterConfig)
+    tautulli: TautulliAdapterConfig = Field(
+        default_factory=TautulliAdapterConfig,
+    )
+    tdarr: TdarrAdapterConfig = Field(default_factory=TdarrAdapterConfig)
+    overseerr: OverseerrAdapterConfig = Field(
+        default_factory=OverseerrAdapterConfig,
     )
 
 
