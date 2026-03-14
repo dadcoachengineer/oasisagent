@@ -58,7 +58,7 @@ class NpmAdapter(IngestAdapter):
             self._endpoint_health["dead_hosts"] = False
 
         # Dedup trackers
-        # host_id -> "online" | "erroring" | "disabled"
+        # host_id -> "online" | "disabled"
         self._host_states: dict[int, str] = {}
         # cert_id -> "ok" | "warning" | "critical"
         self._cert_alert_state: dict[int, str] = {}

@@ -9,7 +9,7 @@ is optional (``verify_ssl: false`` for self-signed certs).
 
 Auth header format: ``Authorization: PVEAPIToken=USER@REALM!TOKENID=UUID``
 
-ARCHITECTURE.md §8 and §16.7 define the handler interface and operations.
+ARCHITECTURE.md §8 and §17.5 define the handler interface and operations.
 """
 
 from __future__ import annotations
