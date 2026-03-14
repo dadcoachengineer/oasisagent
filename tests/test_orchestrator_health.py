@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 from oasisagent.llm.client import LLMRole
 from oasisagent.orchestrator import Orchestrator
+
+if TYPE_CHECKING:
+    from oasisagent.config import OasisAgentConfig
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -124,6 +128,18 @@ class TestHandlerHealth:
         result = await orch.get_component_health()
         assert result["services"]["portainer_handler"] == "error"
 
+    async def test_unifi_handler_maps_to_db_type(self) -> None:
+        handler = _mock_handler("unifi", healthy=True)
+        orch = _make_orchestrator(handlers={"unifi": handler})
+        result = await orch.get_component_health()
+        assert result["services"]["unifi_handler"] == "connected"
+
+    async def test_cloudflare_handler_maps_to_db_type(self) -> None:
+        handler = _mock_handler("cloudflare", healthy=True)
+        orch = _make_orchestrator(handlers={"cloudflare": handler})
+        result = await orch.get_component_health()
+        assert result["services"]["cloudflare_handler"] == "connected"
+
     async def test_unknown_handler_name_uses_raw_name(self) -> None:
         handler = _mock_handler("custom_thing", healthy=True)
         orch = _make_orchestrator(handlers={"custom_thing": handler})
@@ -164,7 +180,7 @@ class TestInternalServices:
     async def test_internal_services_report_unknown(self) -> None:
         orch = _make_orchestrator()
         result = await orch.get_component_health()
-        for svc in ("influxdb", "guardrails", "circuit_breaker"):
+        for svc in ("influxdb", "guardrails", "circuit_breaker", "llm_options"):
             assert result["services"][svc] == "unknown"
 
 
@@ -227,6 +243,51 @@ class TestNotificationHealth:
         assert result["notifications"] == {}
 
 
+class TestBuildComponentsHandlerWiring:
+    """Verify _build_components instantiates handlers when enabled in config."""
+
+    @staticmethod
+    def _make_config(
+        **handler_overrides: dict[str, Any],
+    ) -> OasisAgentConfig:
+        from oasisagent.config import OasisAgentConfig
+
+        handlers_dict: dict[str, Any] = {}
+        for key, val in handler_overrides.items():
+            handlers_dict[key] = {**val, "enabled": True}
+
+        return OasisAgentConfig(handlers=handlers_dict)
+
+    def test_unifi_handler_wired_when_enabled(self) -> None:
+        config = self._make_config(unifi={
+            "url": "https://192.168.1.1",
+            "username": "admin",
+            "password": "secret",
+        })
+        orch = Orchestrator(config)
+        orch._build_components()
+        assert "unifi" in orch._handlers
+        assert orch._handlers["unifi"].name() == "unifi"
+
+    def test_cloudflare_handler_wired_when_enabled(self) -> None:
+        config = self._make_config(cloudflare={
+            "api_token": "cf-tok-123",
+        })
+        orch = Orchestrator(config)
+        orch._build_components()
+        assert "cloudflare" in orch._handlers
+        assert orch._handlers["cloudflare"].name() == "cloudflare"
+
+    def test_handlers_not_wired_when_disabled(self) -> None:
+        from oasisagent.config import OasisAgentConfig
+
+        config = OasisAgentConfig()  # All handlers disabled by default
+        orch = Orchestrator(config)
+        orch._build_components()
+        assert "unifi" not in orch._handlers
+        assert "cloudflare" not in orch._handlers
+
+
 class TestEmptyOrchestrator:
     async def test_empty_orchestrator(self) -> None:
         orch = _make_orchestrator()
@@ -235,4 +296,5 @@ class TestEmptyOrchestrator:
         assert result["notifications"] == {}
         # Internal services always present, LLM omitted when no client
         assert "influxdb" in result["services"]
+        assert "llm_options" in result["services"]
         assert "llm_triage" not in result["services"]

@@ -355,6 +355,34 @@ class TestEnabledFlagInjection:
         config = await store.load_config()
         assert config.ingestion.uptime_kuma.enabled is True
 
+    async def test_unifi_handler_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """UniFi handler created without 'enabled' in config_json loads as enabled."""
+        await store.create_service(
+            "unifi_handler", "unifi-handler",
+            {
+                "url": "https://192.168.1.1",
+                "username": "admin",
+                "password": "secret",
+            },
+        )
+        config = await store.load_config()
+        assert config.handlers.unifi.enabled is True
+        assert config.handlers.unifi.url == "https://192.168.1.1"
+
+    async def test_cloudflare_handler_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """Cloudflare handler created without 'enabled' in config_json loads as enabled."""
+        await store.create_service(
+            "cloudflare_handler", "cloudflare-handler",
+            {"api_token": "cf-tok-123"},
+        )
+        config = await store.load_config()
+        assert config.handlers.cloudflare.enabled is True
+        assert config.handlers.cloudflare.api_token == "cf-tok-123"
+
 
 class TestAgentConfig:
     async def test_default_agent_config(self, store: ConfigStore) -> None:
