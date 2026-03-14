@@ -77,6 +77,8 @@ class PlexAdapter(IngestAdapter):
 
     async def _poll_loop(self) -> None:
         timeout = aiohttp.ClientTimeout(total=self._config.timeout)
+        backoff = self._config.poll_interval
+        max_backoff = 300
 
         while not self._stopping:
             try:
@@ -87,16 +89,23 @@ class PlexAdapter(IngestAdapter):
                     if reachable:
                         await self._poll_libraries(session)
                     self._connected = reachable
+                    if reachable:
+                        backoff = self._config.poll_interval  # reset on success
+                    else:
+                        backoff = min(backoff * 2, max_backoff)
             except asyncio.CancelledError:
                 return
             except (TimeoutError, aiohttp.ClientError) as exc:
                 self._handle_unreachable(str(exc))
                 self._connected = False
+                backoff = min(backoff * 2, max_backoff)
             except Exception:
                 self._connected = False
                 logger.exception("Plex: unexpected error")
+                backoff = min(backoff * 2, max_backoff)
 
-            for _ in range(self._config.poll_interval):
+            wait = self._config.poll_interval if self._connected else backoff
+            for _ in range(wait):
                 if self._stopping:
                     return
                 await asyncio.sleep(1)

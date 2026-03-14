@@ -70,12 +70,28 @@ class NpmAdapter(IngestAdapter):
         return "npm"
 
     async def start(self) -> None:
-        """Connect to NPM API and start the polling loop."""
-        try:
-            await self._client.connect()
-        except Exception as exc:
-            logger.error("NPM adapter: connection failed: %s", exc)
-            return
+        """Connect to NPM API and start the polling loop.
+
+        Uses exponential backoff on connection failure (5s -> 300s max).
+        """
+        backoff = 5
+        max_backoff = 300
+        while not self._stopping:
+            try:
+                await self._client.connect()
+                break
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.error(
+                    "NPM adapter: connection failed: %s "
+                    "(retrying in %ds)", exc, backoff,
+                )
+                for _ in range(backoff):
+                    if self._stopping:
+                        return
+                    await asyncio.sleep(1)
+                backoff = min(backoff * 2, max_backoff)
 
         self._task = asyncio.create_task(
             self._poll_loop(), name="npm-poller",
