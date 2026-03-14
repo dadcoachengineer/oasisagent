@@ -21,6 +21,11 @@
 <td class="px-4 py-3 text-sm text-gray-500">{{ row.created_at[:10] }}</td>
 {% if current_user.role == "admin" %}
 <td class="px-4 py-3 text-sm text-right space-x-2">
+    <button hx-post="/ui/{{ table }}/{{ row.id }}/restart"
+            hx-confirm="Restart {{ row.name }}?"
+            class="text-amber-600 hover:text-amber-800 text-xs font-medium">
+        Restart
+    </button>
     <button hx-post="/ui/{{ table }}/{{ row.id }}/toggle"
             class="text-blue-600 hover:text-blue-800 text-xs font-medium">
         {% if row.enabled %}Disable{% else %}Enable{% endif %}

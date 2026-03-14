@@ -66,10 +66,12 @@ if TYPE_CHECKING:
     import aiosqlite
 
     from oasisagent.config import OasisAgentConfig
+    from oasisagent.db.config_store import ConfigStore
     from oasisagent.db.notification_store import NotificationStore
     from oasisagent.handlers.base import Handler
     from oasisagent.ingestion.base import IngestAdapter
     from oasisagent.models import Event
+    from oasisagent.notifications.base import NotificationChannel
 
 logger = logging.getLogger(__name__)
 
@@ -158,9 +160,11 @@ class Orchestrator:
         self,
         config: OasisAgentConfig,
         db: aiosqlite.Connection | None = None,
+        config_store: ConfigStore | None = None,
     ) -> None:
         self._config = config
         self._db = db
+        self._config_store = config_store
         self._shutting_down = False
 
         # Components — populated by _build_components()
@@ -435,6 +439,341 @@ class Orchestrator:
             return "error"
         except Exception:
             return "error"
+
+    # -------------------------------------------------------------------
+    # Component restart
+    # -------------------------------------------------------------------
+
+    async def restart_connector(self, connector_id: int) -> bool:
+        """Restart a single ingestion adapter by its database ID.
+
+        Looks up the connector row in the database, stops the old adapter,
+        creates a new one with fresh config, and starts it.
+
+        Returns True on success, False if the connector was not found or
+        the restart failed.
+        """
+        store = self._config_store
+        if store is None:
+            logger.error("Cannot restart connector: no config store available")
+            return False
+
+        row = await store.get_connector(connector_id)
+        if row is None:
+            logger.warning("Connector %d not found for restart", connector_id)
+            return False
+
+        db_type = row["type"]
+        logger.info(
+            "Restarting connector %d (type=%s, name=%s)",
+            connector_id, db_type, row["name"],
+        )
+
+        # Reload full config from database to get validated settings
+        try:
+            new_config = await store.load_config()
+        except Exception:
+            logger.exception("Failed to reload config for connector restart")
+            return False
+
+        # Find and stop the old adapter
+        old_adapter: IngestAdapter | None = None
+        old_idx: int | None = None
+        old_task: asyncio.Task[None] | None = None
+
+        for idx, adapter in enumerate(self._adapters):
+            if adapter.name == db_type:
+                old_adapter = adapter
+                old_idx = idx
+                break
+
+        if old_adapter is not None and old_idx is not None:
+            try:
+                await old_adapter.stop()
+            except Exception:
+                logger.exception("Error stopping adapter %s during restart", db_type)
+
+            # Cancel the adapter task
+            if old_idx < len(self._adapter_tasks):
+                old_task = self._adapter_tasks[old_idx]
+                old_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await old_task
+
+        if not row["enabled"]:
+            # Connector is disabled — just remove the old one
+            if old_idx is not None:
+                self._adapters.pop(old_idx)
+                if old_idx < len(self._adapter_tasks):
+                    self._adapter_tasks.pop(old_idx)
+            logger.info("Connector %d disabled, removed adapter", connector_id)
+            return True
+
+        # Build a new adapter from the refreshed config
+        new_adapter = self._build_adapter(db_type, new_config)
+        if new_adapter is None:
+            # Config doesn't enable this type — remove old if exists
+            if old_idx is not None:
+                self._adapters.pop(old_idx)
+                if old_idx < len(self._adapter_tasks):
+                    self._adapter_tasks.pop(old_idx)
+            logger.info("Connector %d not enabled in config after reload", connector_id)
+            return True
+
+        # Replace or append
+        if old_idx is not None:
+            self._adapters[old_idx] = new_adapter
+            new_task = asyncio.create_task(
+                self._run_adapter(new_adapter), name=f"adapter-{new_adapter.name}",
+            )
+            if old_idx < len(self._adapter_tasks):
+                self._adapter_tasks[old_idx] = new_task
+            else:
+                self._adapter_tasks.append(new_task)
+        else:
+            self._adapters.append(new_adapter)
+            new_task = asyncio.create_task(
+                self._run_adapter(new_adapter), name=f"adapter-{new_adapter.name}",
+            )
+            self._adapter_tasks.append(new_task)
+
+        logger.info("Connector %d restarted successfully (type=%s)", connector_id, db_type)
+        return True
+
+    async def restart_service(self, service_id: int) -> bool:
+        """Restart a single handler/service by its database ID.
+
+        Looks up the service row in the database, stops the old handler,
+        creates a new one with fresh config, and starts it.
+
+        Returns True on success, False if the service was not found or
+        the restart failed.
+        """
+        store = self._config_store
+        if store is None:
+            logger.error("Cannot restart service: no config store available")
+            return False
+
+        row = await store.get_service(service_id)
+        if row is None:
+            logger.warning("Service %d not found for restart", service_id)
+            return False
+
+        db_type = row["type"]
+        logger.info("Restarting service %d (type=%s, name=%s)", service_id, db_type, row["name"])
+
+        # Check if this is a handler type
+        handler_name: str | None = None
+        for hname, htype in self._HANDLER_NAME_TO_TYPE.items():
+            if htype == db_type:
+                handler_name = hname
+                break
+
+        if handler_name is None:
+            # Not a handler — internal service types cannot be restarted individually
+            logger.warning(
+                "Service type %s is not a restartable handler", db_type,
+            )
+            return False
+
+        # Reload full config from database
+        try:
+            new_config = await store.load_config()
+        except Exception:
+            logger.exception("Failed to reload config for service restart")
+            return False
+
+        # Stop the old handler
+        old_handler = self._handlers.get(handler_name)
+        if old_handler is not None:
+            try:
+                await old_handler.stop()
+            except Exception:
+                logger.exception("Error stopping handler %s during restart", handler_name)
+            del self._handlers[handler_name]
+
+        if not row["enabled"]:
+            logger.info("Service %d disabled, removed handler", service_id)
+            return True
+
+        # Build a new handler from the refreshed config
+        new_handler = self._build_handler(handler_name, new_config)
+        if new_handler is None:
+            logger.info("Service %d not enabled in config after reload", service_id)
+            return True
+
+        # Start the new handler
+        try:
+            await new_handler.start()
+            self._handlers[handler_name] = new_handler
+            logger.info("Service %d restarted successfully (type=%s)", service_id, db_type)
+            return True
+        except Exception:
+            logger.exception("Failed to start handler %s during restart", handler_name)
+            return False
+
+    async def restart_notification(self, notification_id: int) -> bool:
+        """Restart a single notification channel by its database ID.
+
+        Looks up the notification row in the database, stops the old channel,
+        creates a new one with fresh config, and starts it.
+
+        Returns True on success, False if the notification was not found or
+        the restart failed.
+        """
+        store = self._config_store
+        if store is None:
+            logger.error("Cannot restart notification: no config store available")
+            return False
+
+        row = await store.get_notification(notification_id)
+        if row is None:
+            logger.warning("Notification %d not found for restart", notification_id)
+            return False
+
+        db_type = row["type"]
+        logger.info(
+            "Restarting notification %d (type=%s, name=%s)",
+            notification_id, db_type, row["name"],
+        )
+
+        if self._dispatcher is None:
+            logger.error("Cannot restart notification: no dispatcher")
+            return False
+
+        # Reload full config from database
+        try:
+            new_config = await store.load_config()
+        except Exception:
+            logger.exception("Failed to reload config for notification restart")
+            return False
+
+        # Find the channel name that maps to this DB type
+        channel_name: str | None = None
+        for cname, ctype in self._CHANNEL_NAME_TO_TYPE.items():
+            if ctype == db_type:
+                channel_name = cname
+                break
+        # Fallback: channel name matches DB type directly
+        if channel_name is None:
+            channel_name = db_type
+
+        # Stop and remove the old channel
+        old_channels = self._dispatcher._channels
+        old_channel = None
+        old_idx = None
+        for idx, ch in enumerate(old_channels):
+            if ch.name() == channel_name:
+                old_channel = ch
+                old_idx = idx
+                break
+
+        if old_channel is not None and old_idx is not None:
+            try:
+                await old_channel.stop()
+            except Exception:
+                logger.exception("Error stopping channel %s during restart", channel_name)
+            old_channels.pop(old_idx)
+
+        if not row["enabled"]:
+            logger.info("Notification %d disabled, removed channel", notification_id)
+            return True
+
+        # Build a new channel from the refreshed config
+        new_channel = self._build_notification_channel(db_type, new_config)
+        if new_channel is None:
+            logger.info("Notification %d not enabled in config after reload", notification_id)
+            return True
+
+        # Start and add the new channel
+        try:
+            await new_channel.start()
+            self._dispatcher._channels.append(new_channel)
+            logger.info(
+                "Notification %d restarted successfully (type=%s)",
+                notification_id, db_type,
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to start channel %s during restart", channel_name)
+            return False
+
+    def _build_adapter(
+        self, db_type: str, config: OasisAgentConfig,
+    ) -> IngestAdapter | None:
+        """Build a single ingestion adapter by DB type from the given config.
+
+        Returns None if the adapter type is not enabled in the config.
+        """
+        assert self._queue is not None
+        cfg = config
+
+        if db_type == "mqtt" and cfg.ingestion.mqtt.enabled:
+            return MqttAdapter(cfg.ingestion.mqtt, self._queue)
+        if db_type == "ha_websocket" and cfg.ingestion.ha_websocket.enabled:
+            return HaWebSocketAdapter(cfg.ingestion.ha_websocket, self._queue)
+        if db_type == "ha_log_poller" and cfg.ingestion.ha_log_poller.enabled:
+            return HaLogPollerAdapter(cfg.ingestion.ha_log_poller, self._queue)
+        if db_type == "http_poller" and cfg.ingestion.http_poller_targets:
+            return HttpPollerAdapter(cfg.ingestion.http_poller_targets, self._queue)
+        if db_type == "uptime_kuma" and cfg.ingestion.uptime_kuma.enabled:
+            from oasisagent.ingestion.uptime_kuma import UptimeKumaAdapter
+            return UptimeKumaAdapter(cfg.ingestion.uptime_kuma, self._queue)
+
+        return None
+
+    def _build_handler(
+        self, handler_name: str, config: OasisAgentConfig,
+    ) -> Handler | None:
+        """Build a single handler by name from the given config.
+
+        Returns None if the handler is not enabled in the config.
+        """
+        cfg = config
+
+        if handler_name == "homeassistant" and cfg.handlers.homeassistant.enabled:
+            return HomeAssistantHandler(cfg.handlers.homeassistant)
+        if handler_name == "docker" and cfg.handlers.docker.enabled:
+            return DockerHandler(cfg.handlers.docker)
+        if handler_name == "portainer" and cfg.handlers.portainer.enabled:
+            from oasisagent.handlers.portainer import PortainerHandler
+            return PortainerHandler(cfg.handlers.portainer)
+        if handler_name == "proxmox" and cfg.handlers.proxmox.enabled:
+            from oasisagent.handlers.proxmox import ProxmoxHandler
+            return ProxmoxHandler(cfg.handlers.proxmox)
+        if handler_name == "unifi":
+            from oasisagent.handlers.unifi import UniFiHandler
+            if cfg.handlers.unifi.enabled:
+                return UniFiHandler(cfg.handlers.unifi)
+        if handler_name == "cloudflare":
+            from oasisagent.handlers.cloudflare import CloudflareHandler
+            if cfg.handlers.cloudflare.enabled:
+                return CloudflareHandler(cfg.handlers.cloudflare)
+
+        return None
+
+    def _build_notification_channel(
+        self, db_type: str, config: OasisAgentConfig,
+    ) -> NotificationChannel | None:
+        """Build a single notification channel by DB type from the given config.
+
+        Returns None if the channel type is not enabled in the config.
+        """
+        cfg = config
+
+        if db_type == "mqtt_notification" and cfg.notifications.mqtt.enabled:
+            return MqttNotificationChannel(cfg.notifications.mqtt)
+        if db_type == "email" and cfg.notifications.email.enabled:
+            from oasisagent.notifications.email import EmailNotificationChannel
+            return EmailNotificationChannel(cfg.notifications.email)
+        if db_type == "webhook" and cfg.notifications.webhook.enabled:
+            from oasisagent.notifications.webhook import WebhookNotificationChannel
+            return WebhookNotificationChannel(cfg.notifications.webhook)
+        if db_type == "telegram" and cfg.notifications.telegram.enabled:
+            from oasisagent.notifications.telegram import TelegramNotificationChannel
+            return TelegramNotificationChannel(cfg.notifications.telegram)
+
+        return None
 
     async def stop(self) -> None:
         """Signal shutdown and tear down all components.
