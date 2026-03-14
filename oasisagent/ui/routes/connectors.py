@@ -542,6 +542,74 @@ def _build_ui_crud(
             },
         )
 
+    # -----------------------------------------------------------------------
+    # POST /{category}/{id}/restart — restart component (HTMX)
+    # -----------------------------------------------------------------------
+
+    # Build the restart method name from the category
+    _restart_methods = {
+        "connectors": "restart_connector",
+        "services": "restart_service",
+        "channels": "restart_notification",
+    }
+    restart_method_name = _restart_methods.get(url_prefix)
+
+    if restart_method_name is not None:
+
+        @router.post(
+            f"/{url_prefix}/{{row_id}}/restart",
+            response_class=HTMLResponse,
+            name=f"{url_prefix}_restart",
+        )
+        async def restart_item(
+            request: Request,
+            row_id: int,
+            current_user: TokenPayload = Depends(require_admin),
+            _restart_method: str = restart_method_name,
+        ) -> Response:
+            store = _get_store(request)
+            existing = await getattr(store, get_method)(row_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Not found")
+
+            orchestrator = getattr(request.app.state, "orchestrator", None)
+            if orchestrator is None:
+                raise HTTPException(
+                    status_code=503, detail="Orchestrator not available",
+                )
+
+            restart_fn = getattr(orchestrator, _restart_method, None)
+            if restart_fn is None:
+                raise HTTPException(
+                    status_code=501, detail="Restart not supported",
+                )
+
+            success = await restart_fn(row_id)
+
+            # Return updated row via HTMX swap
+            refreshed = await getattr(store, get_method)(row_id)
+            if refreshed is None:
+                raise HTTPException(status_code=404, detail="Not found")
+
+            masked = store.mask_row(table, refreshed)
+            templates = _get_templates(request)
+
+            response = templates.TemplateResponse(
+                "connectors/_row.html",
+                {
+                    **_base_context(request, current_user),
+                    "row": masked,
+                    "table": url_prefix,
+                    "restart_success": success,
+                },
+            )
+            # Signal restart result to the UI via HX-Trigger header
+            if success:
+                response.headers["HX-Trigger"] = "restart-success"
+            else:
+                response.headers["HX-Trigger"] = "restart-failed"
+            return response
+
 
 # ---------------------------------------------------------------------------
 # Register CRUD routes for all three categories

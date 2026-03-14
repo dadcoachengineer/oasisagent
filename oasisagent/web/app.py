@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     configure_logging(config)
 
-    orchestrator = Orchestrator(config, db=db)
+    orchestrator = Orchestrator(config, db=db, config_store=store)
     await orchestrator.start()
 
     loop_task = asyncio.create_task(orchestrator.run_loop(), name="orchestrator-loop")

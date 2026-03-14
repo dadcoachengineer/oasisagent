@@ -14,7 +14,7 @@ _TEMPLATE_CONTENT: str | None = None
 
 
 def _read_template() -> str:
-    global _TEMPLATE_CONTENT  # noqa: PLW0603
+    global _TEMPLATE_CONTENT
     if _TEMPLATE_CONTENT is None:
         _TEMPLATE_CONTENT = TEMPLATE.read_text()
     return _TEMPLATE_CONTENT
