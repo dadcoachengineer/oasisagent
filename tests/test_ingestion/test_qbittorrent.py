@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -325,6 +326,96 @@ class TestKnownFixes:
 
         ids = [fix["id"] for fix in data["fixes"]]
         assert len(ids) == len(set(ids))
+
+
+# ---------------------------------------------------------------------------
+# Poll loop backoff
+# ---------------------------------------------------------------------------
+
+
+class TestPollLoopBackoff:
+    @pytest.mark.asyncio
+    async def test_backoff_increases_on_repeated_failures(self) -> None:
+        """Poll loop uses exponential backoff when service is persistently down."""
+        adapter, _ = _make_adapter(poll_interval=10)
+
+        poll_count = 0
+        sleep_totals: list[int] = []
+        current_total = 0
+
+        original_sleep = asyncio.sleep
+
+        async def _tracking_sleep(_: float) -> None:
+            nonlocal current_total
+            current_total += 1
+            await original_sleep(0)
+
+        async def _fail_session() -> None:
+            nonlocal poll_count, current_total
+            if poll_count > 0:
+                sleep_totals.append(current_total)
+                current_total = 0
+            poll_count += 1
+            if poll_count >= 4:
+                adapter._stopping = True
+                return MagicMock()
+            import aiohttp
+            raise aiohttp.ClientError("connection refused")
+
+        adapter._ensure_session = _fail_session  # type: ignore[method-assign]
+
+        with patch(
+            "oasisagent.ingestion.qbittorrent.asyncio.sleep",
+            side_effect=_tracking_sleep,
+        ):
+            await adapter._poll_loop()
+
+        assert len(sleep_totals) >= 2
+        for i in range(1, len(sleep_totals)):
+            assert sleep_totals[i] >= sleep_totals[i - 1]
+
+    @pytest.mark.asyncio
+    async def test_backoff_resets_on_success(self) -> None:
+        """Backoff resets to poll_interval after a successful poll."""
+        adapter, _ = _make_adapter(poll_interval=10)
+
+        poll_count = 0
+        sleep_totals: list[int] = []
+        current_total = 0
+
+        original_sleep = asyncio.sleep
+
+        async def _tracking_sleep(_: float) -> None:
+            nonlocal current_total
+            current_total += 1
+            await original_sleep(0)
+
+        async def _ensure_session() -> MagicMock:
+            nonlocal poll_count, current_total
+            if poll_count > 0:
+                sleep_totals.append(current_total)
+                current_total = 0
+            poll_count += 1
+            if poll_count == 1:
+                import aiohttp
+                raise aiohttp.ClientError("down")
+            if poll_count >= 3:
+                adapter._stopping = True
+            return MagicMock()
+
+        adapter._ensure_session = _ensure_session  # type: ignore[method-assign]
+        adapter._poll_transfer_info = AsyncMock()  # type: ignore[method-assign]
+        adapter._poll_errored_torrents = AsyncMock()  # type: ignore[method-assign]
+        adapter._poll_stalled_torrents = AsyncMock()  # type: ignore[method-assign]
+
+        with patch(
+            "oasisagent.ingestion.qbittorrent.asyncio.sleep",
+            side_effect=_tracking_sleep,
+        ):
+            await adapter._poll_loop()
+
+        assert len(sleep_totals) >= 2
+        assert sleep_totals[-1] == adapter._config.poll_interval
 
 
 # ---------------------------------------------------------------------------

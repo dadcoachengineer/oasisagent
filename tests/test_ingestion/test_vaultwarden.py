@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -202,6 +203,106 @@ class TestUrlConstruction:
 
         called_url = mock_session.get.call_args[0][0]
         assert called_url == "http://localhost:8000/alive"
+
+
+# ---------------------------------------------------------------------------
+# Poll loop backoff
+# ---------------------------------------------------------------------------
+
+
+class TestPollLoopBackoff:
+    @pytest.mark.asyncio
+    async def test_backoff_increases_on_repeated_failures(self) -> None:
+        """Poll loop uses exponential backoff when service is persistently down."""
+        adapter, _ = _make_adapter(poll_interval=10)
+
+        poll_count = 0
+        sleep_totals: list[int] = []
+        current_total = 0
+
+        original_sleep = asyncio.sleep
+
+        async def _tracking_sleep(_: float) -> None:
+            nonlocal current_total
+            current_total += 1
+            await original_sleep(0)
+
+        async def _fail_poll(_session: object) -> None:
+            nonlocal poll_count, current_total
+            if poll_count > 0:
+                sleep_totals.append(current_total)
+                current_total = 0
+            poll_count += 1
+            if poll_count >= 4:
+                adapter._stopping = True
+                return
+            import aiohttp
+            raise aiohttp.ClientError("connection refused")
+
+        adapter._poll_health = _fail_poll  # type: ignore[method-assign]
+
+        with patch(
+            "oasisagent.ingestion.vaultwarden.aiohttp.ClientSession",
+        ) as mock_cs, patch(
+            "oasisagent.ingestion.vaultwarden.asyncio.sleep",
+            side_effect=_tracking_sleep,
+        ):
+            mock_session = AsyncMock()
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+            await adapter._poll_loop()
+
+        # Each subsequent wait should be >= the previous (exponential backoff)
+        assert len(sleep_totals) >= 2
+        for i in range(1, len(sleep_totals)):
+            assert sleep_totals[i] >= sleep_totals[i - 1]
+
+    @pytest.mark.asyncio
+    async def test_backoff_resets_on_success(self) -> None:
+        """Backoff resets to poll_interval after a successful poll."""
+        adapter, _ = _make_adapter(poll_interval=10)
+
+        poll_count = 0
+        sleep_totals: list[int] = []
+        current_total = 0
+
+        original_sleep = asyncio.sleep
+
+        async def _tracking_sleep(_: float) -> None:
+            nonlocal current_total
+            current_total += 1
+            await original_sleep(0)
+
+        async def _poll_health(session: object) -> None:
+            nonlocal poll_count, current_total
+            if poll_count > 0:
+                sleep_totals.append(current_total)
+                current_total = 0
+            poll_count += 1
+            if poll_count == 1:
+                import aiohttp
+                raise aiohttp.ClientError("down")
+            if poll_count >= 3:
+                adapter._stopping = True
+                return
+            # Success on poll 2
+
+        adapter._poll_health = _poll_health  # type: ignore[method-assign]
+
+        with patch(
+            "oasisagent.ingestion.vaultwarden.aiohttp.ClientSession",
+        ) as mock_cs, patch(
+            "oasisagent.ingestion.vaultwarden.asyncio.sleep",
+            side_effect=_tracking_sleep,
+        ):
+            mock_session = AsyncMock()
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+            await adapter._poll_loop()
+
+        # After success, wait should be poll_interval (10), not backoff
+        assert len(sleep_totals) >= 2
+        assert sleep_totals[-1] == adapter._config.poll_interval
 
 
 # ---------------------------------------------------------------------------

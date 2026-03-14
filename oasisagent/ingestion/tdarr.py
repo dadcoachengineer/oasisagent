@@ -76,23 +76,29 @@ class TdarrAdapter(IngestAdapter):
 
     async def _poll_loop(self) -> None:
         timeout = aiohttp.ClientTimeout(total=self._config.timeout)
+        backoff = self._config.poll_interval
+        max_backoff = 300
 
         while not self._stopping:
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     await self._poll_status(session)
                     self._connected = True
+                    backoff = self._config.poll_interval  # reset on success
             except asyncio.CancelledError:
                 return
             except (TimeoutError, aiohttp.ClientError) as exc:
                 if self._connected:
                     logger.warning("Tdarr: connection error: %s", exc)
                 self._connected = False
+                backoff = min(backoff * 2, max_backoff)
             except Exception:
                 self._connected = False
                 logger.exception("Tdarr: unexpected error")
+                backoff = min(backoff * 2, max_backoff)
 
-            for _ in range(self._config.poll_interval):
+            wait = self._config.poll_interval if self._connected else backoff
+            for _ in range(wait):
                 if self._stopping:
                     return
                 await asyncio.sleep(1)

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -345,6 +346,105 @@ class TestBandwidthPolling:
 
         event = queue.put_nowait.call_args[0][0]
         assert event.metadata.dedup_key == "tautulli:bandwidth"
+
+
+# ---------------------------------------------------------------------------
+# Poll loop backoff
+# ---------------------------------------------------------------------------
+
+
+class TestPollLoopBackoff:
+    @pytest.mark.asyncio
+    async def test_backoff_increases_on_repeated_failures(self) -> None:
+        """Poll loop uses exponential backoff when service is persistently down."""
+        adapter, _ = _make_adapter(poll_interval=10)
+
+        poll_count = 0
+        sleep_totals: list[int] = []
+        current_total = 0
+
+        original_sleep = asyncio.sleep
+
+        async def _tracking_sleep(_: float) -> None:
+            nonlocal current_total
+            current_total += 1
+            await original_sleep(0)
+
+        async def _fail_poll(_session: object) -> None:
+            nonlocal poll_count, current_total
+            if poll_count > 0:
+                sleep_totals.append(current_total)
+                current_total = 0
+            poll_count += 1
+            if poll_count >= 4:
+                adapter._stopping = True
+                return
+            import aiohttp
+            raise aiohttp.ClientError("connection refused")
+
+        adapter._poll_server_status = _fail_poll  # type: ignore[method-assign]
+        adapter._poll_activity = AsyncMock()  # type: ignore[method-assign]
+
+        with patch(
+            "oasisagent.ingestion.tautulli.aiohttp.ClientSession",
+        ) as mock_cs, patch(
+            "oasisagent.ingestion.tautulli.asyncio.sleep",
+            side_effect=_tracking_sleep,
+        ):
+            mock_session = AsyncMock()
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+            await adapter._poll_loop()
+
+        assert len(sleep_totals) >= 2
+        for i in range(1, len(sleep_totals)):
+            assert sleep_totals[i] >= sleep_totals[i - 1]
+
+    @pytest.mark.asyncio
+    async def test_backoff_resets_on_success(self) -> None:
+        """Backoff resets to poll_interval after a successful poll."""
+        adapter, _ = _make_adapter(poll_interval=10)
+
+        poll_count = 0
+        sleep_totals: list[int] = []
+        current_total = 0
+
+        original_sleep = asyncio.sleep
+
+        async def _tracking_sleep(_: float) -> None:
+            nonlocal current_total
+            current_total += 1
+            await original_sleep(0)
+
+        async def _poll_status(session: object) -> None:
+            nonlocal poll_count, current_total
+            if poll_count > 0:
+                sleep_totals.append(current_total)
+                current_total = 0
+            poll_count += 1
+            if poll_count == 1:
+                import aiohttp
+                raise aiohttp.ClientError("down")
+            if poll_count >= 3:
+                adapter._stopping = True
+                return
+
+        adapter._poll_server_status = _poll_status  # type: ignore[method-assign]
+        adapter._poll_activity = AsyncMock()  # type: ignore[method-assign]
+
+        with patch(
+            "oasisagent.ingestion.tautulli.aiohttp.ClientSession",
+        ) as mock_cs, patch(
+            "oasisagent.ingestion.tautulli.asyncio.sleep",
+            side_effect=_tracking_sleep,
+        ):
+            mock_session = AsyncMock()
+            mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+            await adapter._poll_loop()
+
+        assert len(sleep_totals) >= 2
+        assert sleep_totals[-1] == adapter._config.poll_interval
 
 
 # ---------------------------------------------------------------------------

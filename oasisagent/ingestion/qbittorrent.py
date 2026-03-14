@@ -106,6 +106,8 @@ class QBittorrentAdapter(IngestAdapter):
     # -----------------------------------------------------------------
 
     async def _poll_loop(self) -> None:
+        backoff = self._config.poll_interval
+        max_backoff = 300
         while not self._stopping:
             try:
                 session = await self._ensure_session()
@@ -113,6 +115,7 @@ class QBittorrentAdapter(IngestAdapter):
                 await self._poll_errored_torrents(session)
                 await self._poll_stalled_torrents(session)
                 self._connected = True
+                backoff = self._config.poll_interval  # reset on success
             except asyncio.CancelledError:
                 return
             except (TimeoutError, aiohttp.ClientError) as exc:
@@ -123,14 +126,17 @@ class QBittorrentAdapter(IngestAdapter):
                 if self._session and not self._session.closed:
                     await self._session.close()
                 self._session = None
+                backoff = min(backoff * 2, max_backoff)
             except Exception:
                 self._connected = False
                 logger.exception("qBittorrent: unexpected error")
                 if self._session and not self._session.closed:
                     await self._session.close()
                 self._session = None
+                backoff = min(backoff * 2, max_backoff)
 
-            for _ in range(self._config.poll_interval):
+            wait = self._config.poll_interval if self._connected else backoff
+            for _ in range(wait):
                 if self._stopping:
                     return
                 await asyncio.sleep(1)

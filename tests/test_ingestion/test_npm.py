@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -89,13 +90,108 @@ class TestAdapterLifecycle:
         assert all(v is False for v in adapter._endpoint_health.values())
 
     @pytest.mark.asyncio
-    async def test_start_connection_failure(self) -> None:
+    async def test_start_connection_failure_retries(self) -> None:
+        """Start retries with backoff on connection failure, not silent death."""
         adapter, _ = _make_adapter()
+        call_count = 0
+
+        async def _connect_side_effect() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ConnectionError("refused")
+
+        adapter._client.connect = AsyncMock(side_effect=_connect_side_effect)
+
+        original_sleep = asyncio.sleep
+
+        async def _noop_sleep(_: float) -> None:
+            await original_sleep(0)
+
+        with patch(
+            "oasisagent.ingestion.npm.asyncio.sleep",
+            side_effect=_noop_sleep,
+        ):
+            task = asyncio.create_task(adapter.start())
+            for _ in range(200):
+                await original_sleep(0)
+            adapter._stopping = True
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                task.cancel()
+
+        assert call_count >= 3
+
+
+# ---------------------------------------------------------------------------
+# Startup retry
+# ---------------------------------------------------------------------------
+
+
+class TestStartupRetry:
+    @pytest.mark.asyncio
+    async def test_retries_on_connection_failure(self) -> None:
+        adapter, _ = _make_adapter()
+
+        call_count = 0
+        original_sleep = asyncio.sleep
+
+        async def _connect_side_effect() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ConnectionError("refused")
+
+        async def _noop_sleep(_: float) -> None:
+            await original_sleep(0)
+
+        adapter._client = AsyncMock()
+        adapter._client.connect = AsyncMock(side_effect=_connect_side_effect)
+        adapter._client.close = AsyncMock()
+
+        with patch(
+            "oasisagent.ingestion.npm.asyncio.sleep",
+            side_effect=_noop_sleep,
+        ):
+            task = asyncio.create_task(adapter.start())
+            for _ in range(200):
+                await original_sleep(0)
+            adapter._stopping = True
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                task.cancel()
+
+        assert call_count >= 3
+
+    @pytest.mark.asyncio
+    async def test_stops_during_backoff(self) -> None:
+        """Setting _stopping during backoff causes start() to return."""
+        adapter, _ = _make_adapter()
+
         adapter._client.connect = AsyncMock(
             side_effect=ConnectionError("refused"),
         )
-        await adapter.start()
-        assert not await adapter.healthy()
+
+        original_sleep = asyncio.sleep
+        sleep_count = 0
+
+        async def _sleep_then_stop(_: float) -> None:
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 3:
+                adapter._stopping = True
+            await original_sleep(0)
+
+        with patch(
+            "oasisagent.ingestion.npm.asyncio.sleep",
+            side_effect=_sleep_then_stop,
+        ):
+            await asyncio.wait_for(adapter.start(), timeout=2.0)
+
+        # Should have exited cleanly
+        assert adapter._stopping is True
 
 
 # ---------------------------------------------------------------------------
