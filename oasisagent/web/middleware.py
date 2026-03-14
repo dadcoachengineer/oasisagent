@@ -81,13 +81,14 @@ async def setup_guard_middleware(
 
     response = await call_next(request)
 
-    # Redirect unauthenticated UI requests to login instead of showing JSON 401
-    if (
-        response.status_code == 401
-        and path.startswith("/ui/")
-        and "hx-request" not in request.headers
-    ):
-        return RedirectResponse(url="/ui/login", status_code=303)
+    # Handle 401 on UI paths:
+    # - Normal requests → redirect to login page
+    # - HTMX requests → add HX-Redirect header so HTMX performs a client-side redirect
+    if response.status_code == 401 and path.startswith("/ui/"):
+        if "hx-request" in request.headers:
+            response.headers["HX-Redirect"] = "/ui/login"
+        else:
+            return RedirectResponse(url="/ui/login", status_code=303)
 
     return response
 

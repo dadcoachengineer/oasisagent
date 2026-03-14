@@ -8,9 +8,9 @@ TEMPLATE = Path(__file__).resolve().parents[2] / "oasisagent" / "ui" / "template
 
 
 class TestHtmx401Handler:
-    def test_template_contains_after_request_handler(self) -> None:
+    def test_template_contains_response_error_handler(self) -> None:
         content = TEMPLATE.read_text()
-        assert "htmx:afterRequest" in content
+        assert "htmx:responseError" in content
 
     def test_template_checks_401_status(self) -> None:
         content = TEMPLATE.read_text()
@@ -19,3 +19,7 @@ class TestHtmx401Handler:
     def test_template_redirects_to_login(self) -> None:
         content = TEMPLATE.read_text()
         assert "'/ui/login'" in content
+
+    def test_template_contains_sse_error_handler(self) -> None:
+        content = TEMPLATE.read_text()
+        assert "htmx:sseError" in content
