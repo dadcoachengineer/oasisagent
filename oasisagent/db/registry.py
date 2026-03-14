@@ -48,6 +48,7 @@ from oasisagent.config import (
     UnifiAdapterConfig,
     UnifiHandlerConfig,
     UptimeKumaAdapterConfig,
+    VaultwardenAdapterConfig,
     WebhookNotificationConfig,
     WebhookSourceConfig,
 )
@@ -120,6 +121,9 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "overseerr": TypeMeta(
         model=OverseerrAdapterConfig,
         secret_fields=frozenset({"api_key"}),
+    ),
+    "vaultwarden": TypeMeta(
+        model=VaultwardenAdapterConfig,
     ),
 }
 

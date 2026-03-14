@@ -1,0 +1,19 @@
+fixes:
+  - id: vaultwarden-unreachable
+    match:
+      system: vaultwarden
+      event_type: vaultwarden_unreachable
+    diagnosis: "Vaultwarden (Bitwarden) service is unreachable — critical security service down"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Vaultwarden is unreachable — password manager is down. Checklist:
+          1. Check if the Vaultwarden container/service is running
+          2. Verify the host is reachable on the network
+          3. Check for resource exhaustion (disk full, memory)
+          4. Review Vaultwarden container logs for errors
+          5. Verify reverse proxy configuration if applicable
+    risk_tier: escalate

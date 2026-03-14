@@ -51,6 +51,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "tautulli": "Tautulli",
     "tdarr": "Tdarr",
     "overseerr": "Overseerr",
+    "vaultwarden": "Vaultwarden",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -120,6 +121,9 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     ),
     "overseerr": (
         "Monitor Overseerr server connectivity"
+    ),
+    "vaultwarden": (
+        "Monitor Vaultwarden (Bitwarden) service health"
     ),
     # Services
     "llm_triage": (
@@ -700,6 +704,21 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         FieldSpec(
             "api_key", "API Key", "password",
             required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "vaultwarden": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8000",
+            required=True,
         ),
         FieldSpec(
             "poll_interval", "Poll Interval (seconds)",
