@@ -542,6 +542,22 @@ class TdarrAdapterConfig(BaseModel):
     timeout: int = 10
 
 
+# -- N8N --------------------------------------------------------------------
+
+
+class N8nAdapterConfig(BaseModel):
+    """N8N workflow automation polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 300
+    poll_executions: bool = True
+    timeout: int = 10
+
+
 # -- Overseerr ---------------------------------------------------------------
 
 
@@ -694,6 +710,7 @@ class IngestionConfig(BaseModel):
         default_factory=TautulliAdapterConfig,
     )
     tdarr: TdarrAdapterConfig = Field(default_factory=TdarrAdapterConfig)
+    n8n: N8nAdapterConfig = Field(default_factory=N8nAdapterConfig)
     overseerr: OverseerrAdapterConfig = Field(
         default_factory=OverseerrAdapterConfig,
     )

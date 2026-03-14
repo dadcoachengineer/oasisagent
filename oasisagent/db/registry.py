@@ -34,6 +34,7 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    N8nAdapterConfig,
     NpmAdapterConfig,
     OverseerrAdapterConfig,
     PlexAdapterConfig,
@@ -122,6 +123,10 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     ),
     "tdarr": TypeMeta(
         model=TdarrAdapterConfig,
+    ),
+    "n8n": TypeMeta(
+        model=N8nAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
     ),
     "overseerr": TypeMeta(
         model=OverseerrAdapterConfig,

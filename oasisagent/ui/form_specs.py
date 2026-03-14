@@ -51,6 +51,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "plex": "Plex Media Server",
     "tautulli": "Tautulli",
     "tdarr": "Tdarr",
+    "n8n": "N8N",
     "overseerr": "Overseerr",
     "vaultwarden": "Vaultwarden",
     # Services
@@ -123,6 +124,10 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "tdarr": (
         "Monitor Tdarr transcoding workers"
         " and queue progress"
+    ),
+    "n8n": (
+        "Monitor N8N workflow execution health"
+        " and failed runs"
     ),
     "overseerr": (
         "Monitor Overseerr server connectivity"
@@ -750,6 +755,36 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         FieldSpec(
             "poll_interval", "Poll Interval (seconds)",
             "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "n8n": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:5678",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text=(
+                "N8N Settings → API → Create API Key"
+            ),
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=300,
+        ),
+        FieldSpec(
+            "poll_executions",
+            "Poll Failed Executions", "checkbox",
+            help_text=(
+                "Monitor for failed workflow executions"
+            ),
+            default=True, group="Polling",
         ),
         FieldSpec(
             "timeout", "Request Timeout (seconds)",
