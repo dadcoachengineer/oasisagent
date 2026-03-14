@@ -24,6 +24,7 @@ from oasisagent.config import (
     DiscordNotificationConfig,
     DockerHandlerConfig,
     EmailNotificationConfig,
+    FrigateAdapterConfig,
     GuardrailsConfig,
     HaHandlerConfig,
     HaLogPollerConfig,
@@ -100,6 +101,9 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "uptime_kuma": TypeMeta(
         model=UptimeKumaAdapterConfig,
         secret_fields=frozenset({"api_key"}),
+    ),
+    "frigate": TypeMeta(
+        model=FrigateAdapterConfig,
     ),
     "npm": TypeMeta(
         model=NpmAdapterConfig,
