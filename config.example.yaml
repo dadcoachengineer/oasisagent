@@ -281,7 +281,7 @@ llm:
     base_url: http://localhost:11434/v1    # Ollama default
     model: qwen2.5:7b
     api_key: ${TRIAGE_LLM_API_KEY:-not-needed}
-    timeout: 5                   # Seconds — local models should respond fast
+    timeout: 30                  # Seconds — allows for Ollama cold-start model loading
     max_tokens: 1024
     temperature: 0.1             # Low temp for consistent classification
 
