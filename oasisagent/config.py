@@ -440,6 +440,27 @@ class UptimeKumaAdapterConfig(BaseModel):
     cert_critical_days: int = 7
 
 
+# -- Nginx Proxy Manager ----------------------------------------------------
+
+
+class NpmAdapterConfig(BaseModel):
+    """Nginx Proxy Manager polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    email: str = ""
+    password: str = ""
+    poll_interval: int = 300
+    poll_proxy_hosts: bool = True
+    poll_certificates: bool = True
+    poll_dead_hosts: bool = True
+    cert_warning_days: int = 14
+    cert_critical_days: int = 7
+    timeout: int = 10
+
+
 # -- Servarr (Sonarr/Radarr/Prowlarr/Bazarr) --------------------------------
 
 
@@ -663,6 +684,7 @@ class IngestionConfig(BaseModel):
     uptime_kuma: UptimeKumaAdapterConfig = Field(
         default_factory=UptimeKumaAdapterConfig,
     )
+    npm: NpmAdapterConfig = Field(default_factory=NpmAdapterConfig)
     servarr: list[ServarrAdapterConfig] = Field(default_factory=list)
     qbittorrent: QBittorrentAdapterConfig = Field(
         default_factory=QBittorrentAdapterConfig,

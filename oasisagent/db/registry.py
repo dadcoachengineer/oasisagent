@@ -34,6 +34,7 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    NpmAdapterConfig,
     OverseerrAdapterConfig,
     PlexAdapterConfig,
     PortainerHandlerConfig,
@@ -98,6 +99,10 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "uptime_kuma": TypeMeta(
         model=UptimeKumaAdapterConfig,
         secret_fields=frozenset({"api_key"}),
+    ),
+    "npm": TypeMeta(
+        model=NpmAdapterConfig,
+        secret_fields=frozenset({"password"}),
     ),
     "servarr": TypeMeta(
         model=ServarrAdapterConfig,
