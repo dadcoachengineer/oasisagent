@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -349,3 +350,51 @@ class TestSslConfig:
             await client.connect()
 
             mock_connector_cls.assert_called_once_with(ssl=True)
+
+
+# ---------------------------------------------------------------------------
+# Site name validation
+# ---------------------------------------------------------------------------
+
+
+class TestSiteNameValidation:
+    def test_valid_site_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Lowercase alphanumeric site IDs should not trigger a warning."""
+        with caplog.at_level(logging.WARNING, logger="oasisagent.clients.unifi"):
+            _make_client(site="default")
+        assert caplog.text == ""
+
+    def test_valid_site_alphanumeric(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Site IDs like 'abc123' are valid and should not warn."""
+        with caplog.at_level(logging.WARNING, logger="oasisagent.clients.unifi"):
+            _make_client(site="abc123")
+        assert caplog.text == ""
+
+    def test_site_with_spaces_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A site name with spaces looks like a display name."""
+        with caplog.at_level(logging.WARNING, logger="oasisagent.clients.unifi"):
+            _make_client(site="Oasis UDMP")
+        assert "Oasis UDMP" in caplog.text
+        assert "contains spaces" in caplog.text
+        assert "display name" in caplog.text
+
+    def test_site_with_uppercase_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A site name with uppercase letters looks like a display name."""
+        with caplog.at_level(logging.WARNING, logger="oasisagent.clients.unifi"):
+            _make_client(site="MyHome")
+        assert "MyHome" in caplog.text
+        assert "contains uppercase letters" in caplog.text
+        assert "display name" in caplog.text
+
+    def test_site_with_spaces_and_uppercase_warns_both(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Both issues should be mentioned in the warning."""
+        with caplog.at_level(logging.WARNING, logger="oasisagent.clients.unifi"):
+            _make_client(site="My Home")
+        assert "contains spaces and contains uppercase letters" in caplog.text
+
+    def test_site_with_spaces_does_not_block(self) -> None:
+        """Client should still be created even with a suspicious site name."""
+        client = _make_client(site="Oasis UDMP")
+        assert client.site == "Oasis UDMP"

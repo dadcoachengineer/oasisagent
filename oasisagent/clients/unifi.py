@@ -57,6 +57,8 @@ class UnifiClient:
         self._session: aiohttp.ClientSession | None = None
         self._authenticated = False
 
+        self._validate_site_name(site)
+
     @property
     def site(self) -> str:
         """The configured UniFi site name."""
@@ -187,6 +189,30 @@ class UnifiClient:
     # -----------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------
+
+    @staticmethod
+    def _validate_site_name(site: str) -> None:
+        """Warn if the site name looks like a display name instead of a site ID.
+
+        UniFi site IDs are typically lowercase alphanumeric (e.g., "default").
+        Display names often contain spaces or uppercase letters, which produce
+        URLs like ``/api/s/Oasis%20UDMP/stat/device`` and fail with
+        ``api.err.NoSiteContext``.
+        """
+        reasons: list[str] = []
+        if " " in site:
+            reasons.append("contains spaces")
+        if site != site.lower():
+            reasons.append("contains uppercase letters")
+
+        if reasons:
+            logger.warning(
+                "UniFi site '%s' %s — this looks like a display name, not a "
+                "site ID. Site IDs are typically lowercase alphanumeric "
+                "(e.g., 'default').",
+                site,
+                " and ".join(reasons),
+            )
 
     def _build_url(self, path: str) -> str:
         """Build the full URL with optional UDM prefix and site."""
