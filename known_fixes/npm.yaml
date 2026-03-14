@@ -1,0 +1,57 @@
+fixes:
+  - id: npm-proxy-host-error
+    match:
+      system: npm
+      event_type: npm_proxy_host_error
+    diagnosis: "Nginx Proxy Manager proxy host is erroring or disabled"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          NPM proxy host error detected. Checklist:
+          1. Check if the proxy host was intentionally disabled
+          2. Verify the upstream service is running and reachable
+          3. Check NPM logs for SSL or connectivity errors
+          4. Verify the forward host/port are correct in NPM
+          5. Check for DNS resolution issues on the NPM host
+    risk_tier: recommend
+
+  - id: npm-certificate-expiring
+    match:
+      system: npm
+      event_type: npm_certificate_expiring
+    diagnosis: "NPM-managed SSL certificate is approaching expiration — auto-renewal may have failed"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          NPM certificate expiring soon. Steps:
+          1. Check NPM dashboard for certificate renewal status
+          2. Verify Let's Encrypt ACME challenge is reachable (port 80)
+          3. Check NPM logs for renewal errors
+          4. Verify DNS records point to the correct IP
+          5. Try manually triggering renewal from NPM UI
+          6. Check if rate limits have been hit (Let's Encrypt)
+    risk_tier: recommend
+
+  - id: npm-dead-host
+    match:
+      system: npm
+      event_type: npm_dead_host_detected
+    diagnosis: "NPM dead host detected — a configured 404 host is active"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Dead host detected in Nginx Proxy Manager. Consider:
+          1. Review the dead host entry in NPM dashboard
+          2. Determine if the dead host was intentional (custom 404)
+          3. Check if a proxy host should be created instead
+          4. Verify domain DNS records are correct
+    risk_tier: recommend

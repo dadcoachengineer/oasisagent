@@ -45,6 +45,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "unifi": "UniFi Network",
     "cloudflare": "Cloudflare",
     "uptime_kuma": "Uptime Kuma",
+    "npm": "Nginx Proxy Manager",
     "servarr": "Servarr (Sonarr/Radarr/Prowlarr/Bazarr)",
     "qbittorrent": "qBittorrent",
     "plex": "Plex Media Server",
@@ -97,6 +98,10 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "uptime_kuma": (
         "Pull monitor status from Uptime Kuma's"
         " Prometheus endpoint"
+    ),
+    "npm": (
+        "Monitor Nginx Proxy Manager proxy hosts,"
+        " certificates, and dead hosts"
     ),
     "servarr": (
         "Monitor Sonarr, Radarr, Prowlarr, or Bazarr"
@@ -573,6 +578,62 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
                 " within N days"
             ),
             default=7, min_val=1,
+        ),
+    ],
+
+    "npm": [
+        FieldSpec(
+            "url", "NPM URL", "text",
+            help_text="e.g. http://192.168.1.50:81",
+            required=True,
+        ),
+        FieldSpec(
+            "email", "Admin Email", "text",
+            help_text="NPM admin login email",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "password", "Password", "password",
+            help_text="NPM admin login password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=300,
+        ),
+        FieldSpec(
+            "poll_proxy_hosts", "Poll Proxy Hosts",
+            "checkbox", default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_certificates", "Poll Certificates",
+            "checkbox", default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_dead_hosts", "Poll Dead Hosts",
+            "checkbox", default=True, group="Polling",
+        ),
+        FieldSpec(
+            "cert_warning_days",
+            "Cert Warning (days)", "number",
+            help_text=(
+                "Warn when certificate expires"
+                " within N days"
+            ),
+            default=14, min_val=1,
+        ),
+        FieldSpec(
+            "cert_critical_days",
+            "Cert Critical (days)", "number",
+            help_text=(
+                "Alert when certificate expires"
+                " within N days"
+            ),
+            default=7, min_val=1,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
         ),
     ],
 
