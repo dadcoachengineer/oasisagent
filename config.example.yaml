@@ -22,6 +22,7 @@ agent:
   known_fixes_dir: known_fixes/ # Directory containing T0 YAML fix registries
   correlation_window: 30        # Group related events within this window (seconds); 0 to disable
   metrics_port: 0               # Prometheus /metrics port; 0 to disable
+  max_consecutive_identical: 3   # Suppress after N consecutive identical events per entity+type
 
 # -----------------------------------------------------------------------------
 # Ingestion — Event sources
