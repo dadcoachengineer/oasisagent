@@ -24,6 +24,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
+
 from oasisagent.clients.unifi import UnifiClient
 from oasisagent.ingestion.base import IngestAdapter
 from oasisagent.models import Event, EventMetadata, Severity
@@ -33,6 +35,11 @@ if TYPE_CHECKING:
     from oasisagent.engine.queue import EventQueue
 
 logger = logging.getLogger(__name__)
+
+# Number of consecutive 404 errors before auto-disabling an endpoint.
+# Endpoints returning 404 are typically unsupported on the controller's
+# firmware version — disabling avoids log spam every poll cycle.
+_MAX_404_FAILURES = 3
 
 # Controller event keys considered actionable (skip informational noise)
 _ACTIONABLE_EVENT_KEYS = frozenset({
@@ -98,6 +105,10 @@ class UnifiAdapter(IngestAdapter):
         if config.poll_dpi:
             self._endpoint_health["dpi"] = False
 
+        # Auto-disable endpoints that persistently return 404
+        self._404_counts: dict[str, int] = {}
+        self._disabled_endpoints: set[str] = set()
+
         # Dedup trackers (separate semantics per endpoint)
         self._device_states: dict[str, int] = {}          # mac → state code
         self._device_cpu_alert: dict[str, bool] = {}      # mac → alert active
@@ -158,9 +169,15 @@ class UnifiAdapter(IngestAdapter):
     # -----------------------------------------------------------------
 
     async def _poll_loop(self) -> None:
-        """Main polling loop — polls all endpoints each interval."""
+        """Main polling loop — polls all endpoints each interval.
+
+        Each endpoint is wrapped in its own try/except so a single failing
+        endpoint doesn't block the others. 404 responses are tracked per
+        endpoint; after ``_MAX_404_FAILURES`` consecutive 404s the endpoint
+        is auto-disabled (likely unsupported on this firmware version).
+        """
         while not self._stopping:
-            # Devices always polled
+            # Devices always polled (no auto-disable — core endpoint)
             try:
                 await self._poll_devices()
                 self._endpoint_health["devices"] = True
@@ -170,85 +187,42 @@ class UnifiAdapter(IngestAdapter):
                 logger.warning("UniFi devices poll error: %s", exc)
                 self._endpoint_health["devices"] = False
 
-            if self._config.poll_alarms:
-                try:
-                    await self._poll_alarms()
-                    self._endpoint_health["alarms"] = True
-                except asyncio.CancelledError:
-                    return
-                except Exception as exc:
-                    logger.warning("UniFi alarms poll error: %s", exc)
-                    self._endpoint_health["alarms"] = False
+            # Optional endpoints with auto-disable on persistent 404
+            optional_endpoints: list[tuple[str, bool, Any]] = [
+                ("alarms", self._config.poll_alarms, self._poll_alarms),
+                ("health", self._config.poll_health, self._poll_health),
+                ("ips", self._config.poll_ips, self._poll_ips),
+                ("rogue_ap", self._config.poll_rogue_ap, self._poll_rogue_ap),
+                ("clients", self._config.poll_clients, self._poll_clients),
+                ("anomalies", self._config.poll_anomalies, self._poll_anomalies),
+                ("events", self._config.poll_events, self._poll_events),
+                ("dpi", self._config.poll_dpi, self._poll_dpi),
+            ]
 
-            if self._config.poll_health:
+            for ep_name, enabled, poll_fn in optional_endpoints:
+                if not enabled or ep_name in self._disabled_endpoints:
+                    continue
                 try:
-                    await self._poll_health()
-                    self._endpoint_health["health"] = True
+                    await poll_fn()
+                    self._endpoint_health[ep_name] = True
+                    self._404_counts.pop(ep_name, None)
                 except asyncio.CancelledError:
                     return
                 except Exception as exc:
-                    logger.warning("UniFi health poll error: %s", exc)
-                    self._endpoint_health["health"] = False
-
-            if self._config.poll_ips:
-                try:
-                    await self._poll_ips()
-                    self._endpoint_health["ips"] = True
-                except asyncio.CancelledError:
-                    return
-                except Exception as exc:
-                    logger.warning("UniFi IPS poll error: %s", exc)
-                    self._endpoint_health["ips"] = False
-
-            if self._config.poll_rogue_ap:
-                try:
-                    await self._poll_rogue_ap()
-                    self._endpoint_health["rogue_ap"] = True
-                except asyncio.CancelledError:
-                    return
-                except Exception as exc:
-                    logger.warning("UniFi rogue AP poll error: %s", exc)
-                    self._endpoint_health["rogue_ap"] = False
-
-            if self._config.poll_clients:
-                try:
-                    await self._poll_clients()
-                    self._endpoint_health["clients"] = True
-                except asyncio.CancelledError:
-                    return
-                except Exception as exc:
-                    logger.warning("UniFi clients poll error: %s", exc)
-                    self._endpoint_health["clients"] = False
-
-            if self._config.poll_anomalies:
-                try:
-                    await self._poll_anomalies()
-                    self._endpoint_health["anomalies"] = True
-                except asyncio.CancelledError:
-                    return
-                except Exception as exc:
-                    logger.warning("UniFi anomalies poll error: %s", exc)
-                    self._endpoint_health["anomalies"] = False
-
-            if self._config.poll_events:
-                try:
-                    await self._poll_events()
-                    self._endpoint_health["events"] = True
-                except asyncio.CancelledError:
-                    return
-                except Exception as exc:
-                    logger.warning("UniFi events poll error: %s", exc)
-                    self._endpoint_health["events"] = False
-
-            if self._config.poll_dpi:
-                try:
-                    await self._poll_dpi()
-                    self._endpoint_health["dpi"] = True
-                except asyncio.CancelledError:
-                    return
-                except Exception as exc:
-                    logger.warning("UniFi DPI poll error: %s", exc)
-                    self._endpoint_health["dpi"] = False
+                    if self._is_404(exc):
+                        count = self._404_counts.get(ep_name, 0) + 1
+                        self._404_counts[ep_name] = count
+                        if count >= _MAX_404_FAILURES:
+                            self._disabled_endpoints.add(ep_name)
+                            self._endpoint_health[ep_name] = False
+                            logger.warning(
+                                "Auto-disabling %s endpoint "
+                                "(not supported on this firmware)",
+                                ep_name,
+                            )
+                    else:
+                        logger.warning("UniFi %s poll error: %s", ep_name, exc)
+                        self._endpoint_health[ep_name] = False
 
             for _ in range(self._config.poll_interval):
                 if self._stopping:
@@ -645,7 +619,7 @@ class UnifiAdapter(IngestAdapter):
     # -----------------------------------------------------------------
 
     async def _poll_anomalies(self) -> None:
-        """Poll stat/anomaly for network anomalies using time-based lookback."""
+        """Poll stat/anomalies for network anomalies using time-based lookback."""
         now = datetime.now(tz=UTC)
         lookback = timedelta(minutes=max(self._config.poll_interval // 60 + 1, 2))
 
@@ -654,7 +628,7 @@ class UnifiAdapter(IngestAdapter):
 
         since_epoch_ms = int(since.timestamp() * 1000)
 
-        data = await self._client.get("stat/anomaly")
+        data = await self._client.get("stat/anomalies")
         anomalies: list[dict[str, Any]] = data.get("data", [])
 
         for anomaly in anomalies:
@@ -688,7 +662,12 @@ class UnifiAdapter(IngestAdapter):
     # -----------------------------------------------------------------
 
     async def _poll_events(self) -> None:
-        """Poll stat/event for actionable controller events using time-based lookback."""
+        """Poll stat/event for actionable controller events using time-based lookback.
+
+        The UniFi stat/event endpoint requires POST (not GET) even though
+        it retrieves data. The POST body accepts ``_limit``, ``_start``,
+        and ``within`` parameters to control the result window.
+        """
         now = datetime.now(tz=UTC)
         lookback = timedelta(minutes=max(self._config.poll_interval // 60 + 1, 2))
 
@@ -697,7 +676,12 @@ class UnifiAdapter(IngestAdapter):
 
         since_epoch_ms = int(since.timestamp() * 1000)
 
-        data = await self._client.get("stat/event")
+        # within = lookback in hours (minimum 1)
+        within_hours = max(int(lookback.total_seconds() / 3600), 1)
+        data = await self._client.post(
+            "stat/event",
+            {"_limit": 100, "within": within_hours},
+        )
         events: list[dict[str, Any]] = data.get("data", [])
 
         for ctrl_event in events:
@@ -776,6 +760,11 @@ class UnifiAdapter(IngestAdapter):
     # -----------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------
+
+    @staticmethod
+    def _is_404(exc: Exception) -> bool:
+        """Return True if the exception represents an HTTP 404 response."""
+        return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 404
 
     def _enqueue(self, event: Event) -> None:
         """Enqueue an event, logging on failure."""
