@@ -383,6 +383,50 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             default=True, group="Polling",
         ),
         FieldSpec(
+            "poll_ips", "Poll IDS/IPS Events", "checkbox",
+            help_text="Monitor intrusion detection/prevention alerts",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_rogue_ap", "Poll Rogue APs", "checkbox",
+            help_text="Detect unauthorized access points",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_clients", "Poll Clients", "checkbox",
+            help_text="Track client count spikes (high volume, disabled by default)",
+            default=False, group="Polling",
+        ),
+        FieldSpec(
+            "poll_anomalies", "Poll Anomalies", "checkbox",
+            help_text="Monitor network traffic anomalies",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_events", "Poll Controller Events", "checkbox",
+            help_text="Monitor actionable controller events",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_dpi", "Poll DPI Stats", "checkbox",
+            help_text="Monitor bandwidth by app category (disabled by default)",
+            default=False, group="Polling",
+        ),
+        FieldSpec(
+            "client_spike_threshold",
+            "Client Spike Threshold (%)", "float",
+            help_text="Percent change in client count to trigger alert",
+            default=20.0, min_val=1, max_val=100,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "dpi_bandwidth_threshold_mbps",
+            "DPI Bandwidth Threshold (Mbps)", "float",
+            help_text="Bandwidth per app category to trigger alert",
+            default=100.0, min_val=1,
+            group="Thresholds",
+        ),
+        FieldSpec(
             "timeout", "Request Timeout (seconds)",
             "number", default=10, min_val=1,
         ),
@@ -390,11 +434,13 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             "cpu_threshold", "CPU Alert Threshold (%)",
             "float",
             default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
         ),
         FieldSpec(
             "memory_threshold",
             "Memory Alert Threshold (%)", "float",
             default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
         ),
     ],
     "cloudflare": [

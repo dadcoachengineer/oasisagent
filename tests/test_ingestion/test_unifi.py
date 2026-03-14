@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -66,6 +67,27 @@ class TestConfigValidation:
         config = _make_config(site="office")
         assert config.site == "office"
 
+    def test_new_toggle_defaults(self) -> None:
+        """New telemetry toggles have correct defaults."""
+        config = UnifiAdapterConfig()
+        assert config.poll_ips is True
+        assert config.poll_rogue_ap is True
+        assert config.poll_clients is False
+        assert config.poll_anomalies is True
+        assert config.poll_events is True
+        assert config.poll_dpi is False
+        assert config.client_spike_threshold == 20.0
+        assert config.dpi_bandwidth_threshold_mbps == 100.0
+
+    def test_custom_thresholds(self) -> None:
+        """Custom threshold values are accepted."""
+        config = _make_config(
+            client_spike_threshold=30.0,
+            dpi_bandwidth_threshold_mbps=500.0,
+        )
+        assert config.client_spike_threshold == 30.0
+        assert config.dpi_bandwidth_threshold_mbps == 500.0
+
 
 # ---------------------------------------------------------------------------
 # Adapter identity & lifecycle
@@ -88,17 +110,70 @@ class TestAdapterLifecycle:
         adapter._client = AsyncMock()
         await adapter.stop()
         assert adapter._stopping is True
-        assert adapter._connected is False
+        # All endpoint health should be False after stop
+        for v in adapter._endpoint_health.values():
+            assert v is False
 
     @pytest.mark.asyncio
     async def test_start_connection_failure(self) -> None:
-        """Failed connection should set _connected=False and return."""
+        """Failed connection should set all endpoints unhealthy and return."""
         adapter, _ = _make_adapter()
         adapter._client.connect = AsyncMock(side_effect=ConnectionError("refused"))
 
         await adapter.start()
 
-        assert adapter._connected is False
+        assert not await adapter.healthy()
+
+    def test_endpoint_health_initialized(self) -> None:
+        """Endpoint health dict should include keys for enabled endpoints."""
+        adapter, _ = _make_adapter(
+            poll_ips=True, poll_rogue_ap=True, poll_clients=True,
+            poll_anomalies=True, poll_events=True, poll_dpi=True,
+        )
+        assert "devices" in adapter._endpoint_health
+        assert "alarms" in adapter._endpoint_health
+        assert "health" in adapter._endpoint_health
+        assert "ips" in adapter._endpoint_health
+        assert "rogue_ap" in adapter._endpoint_health
+        assert "clients" in adapter._endpoint_health
+        assert "anomalies" in adapter._endpoint_health
+        assert "events" in adapter._endpoint_health
+        assert "dpi" in adapter._endpoint_health
+
+    def test_endpoint_health_excludes_disabled(self) -> None:
+        """Disabled endpoints should not appear in health dict."""
+        adapter, _ = _make_adapter(
+            poll_alarms=False, poll_health=False, poll_ips=False,
+            poll_rogue_ap=False, poll_clients=False, poll_anomalies=False,
+            poll_events=False, poll_dpi=False,
+        )
+        assert "devices" in adapter._endpoint_health
+        assert "alarms" not in adapter._endpoint_health
+        assert "health" not in adapter._endpoint_health
+        assert "ips" not in adapter._endpoint_health
+
+    def test_health_detail(self) -> None:
+        """health_detail returns string status per endpoint."""
+        adapter, _ = _make_adapter()
+        adapter._endpoint_health["devices"] = True
+        adapter._endpoint_health["alarms"] = False
+        detail = adapter.health_detail()
+        assert detail["devices"] == "connected"
+        assert detail["alarms"] == "disconnected"
+
+    @pytest.mark.asyncio
+    async def test_healthy_true_when_any_endpoint_up(self) -> None:
+        """healthy() returns True if at least one endpoint is up."""
+        adapter, _ = _make_adapter()
+        adapter._endpoint_health["devices"] = True
+        assert await adapter.healthy()
+
+    @pytest.mark.asyncio
+    async def test_healthy_false_when_all_down(self) -> None:
+        """healthy() returns False if all endpoints are down."""
+        adapter, _ = _make_adapter()
+        # All default to False
+        assert not await adapter.healthy()
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +733,634 @@ class TestHealthPolling:
 
 
 # ---------------------------------------------------------------------------
+# IDS/IPS polling
+# ---------------------------------------------------------------------------
+
+
+class TestIpsPolling:
+    @pytest.mark.asyncio
+    async def test_ips_alert_emits_event(self) -> None:
+        """IPS alert event is emitted with correct fields."""
+        adapter, queue = _make_adapter(poll_ips=True)
+        # Set lookback to ensure events pass filter
+        adapter._last_ips_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "signature": "ET MALWARE Trojan",
+                "src_ip": "192.168.1.100",
+                "dest_ip": "10.0.0.1",
+                "action": "alert",
+                "category": "malware",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_ips()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "ids_alert"
+        assert event.severity == Severity.WARNING
+        assert event.payload["signature"] == "ET MALWARE Trojan"
+        assert event.payload["src_ip"] == "192.168.1.100"
+        assert event.payload["dest_ip"] == "10.0.0.1"
+        assert event.payload["action"] == "alert"
+        assert event.payload["category"] == "malware"
+
+    @pytest.mark.asyncio
+    async def test_ips_block_is_error_severity(self) -> None:
+        """Blocked IPS events should have ERROR severity."""
+        adapter, queue = _make_adapter(poll_ips=True)
+        adapter._last_ips_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "signature": "ET EXPLOIT",
+                "src_ip": "1.2.3.4",
+                "dest_ip": "192.168.1.1",
+                "action": "block",
+                "category": "exploit",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_ips()
+
+        event = queue.put_nowait.call_args[0][0]
+        assert event.severity == Severity.ERROR
+
+    @pytest.mark.asyncio
+    async def test_ips_old_events_filtered(self) -> None:
+        """Events older than the lookback window are not emitted."""
+        adapter, queue = _make_adapter(poll_ips=True)
+        adapter._last_ips_poll = datetime.now(tz=UTC) - timedelta(seconds=30)
+
+        old_ts = int((datetime.now(tz=UTC) - timedelta(minutes=10)).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "signature": "Old Event",
+                "src_ip": "1.2.3.4",
+                "dest_ip": "5.6.7.8",
+                "action": "alert",
+                "category": "misc",
+                "timestamp": old_ts,
+            }],
+        })
+
+        await adapter._poll_ips()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ips_missing_signature_skipped(self) -> None:
+        """Events without a signature field are skipped."""
+        adapter, queue = _make_adapter(poll_ips=True)
+        adapter._last_ips_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "src_ip": "1.2.3.4",
+                "action": "alert",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_ips()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ips_first_poll_uses_lookback(self) -> None:
+        """First poll (no _last_ips_poll) uses lookback window."""
+        adapter, queue = _make_adapter(poll_ips=True)
+        assert adapter._last_ips_poll is None
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "signature": "New Event",
+                "src_ip": "1.2.3.4",
+                "dest_ip": "5.6.7.8",
+                "action": "alert",
+                "category": "test",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_ips()
+
+        queue.put_nowait.assert_called_once()
+        assert adapter._last_ips_poll is not None
+
+    @pytest.mark.asyncio
+    async def test_ips_empty_response(self) -> None:
+        """Empty IPS response emits no events."""
+        adapter, queue = _make_adapter(poll_ips=True)
+        adapter._client.get = AsyncMock(return_value={"data": []})
+
+        await adapter._poll_ips()
+
+        queue.put_nowait.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Rogue AP detection
+# ---------------------------------------------------------------------------
+
+
+class TestRogueApPolling:
+    @pytest.mark.asyncio
+    async def test_new_rogue_ap_emits_event(self) -> None:
+        """New rogue AP emits rogue_ap_detected event."""
+        adapter, queue = _make_adapter(poll_rogue_ap=True)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "bssid": "aa:bb:cc:dd:ee:ff",
+                "ssid": "EvilTwin",
+                "channel": 6,
+                "rssi": -45,
+                "is_rogue": True,
+            }],
+        })
+
+        await adapter._poll_rogue_ap()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "rogue_ap_detected"
+        assert event.severity == Severity.WARNING
+        assert event.entity_id == "aa:bb:cc:dd:ee:ff"
+        assert event.payload["ssid"] == "EvilTwin"
+        assert event.payload["channel"] == 6
+        assert event.payload["rssi"] == -45
+
+    @pytest.mark.asyncio
+    async def test_seen_rogue_ap_deduped(self) -> None:
+        """Already-seen rogue APs are not re-emitted."""
+        adapter, queue = _make_adapter(poll_rogue_ap=True)
+        adapter._seen_rogue_aps.add("aa:bb:cc:dd:ee:ff")
+
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "bssid": "aa:bb:cc:dd:ee:ff",
+                "ssid": "EvilTwin",
+                "channel": 6,
+                "rssi": -45,
+            }],
+        })
+
+        await adapter._poll_rogue_ap()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rogue_ap_eviction(self) -> None:
+        """Rogue APs no longer in response are evicted from tracker."""
+        adapter, _queue = _make_adapter(poll_rogue_ap=True)
+        adapter._seen_rogue_aps = {"old-bssid-1", "old-bssid-2"}
+
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"bssid": "old-bssid-1", "ssid": "X", "channel": 1}],
+        })
+
+        await adapter._poll_rogue_ap()
+
+        assert "old-bssid-1" in adapter._seen_rogue_aps
+        assert "old-bssid-2" not in adapter._seen_rogue_aps
+
+    @pytest.mark.asyncio
+    async def test_rogue_ap_missing_bssid_skipped(self) -> None:
+        """Rogue APs without BSSID are skipped."""
+        adapter, queue = _make_adapter(poll_rogue_ap=True)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"ssid": "NoBSSID", "channel": 6}],
+        })
+
+        await adapter._poll_rogue_ap()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rogue_ap_dedup_key(self) -> None:
+        """Rogue AP dedup key includes BSSID."""
+        adapter, queue = _make_adapter(poll_rogue_ap=True)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"bssid": "11:22:33:44:55:66", "ssid": "Test"}],
+        })
+
+        await adapter._poll_rogue_ap()
+
+        event = queue.put_nowait.call_args[0][0]
+        assert event.metadata.dedup_key == "unifi:rogue_ap:11:22:33:44:55:66"
+
+
+# ---------------------------------------------------------------------------
+# Client tracking (spike detection)
+# ---------------------------------------------------------------------------
+
+
+class TestClientPolling:
+    @pytest.mark.asyncio
+    async def test_first_poll_establishes_baseline(self) -> None:
+        """First poll sets baseline count, no event emitted."""
+        adapter, queue = _make_adapter(poll_clients=True)
+        assert adapter._last_client_count is None
+
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"mac": f"aa:bb:{i}"} for i in range(50)],
+        })
+
+        await adapter._poll_clients()
+
+        queue.put_nowait.assert_not_called()
+        assert adapter._last_client_count == 50
+
+    @pytest.mark.asyncio
+    async def test_spike_increase_emits_event(self) -> None:
+        """Client count increase above threshold emits spike event."""
+        adapter, queue = _make_adapter(poll_clients=True, client_spike_threshold=20.0)
+        adapter._last_client_count = 100
+
+        # 130 clients = 30% increase
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"mac": f"aa:bb:{i}"} for i in range(130)],
+        })
+
+        await adapter._poll_clients()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "client_count_spike"
+        assert event.severity == Severity.WARNING
+        assert event.payload["current_count"] == 130
+        assert event.payload["previous_count"] == 100
+        assert event.payload["change_pct"] == 30.0
+        assert event.payload["direction"] == "increase"
+
+    @pytest.mark.asyncio
+    async def test_spike_decrease_emits_event(self) -> None:
+        """Client count decrease above threshold emits spike event."""
+        adapter, queue = _make_adapter(poll_clients=True, client_spike_threshold=20.0)
+        adapter._last_client_count = 100
+
+        # 70 clients = 30% decrease
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"mac": f"aa:bb:{i}"} for i in range(70)],
+        })
+
+        await adapter._poll_clients()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.payload["direction"] == "decrease"
+
+    @pytest.mark.asyncio
+    async def test_no_spike_below_threshold(self) -> None:
+        """Changes below threshold do not emit events."""
+        adapter, queue = _make_adapter(poll_clients=True, client_spike_threshold=20.0)
+        adapter._last_client_count = 100
+
+        # 110 clients = 10% increase (below 20% threshold)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"mac": f"aa:bb:{i}"} for i in range(110)],
+        })
+
+        await adapter._poll_clients()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zero_baseline_no_division_error(self) -> None:
+        """Zero previous count should not cause division by zero."""
+        adapter, queue = _make_adapter(poll_clients=True)
+        adapter._last_client_count = 0
+
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"mac": "aa:bb:cc"}],
+        })
+
+        await adapter._poll_clients()
+
+        # Should not raise and should not emit (0 baseline skips pct calc)
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_client_list(self) -> None:
+        """Empty client list still updates the count."""
+        adapter, _queue = _make_adapter(poll_clients=True)
+        adapter._client.get = AsyncMock(return_value={"data": []})
+
+        await adapter._poll_clients()
+
+        assert adapter._last_client_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Anomaly detection
+# ---------------------------------------------------------------------------
+
+
+class TestAnomalyPolling:
+    @pytest.mark.asyncio
+    async def test_anomaly_emits_event(self) -> None:
+        """Network anomaly emits event with correct fields."""
+        adapter, queue = _make_adapter(poll_anomalies=True)
+        adapter._last_anomaly_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "anomaly": "dns_tunneling",
+                "value": 150,
+                "threshold": 100,
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_anomalies()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "network_anomaly"
+        assert event.severity == Severity.WARNING
+        assert event.entity_id == "dns_tunneling"
+        assert event.payload["anomaly"] == "dns_tunneling"
+        assert event.payload["value"] == 150
+
+    @pytest.mark.asyncio
+    async def test_anomaly_old_events_filtered(self) -> None:
+        """Old anomalies are filtered by lookback."""
+        adapter, queue = _make_adapter(poll_anomalies=True)
+        adapter._last_anomaly_poll = datetime.now(tz=UTC) - timedelta(seconds=30)
+
+        old_ts = int((datetime.now(tz=UTC) - timedelta(minutes=10)).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "anomaly": "old_anomaly",
+                "value": 50,
+                "timestamp": old_ts,
+            }],
+        })
+
+        await adapter._poll_anomalies()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_anomaly_missing_type_skipped(self) -> None:
+        """Anomalies without type are skipped."""
+        adapter, queue = _make_adapter(poll_anomalies=True)
+        adapter._last_anomaly_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"value": 100, "timestamp": now_ms}],
+        })
+
+        await adapter._poll_anomalies()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_anomaly_first_poll(self) -> None:
+        """First poll uses lookback window."""
+        adapter, queue = _make_adapter(poll_anomalies=True)
+        assert adapter._last_anomaly_poll is None
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "anomaly": "new_anomaly",
+                "value": 200,
+                "threshold": 100,
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_anomalies()
+
+        queue.put_nowait.assert_called_once()
+        assert adapter._last_anomaly_poll is not None
+
+
+# ---------------------------------------------------------------------------
+# Controller events
+# ---------------------------------------------------------------------------
+
+
+class TestControllerEventPolling:
+    @pytest.mark.asyncio
+    async def test_actionable_event_emits(self) -> None:
+        """Actionable controller event emits event."""
+        adapter, queue = _make_adapter(poll_events=True)
+        adapter._last_events_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "_id": "evt-001",
+                "key": "EVT_AP_Lost_Contact",
+                "msg": "AP lost contact",
+                "mac": "aa:bb:cc",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_events()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "controller_event"
+        assert event.entity_id == "EVT_AP_Lost_Contact"
+        assert event.payload["event_id"] == "evt-001"
+        assert event.payload["key"] == "EVT_AP_Lost_Contact"
+        assert event.payload["message"] == "AP lost contact"
+
+    @pytest.mark.asyncio
+    async def test_informational_event_filtered(self) -> None:
+        """Non-actionable events are filtered out."""
+        adapter, queue = _make_adapter(poll_events=True)
+        adapter._last_events_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "_id": "evt-002",
+                "key": "EVT_SomeInfoEvent",
+                "msg": "Informational",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_events()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_event_missing_id_skipped(self) -> None:
+        """Events without _id are skipped."""
+        adapter, queue = _make_adapter(poll_events=True)
+        adapter._last_events_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "key": "EVT_AP_Lost_Contact",
+                "msg": "No ID",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_events()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_event_old_filtered(self) -> None:
+        """Old events are filtered by lookback."""
+        adapter, queue = _make_adapter(poll_events=True)
+        adapter._last_events_poll = datetime.now(tz=UTC) - timedelta(seconds=30)
+
+        old_ts = int((datetime.now(tz=UTC) - timedelta(minutes=10)).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "_id": "evt-003",
+                "key": "EVT_AP_Restarted",
+                "msg": "Old event",
+                "timestamp": old_ts,
+            }],
+        })
+
+        await adapter._poll_events()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_event_dedup_key(self) -> None:
+        """Controller event dedup key includes event ID."""
+        adapter, queue = _make_adapter(poll_events=True)
+        adapter._last_events_poll = datetime.now(tz=UTC) - timedelta(minutes=5)
+
+        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "_id": "evt-abc",
+                "key": "EVT_SW_Lost_Contact",
+                "msg": "Switch lost",
+                "timestamp": now_ms,
+            }],
+        })
+
+        await adapter._poll_events()
+
+        event = queue.put_nowait.call_args[0][0]
+        assert event.metadata.dedup_key == "unifi:event:evt-abc"
+
+
+# ---------------------------------------------------------------------------
+# DPI stats
+# ---------------------------------------------------------------------------
+
+
+class TestDpiPolling:
+    @pytest.mark.asyncio
+    async def test_dpi_threshold_exceeded(self) -> None:
+        """DPI category exceeding bandwidth threshold emits event."""
+        adapter, queue = _make_adapter(poll_dpi=True, dpi_bandwidth_threshold_mbps=100.0)
+
+        # 100 Mbps = 12_500_000 bytes, set rx+tx above that
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "cat_name": "Streaming",
+                "rx_bytes": 10_000_000,
+                "tx_bytes": 5_000_000,
+            }],
+        })
+
+        await adapter._poll_dpi()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.event_type == "dpi_threshold"
+        assert event.entity_id == "Streaming"
+        assert event.payload["category"] == "Streaming"
+        assert event.payload["threshold_mbps"] == 100.0
+        assert event.payload["rx_bytes"] == 10_000_000
+        assert event.payload["tx_bytes"] == 5_000_000
+
+    @pytest.mark.asyncio
+    async def test_dpi_below_threshold(self) -> None:
+        """DPI categories below threshold do not emit events."""
+        adapter, queue = _make_adapter(poll_dpi=True, dpi_bandwidth_threshold_mbps=100.0)
+
+        # Well below 12.5 MB threshold
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "cat_name": "Web",
+                "rx_bytes": 1_000_000,
+                "tx_bytes": 500_000,
+            }],
+        })
+
+        await adapter._poll_dpi()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dpi_missing_category_skipped(self) -> None:
+        """DPI entries without category are skipped."""
+        adapter, queue = _make_adapter(poll_dpi=True)
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{"rx_bytes": 50_000_000, "tx_bytes": 50_000_000}],
+        })
+
+        await adapter._poll_dpi()
+
+        queue.put_nowait.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dpi_uses_cat_fallback(self) -> None:
+        """DPI uses 'cat' field if 'cat_name' is missing."""
+        adapter, queue = _make_adapter(poll_dpi=True, dpi_bandwidth_threshold_mbps=10.0)
+
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "cat": 5,
+                "rx_bytes": 5_000_000,
+                "tx_bytes": 5_000_000,
+            }],
+        })
+
+        await adapter._poll_dpi()
+
+        queue.put_nowait.assert_called_once()
+        event = queue.put_nowait.call_args[0][0]
+        assert event.entity_id == "5"
+
+    @pytest.mark.asyncio
+    async def test_dpi_dedup_key(self) -> None:
+        """DPI dedup key includes category."""
+        adapter, queue = _make_adapter(poll_dpi=True, dpi_bandwidth_threshold_mbps=10.0)
+
+        adapter._client.get = AsyncMock(return_value={
+            "data": [{
+                "cat_name": "Gaming",
+                "rx_bytes": 5_000_000,
+                "tx_bytes": 5_000_000,
+            }],
+        })
+
+        await adapter._poll_dpi()
+
+        event = queue.put_nowait.call_args[0][0]
+        assert event.metadata.dedup_key == "unifi:dpi:Gaming"
+
+
+# ---------------------------------------------------------------------------
 # Dedup key format
 # ---------------------------------------------------------------------------
 
@@ -741,8 +1444,6 @@ class TestEnqueueErrorHandling:
         adapter, queue = _make_adapter()
         queue.put_nowait.side_effect = RuntimeError("queue full")
 
-        from datetime import UTC, datetime
-
         from oasisagent.models import Event, EventMetadata
 
         event = Event(
@@ -780,7 +1481,7 @@ class TestKnownFixes:
 
         assert "fixes" in data
         fixes = data["fixes"]
-        assert len(fixes) >= 5
+        assert len(fixes) >= 8
 
         # Verify all fixes have required fields
         for fix in fixes:
@@ -820,10 +1521,61 @@ class TestKnownFixes:
             "device_high_mem",
             "wan_failover",
             "alarm",
+            "ids_alert",
+            "rogue_ap_detected",
+            "network_anomaly",
         }
 
         fix_types = {fix["match"]["event_type"] for fix in data["fixes"]}
         assert fix_types == expected_types
+
+    def test_new_known_fix_risk_tiers(self) -> None:
+        """New known fixes have correct risk tiers."""
+        from pathlib import Path
+
+        import yaml
+
+        fixes_path = Path(__file__).parent.parent.parent / "known_fixes" / "unifi.yaml"
+        with fixes_path.open() as f:
+            data = yaml.safe_load(f)
+
+        fix_by_id = {fix["id"]: fix for fix in data["fixes"]}
+        assert fix_by_id["unifi-ids-alert"]["risk_tier"] == "recommend"
+        assert fix_by_id["unifi-rogue-ap"]["risk_tier"] == "escalate"
+        assert fix_by_id["unifi-network-anomaly"]["risk_tier"] == "recommend"
+
+
+# ---------------------------------------------------------------------------
+# Per-endpoint health isolation
+# ---------------------------------------------------------------------------
+
+
+class TestPerEndpointHealth:
+    @pytest.mark.asyncio
+    async def test_device_failure_isolates_from_ips(self) -> None:
+        """Device poll failure should not affect IPS health."""
+        adapter, _queue = _make_adapter(poll_ips=True)
+        adapter._endpoint_health["ips"] = True
+
+        # Mark devices as failed
+        adapter._endpoint_health["devices"] = False
+
+        # IPS should still be healthy
+        assert adapter._endpoint_health["ips"] is True
+        assert await adapter.healthy()
+
+    @pytest.mark.asyncio
+    async def test_all_endpoints_must_fail_for_unhealthy(self) -> None:
+        """Adapter is unhealthy only when all endpoints fail."""
+        adapter, _ = _make_adapter(
+            poll_ips=True, poll_rogue_ap=True, poll_anomalies=True,
+        )
+        # All start as False
+        assert not await adapter.healthy()
+
+        # Set just one healthy
+        adapter._endpoint_health["devices"] = True
+        assert await adapter.healthy()
 
 
 # ---------------------------------------------------------------------------

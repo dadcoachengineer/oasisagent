@@ -1,19 +1,27 @@
 """UniFi Network polling ingestion adapter.
 
-Polls the UniFi controller API for device status, alarms, and
-subsystem health. Emits events on state transitions only (dedup).
+Polls the UniFi controller API for device status, alarms, subsystem
+health, IDS/IPS events, rogue APs, client counts, anomalies,
+controller events, and DPI stats. Emits events on state transitions,
+time-based lookback, or threshold crossings.
 
-Three separate state trackers handle the different endpoint semantics:
+Separate state trackers handle the different endpoint semantics:
 - Device states: (mac, state_code) — state-based dedup
 - Alarms: set of alarm _id — point-in-time dedup
 - Health subsystems: (subsystem, status) — state-based dedup
+- IDS/IPS events: time-based lookback window
+- Rogue APs: state-based dedup by BSSID
+- Client count: spike detection (percent change)
+- Anomalies: time-based lookback window
+- Controller events: time-based lookback window
+- DPI stats: threshold-based (bandwidth per category)
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from oasisagent.clients.unifi import UnifiClient
@@ -26,13 +34,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Controller event keys considered actionable (skip informational noise)
+_ACTIONABLE_EVENT_KEYS = frozenset({
+    "EVT_AP_Lost_Contact",
+    "EVT_AP_Restarted",
+    "EVT_AP_Adopted",
+    "EVT_AP_Upgrade_Failed",
+    "EVT_AP_Channel_Changed",
+    "EVT_SW_Lost_Contact",
+    "EVT_SW_Restarted",
+    "EVT_SW_PoeOverload",
+    "EVT_GW_Lost_Contact",
+    "EVT_GW_Restarted",
+    "EVT_GW_WANTransition",
+    "EVT_IPS_Alert",
+    "EVT_LAN_ClientBlocked",
+    "EVT_WU_Connected",
+    "EVT_WU_Disconnected",
+    "EVT_DG_Overheating",
+    "EVT_DG_FanFailed",
+})
 
 
 class UnifiAdapter(IngestAdapter):
-    """Polls UniFi controller for device status, alarms, and health.
+    """Polls UniFi controller for device status, alarms, health, and more.
 
     State-based dedup ensures events fire only on state transitions.
-    Each endpoint has its own tracker with appropriate semantics.
+    Each endpoint has its own tracker with appropriate semantics and
+    independent health tracking.
     """
 
     def __init__(self, config: UnifiAdapterConfig, queue: EventQueue) -> None:
@@ -49,7 +78,25 @@ class UnifiAdapter(IngestAdapter):
         )
         self._stopping = False
         self._task: asyncio.Task[None] | None = None
-        self._connected = False
+
+        # Per-endpoint health tracking (replaces single _connected bool)
+        self._endpoint_health: dict[str, bool] = {"devices": False}
+        if config.poll_alarms:
+            self._endpoint_health["alarms"] = False
+        if config.poll_health:
+            self._endpoint_health["health"] = False
+        if config.poll_ips:
+            self._endpoint_health["ips"] = False
+        if config.poll_rogue_ap:
+            self._endpoint_health["rogue_ap"] = False
+        if config.poll_clients:
+            self._endpoint_health["clients"] = False
+        if config.poll_anomalies:
+            self._endpoint_health["anomalies"] = False
+        if config.poll_events:
+            self._endpoint_health["events"] = False
+        if config.poll_dpi:
+            self._endpoint_health["dpi"] = False
 
         # Dedup trackers (separate semantics per endpoint)
         self._device_states: dict[str, int] = {}          # mac → state code
@@ -57,6 +104,15 @@ class UnifiAdapter(IngestAdapter):
         self._device_mem_alert: dict[str, bool] = {}      # mac → alert active
         self._seen_alarms: set[str] = set()               # alarm _id
         self._health_states: dict[str, str] = {}          # subsystem → status
+
+        # Time-based lookback trackers
+        self._last_ips_poll: datetime | None = None
+        self._last_anomaly_poll: datetime | None = None
+        self._last_events_poll: datetime | None = None
+
+        # State-based dedup trackers
+        self._seen_rogue_aps: set[str] = set()            # BSSID
+        self._last_client_count: int | None = None         # previous client count
 
     @property
     def name(self) -> str:
@@ -66,10 +122,10 @@ class UnifiAdapter(IngestAdapter):
         """Connect to controller and start the polling loop."""
         try:
             await self._client.connect()
-            self._connected = True
         except Exception as exc:
             logger.error("UniFi adapter: connection failed: %s", exc)
-            self._connected = False
+            for key in self._endpoint_health:
+                self._endpoint_health[key] = False
             return
 
         self._task = asyncio.create_task(
@@ -82,10 +138,20 @@ class UnifiAdapter(IngestAdapter):
         if self._task is not None:
             self._task.cancel()
         await self._client.close()
-        self._connected = False
+        for key in self._endpoint_health:
+            self._endpoint_health[key] = False
 
     async def healthy(self) -> bool:
-        return self._connected
+        if not self._endpoint_health:
+            return False
+        return any(self._endpoint_health.values())
+
+    def health_detail(self) -> dict[str, str]:
+        """Per-endpoint health for dashboard display."""
+        return {
+            endpoint: ("connected" if ok else "disconnected")
+            for endpoint, ok in self._endpoint_health.items()
+        }
 
     # -----------------------------------------------------------------
     # Poll loop
@@ -93,39 +159,96 @@ class UnifiAdapter(IngestAdapter):
 
     async def _poll_loop(self) -> None:
         """Main polling loop — polls all endpoints each interval."""
-        consecutive_failures = 0
-        max_backoff = 300  # 5 minutes cap
-
         while not self._stopping:
+            # Devices always polled
             try:
                 await self._poll_devices()
-
-                if self._config.poll_alarms:
-                    await self._poll_alarms()
-
-                if self._config.poll_health:
-                    await self._poll_health()
-
-                self._connected = True
-                consecutive_failures = 0
+                self._endpoint_health["devices"] = True
             except asyncio.CancelledError:
                 return
             except Exception as exc:
-                consecutive_failures += 1
-                backoff = int(min(
-                    self._config.poll_interval * (2 ** (consecutive_failures - 1)),
-                    max_backoff,
-                ))
-                logger.warning(
-                    "UniFi poll error (attempt %d, next retry in %ds): %s",
-                    consecutive_failures, backoff, exc,
-                )
-                self._connected = False
-                for _ in range(backoff):
-                    if self._stopping:
-                        return
-                    await asyncio.sleep(1)
-                continue
+                logger.warning("UniFi devices poll error: %s", exc)
+                self._endpoint_health["devices"] = False
+
+            if self._config.poll_alarms:
+                try:
+                    await self._poll_alarms()
+                    self._endpoint_health["alarms"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi alarms poll error: %s", exc)
+                    self._endpoint_health["alarms"] = False
+
+            if self._config.poll_health:
+                try:
+                    await self._poll_health()
+                    self._endpoint_health["health"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi health poll error: %s", exc)
+                    self._endpoint_health["health"] = False
+
+            if self._config.poll_ips:
+                try:
+                    await self._poll_ips()
+                    self._endpoint_health["ips"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi IPS poll error: %s", exc)
+                    self._endpoint_health["ips"] = False
+
+            if self._config.poll_rogue_ap:
+                try:
+                    await self._poll_rogue_ap()
+                    self._endpoint_health["rogue_ap"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi rogue AP poll error: %s", exc)
+                    self._endpoint_health["rogue_ap"] = False
+
+            if self._config.poll_clients:
+                try:
+                    await self._poll_clients()
+                    self._endpoint_health["clients"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi clients poll error: %s", exc)
+                    self._endpoint_health["clients"] = False
+
+            if self._config.poll_anomalies:
+                try:
+                    await self._poll_anomalies()
+                    self._endpoint_health["anomalies"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi anomalies poll error: %s", exc)
+                    self._endpoint_health["anomalies"] = False
+
+            if self._config.poll_events:
+                try:
+                    await self._poll_events()
+                    self._endpoint_health["events"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi events poll error: %s", exc)
+                    self._endpoint_health["events"] = False
+
+            if self._config.poll_dpi:
+                try:
+                    await self._poll_dpi()
+                    self._endpoint_health["dpi"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("UniFi DPI poll error: %s", exc)
+                    self._endpoint_health["dpi"] = False
 
             for _ in range(self._config.poll_interval):
                 if self._stopping:
@@ -379,6 +502,276 @@ class UnifiAdapter(IngestAdapter):
                             dedup_key=f"unifi:health:{subsystem}",
                         ),
                     ))
+
+    # -----------------------------------------------------------------
+    # IDS/IPS event polling
+    # -----------------------------------------------------------------
+
+    async def _poll_ips(self) -> None:
+        """Poll stat/ips/event for IDS/IPS detections using time-based lookback."""
+        now = datetime.now(tz=UTC)
+        lookback = timedelta(minutes=max(self._config.poll_interval // 60 + 1, 2))
+
+        since = self._last_ips_poll if self._last_ips_poll is not None else now - lookback
+        self._last_ips_poll = now
+
+        # Convert to epoch ms for UniFi API filtering
+        since_epoch_ms = int(since.timestamp() * 1000)
+
+        data = await self._client.get("stat/ips/event")
+        events: list[dict[str, Any]] = data.get("data", [])
+
+        for ips_event in events:
+            # Filter by timestamp — only process events after our lookback
+            event_ts = ips_event.get("timestamp", 0)
+            if event_ts and event_ts < since_epoch_ms:
+                continue
+
+            signature = ips_event.get("signature", "")
+            if not signature:
+                continue
+
+            action = ips_event.get("action", "alert")
+            severity = Severity.ERROR if action == "block" else Severity.WARNING
+
+            self._enqueue(Event(
+                source=self.name,
+                system="unifi",
+                event_type="ids_alert",
+                entity_id=signature,
+                severity=severity,
+                timestamp=datetime.now(tz=UTC),
+                payload={
+                    "src_ip": ips_event.get("src_ip", ""),
+                    "dest_ip": ips_event.get("dest_ip", ""),
+                    "signature": signature,
+                    "action": action,
+                    "category": ips_event.get("category", ""),
+                },
+                metadata=EventMetadata(
+                    dedup_key=f"unifi:ips:{signature}:{ips_event.get('src_ip', '')}",
+                ),
+            ))
+
+    # -----------------------------------------------------------------
+    # Rogue AP detection
+    # -----------------------------------------------------------------
+
+    async def _poll_rogue_ap(self) -> None:
+        """Poll stat/rogueap for new rogue AP detections (state-based dedup)."""
+        data = await self._client.get("stat/rogueap")
+        rogue_aps: list[dict[str, Any]] = data.get("data", [])
+
+        current_bssids: set[str] = set()
+
+        for ap in rogue_aps:
+            bssid = ap.get("bssid", "")
+            if not bssid:
+                continue
+
+            current_bssids.add(bssid)
+
+            if bssid in self._seen_rogue_aps:
+                continue
+
+            self._seen_rogue_aps.add(bssid)
+
+            self._enqueue(Event(
+                source=self.name,
+                system="unifi",
+                event_type="rogue_ap_detected",
+                entity_id=bssid,
+                severity=Severity.WARNING,
+                timestamp=datetime.now(tz=UTC),
+                payload={
+                    "bssid": bssid,
+                    "ssid": ap.get("ssid", ""),
+                    "channel": ap.get("channel", 0),
+                    "rssi": ap.get("rssi", 0),
+                    "is_rogue": ap.get("is_rogue", True),
+                },
+                metadata=EventMetadata(
+                    dedup_key=f"unifi:rogue_ap:{bssid}",
+                ),
+            ))
+
+        # Evict rogue APs no longer seen to prevent unbounded growth
+        self._seen_rogue_aps &= current_bssids
+
+    # -----------------------------------------------------------------
+    # Client tracking (spike detection)
+    # -----------------------------------------------------------------
+
+    async def _poll_clients(self) -> None:
+        """Poll stat/sta for client count spike detection.
+
+        Does not emit per-client events (too high volume). Instead tracks
+        total count and emits client_count_spike if count changes by more
+        than the configured threshold percentage.
+        """
+        data = await self._client.get("stat/sta")
+        clients: list[dict[str, Any]] = data.get("data", [])
+        current_count = len(clients)
+
+        if self._last_client_count is not None and self._last_client_count > 0:
+            change = abs(current_count - self._last_client_count)
+            pct_change = change / self._last_client_count * 100
+
+            if pct_change >= self._config.client_spike_threshold:
+                direction = "increase" if current_count > self._last_client_count else "decrease"
+                self._enqueue(Event(
+                    source=self.name,
+                    system="unifi",
+                    event_type="client_count_spike",
+                    entity_id="clients",
+                    severity=Severity.WARNING,
+                    timestamp=datetime.now(tz=UTC),
+                    payload={
+                        "current_count": current_count,
+                        "previous_count": self._last_client_count,
+                        "change_pct": round(pct_change, 1),
+                        "direction": direction,
+                        "threshold_pct": self._config.client_spike_threshold,
+                    },
+                    metadata=EventMetadata(
+                        dedup_key=f"unifi:clients:spike:{direction}",
+                    ),
+                ))
+
+        self._last_client_count = current_count
+
+    # -----------------------------------------------------------------
+    # Anomaly detection
+    # -----------------------------------------------------------------
+
+    async def _poll_anomalies(self) -> None:
+        """Poll stat/anomaly for network anomalies using time-based lookback."""
+        now = datetime.now(tz=UTC)
+        lookback = timedelta(minutes=max(self._config.poll_interval // 60 + 1, 2))
+
+        since = self._last_anomaly_poll if self._last_anomaly_poll is not None else now - lookback
+        self._last_anomaly_poll = now
+
+        since_epoch_ms = int(since.timestamp() * 1000)
+
+        data = await self._client.get("stat/anomaly")
+        anomalies: list[dict[str, Any]] = data.get("data", [])
+
+        for anomaly in anomalies:
+            anomaly_ts = anomaly.get("timestamp", 0)
+            if anomaly_ts and anomaly_ts < since_epoch_ms:
+                continue
+
+            anomaly_type = anomaly.get("anomaly", "")
+            if not anomaly_type:
+                continue
+
+            self._enqueue(Event(
+                source=self.name,
+                system="unifi",
+                event_type="network_anomaly",
+                entity_id=anomaly_type,
+                severity=Severity.WARNING,
+                timestamp=datetime.now(tz=UTC),
+                payload={
+                    "anomaly": anomaly_type,
+                    "value": anomaly.get("value", 0),
+                    "threshold": anomaly.get("threshold", 0),
+                },
+                metadata=EventMetadata(
+                    dedup_key=f"unifi:anomaly:{anomaly_type}:{anomaly_ts}",
+                ),
+            ))
+
+    # -----------------------------------------------------------------
+    # Controller events
+    # -----------------------------------------------------------------
+
+    async def _poll_events(self) -> None:
+        """Poll stat/event for actionable controller events using time-based lookback."""
+        now = datetime.now(tz=UTC)
+        lookback = timedelta(minutes=max(self._config.poll_interval // 60 + 1, 2))
+
+        since = self._last_events_poll if self._last_events_poll is not None else now - lookback
+        self._last_events_poll = now
+
+        since_epoch_ms = int(since.timestamp() * 1000)
+
+        data = await self._client.get("stat/event")
+        events: list[dict[str, Any]] = data.get("data", [])
+
+        for ctrl_event in events:
+            event_ts = ctrl_event.get("timestamp", 0)
+            if event_ts and event_ts < since_epoch_ms:
+                continue
+
+            event_key = ctrl_event.get("key", "")
+            if not event_key or event_key not in _ACTIONABLE_EVENT_KEYS:
+                continue
+
+            event_id = ctrl_event.get("_id", "")
+            if not event_id:
+                continue
+
+            self._enqueue(Event(
+                source=self.name,
+                system="unifi",
+                event_type="controller_event",
+                entity_id=event_key,
+                severity=Severity.WARNING,
+                timestamp=datetime.now(tz=UTC),
+                payload={
+                    "event_id": event_id,
+                    "key": event_key,
+                    "message": ctrl_event.get("msg", ""),
+                    "mac": ctrl_event.get("mac", ""),
+                },
+                metadata=EventMetadata(
+                    dedup_key=f"unifi:event:{event_id}",
+                ),
+            ))
+
+    # -----------------------------------------------------------------
+    # DPI stats (bandwidth threshold)
+    # -----------------------------------------------------------------
+
+    async def _poll_dpi(self) -> None:
+        """Poll stat/dpi for bandwidth threshold crossings by app category."""
+        data = await self._client.get("stat/dpi")
+        entries: list[dict[str, Any]] = data.get("data", [])
+
+        threshold_bytes = self._config.dpi_bandwidth_threshold_mbps * 1_000_000 / 8
+
+        for entry in entries:
+            category = entry.get("cat_name", "") or entry.get("cat", "")
+            if not category:
+                continue
+
+            # rx_bytes + tx_bytes for total bandwidth
+            rx_bytes = entry.get("rx_bytes", 0)
+            tx_bytes = entry.get("tx_bytes", 0)
+            total_bytes = rx_bytes + tx_bytes
+
+            if total_bytes >= threshold_bytes:
+                total_mbps = round(total_bytes * 8 / 1_000_000, 2)
+                self._enqueue(Event(
+                    source=self.name,
+                    system="unifi",
+                    event_type="dpi_threshold",
+                    entity_id=str(category),
+                    severity=Severity.WARNING,
+                    timestamp=datetime.now(tz=UTC),
+                    payload={
+                        "category": str(category),
+                        "total_mbps": total_mbps,
+                        "rx_bytes": rx_bytes,
+                        "tx_bytes": tx_bytes,
+                        "threshold_mbps": self._config.dpi_bandwidth_threshold_mbps,
+                    },
+                    metadata=EventMetadata(
+                        dedup_key=f"unifi:dpi:{category}",
+                    ),
+                ))
 
     # -----------------------------------------------------------------
     # Helpers
