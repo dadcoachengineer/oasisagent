@@ -1,0 +1,53 @@
+fixes:
+  - id: servarr-health-issue
+    match:
+      system: sonarr
+      event_type: servarr_health_issue
+    diagnosis: "Servarr app reports a health check failure — may indicate disk space, indexer, or import problems"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Servarr health check issue detected. Steps:
+          1. Check the health page in the app's web UI
+          2. Review the specific health issue message in the event payload
+          3. Common causes: low disk space, indexer connectivity, download client offline
+          4. Check the wiki URL in the payload for specific remediation steps
+    risk_tier: recommend
+
+  - id: servarr-queue-stuck
+    match:
+      event_type: servarr_queue_stuck
+    diagnosis: "Download has been stuck in queue for over 2 hours — download client or indexer issue"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Servarr download stuck in queue. Steps:
+          1. Check download client (qBittorrent/SABnzbd) for errors
+          2. Verify the torrent/nzb has available seeds/peers
+          3. Check if download client is connected and authenticated
+          4. Consider removing and re-searching for the release
+    risk_tier: recommend
+
+  - id: servarr-queue-failed
+    match:
+      event_type: servarr_queue_failed
+    diagnosis: "Download has failed — check download client and indexer for issues"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Servarr download failed. Steps:
+          1. Check download client for the failure reason
+          2. Review status messages in the event payload
+          3. If import failed, check file permissions and disk space
+          4. If download failed, try searching for an alternative release
+          5. Check indexer connectivity if multiple downloads are failing
+    risk_tier: recommend

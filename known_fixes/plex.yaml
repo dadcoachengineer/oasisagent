@@ -1,0 +1,75 @@
+fixes:
+  - id: plex-server-unreachable
+    match:
+      system: plex
+      event_type: plex_server_unreachable
+    diagnosis: "Plex Media Server is not responding — service may have crashed or host is down"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Plex server unreachable. Steps:
+          1. Check if the Plex host is powered on and reachable
+          2. Verify Plex Media Server service is running
+          3. Check Plex logs for crash or OOM errors
+          4. Verify network connectivity to the Plex host
+          5. Restart Plex Media Server if the host is reachable
+    risk_tier: escalate
+
+  - id: plex-library-scan-failed
+    match:
+      system: plex
+      event_type: plex_library_scan_failed
+    diagnosis: "Plex library section shows empty — possible mount failure or scan error"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Plex library may have a scan issue. Steps:
+          1. Check if the media storage mount is accessible
+          2. Verify NFS/SMB share connectivity
+          3. Check file permissions on the library directory
+          4. Trigger a manual library scan from the Plex UI
+          5. Review Plex logs for scan errors
+    risk_tier: recommend
+
+  - id: tautulli-plex-down
+    match:
+      system: tautulli
+      event_type: tautulli_plex_down
+    diagnosis: "Tautulli reports Plex is disconnected — Plex service may be down"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Tautulli reports Plex is down. Steps:
+          1. Verify Plex Media Server service status
+          2. Check Plex host resource usage (CPU, memory, disk)
+          3. Review Plex logs for errors
+          4. Restart Plex if needed
+    risk_tier: recommend
+
+  - id: tdarr-worker-failed
+    match:
+      system: tdarr
+      event_type: tdarr_worker_failed
+    diagnosis: "Tdarr transcoding worker is offline — may need restart or host attention"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Tdarr worker offline. Steps:
+          1. Check the Tdarr worker host status
+          2. Verify the worker process is running
+          3. Check available disk space on the worker
+          4. Review worker logs for errors
+          5. Restart the worker service
+    risk_tier: recommend

@@ -34,10 +34,16 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    OverseerrAdapterConfig,
+    PlexAdapterConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
+    QBittorrentAdapterConfig,
     ScannerConfig,
+    ServarrAdapterConfig,
     SlackNotificationConfig,
+    TautulliAdapterConfig,
+    TdarrAdapterConfig,
     TelegramNotificationConfig,
     UnifiAdapterConfig,
     UnifiHandlerConfig,
@@ -90,6 +96,29 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     ),
     "uptime_kuma": TypeMeta(
         model=UptimeKumaAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+    ),
+    "servarr": TypeMeta(
+        model=ServarrAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+    ),
+    "qbittorrent": TypeMeta(
+        model=QBittorrentAdapterConfig,
+        secret_fields=frozenset({"password"}),
+    ),
+    "plex": TypeMeta(
+        model=PlexAdapterConfig,
+        secret_fields=frozenset({"token"}),
+    ),
+    "tautulli": TypeMeta(
+        model=TautulliAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+    ),
+    "tdarr": TypeMeta(
+        model=TdarrAdapterConfig,
+    ),
+    "overseerr": TypeMeta(
+        model=OverseerrAdapterConfig,
         secret_fields=frozenset({"api_key"}),
     ),
 }

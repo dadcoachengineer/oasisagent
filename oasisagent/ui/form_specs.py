@@ -45,6 +45,12 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "unifi": "UniFi Network",
     "cloudflare": "Cloudflare",
     "uptime_kuma": "Uptime Kuma",
+    "servarr": "Servarr (Sonarr/Radarr/Prowlarr/Bazarr)",
+    "qbittorrent": "qBittorrent",
+    "plex": "Plex Media Server",
+    "tautulli": "Tautulli",
+    "tdarr": "Tdarr",
+    "overseerr": "Overseerr",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -91,6 +97,29 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "uptime_kuma": (
         "Pull monitor status from Uptime Kuma's"
         " Prometheus endpoint"
+    ),
+    "servarr": (
+        "Monitor Sonarr, Radarr, Prowlarr, or Bazarr"
+        " health and download queue"
+    ),
+    "qbittorrent": (
+        "Monitor qBittorrent for errored, stalled,"
+        " and disconnected torrents"
+    ),
+    "plex": (
+        "Monitor Plex Media Server reachability"
+        " and library health"
+    ),
+    "tautulli": (
+        "Monitor Plex via Tautulli — server status"
+        " and bandwidth"
+    ),
+    "tdarr": (
+        "Monitor Tdarr transcoding workers"
+        " and queue progress"
+    ),
+    "overseerr": (
+        "Monitor Overseerr server connectivity"
     ),
     # Services
     "llm_triage": (
@@ -544,6 +573,141 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
                 " within N days"
             ),
             default=7, min_val=1,
+        ),
+    ],
+
+    "servarr": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8989",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "app_type", "Application", "select",
+            options=[
+                ("sonarr", "Sonarr"),
+                ("radarr", "Radarr"),
+                ("prowlarr", "Prowlarr"),
+                ("bazarr", "Bazarr"),
+            ],
+            default="sonarr",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "qbittorrent": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8080",
+            required=True,
+        ),
+        FieldSpec(
+            "username", "Username", "text",
+            required=True, group="Authentication",
+            default="admin",
+        ),
+        FieldSpec(
+            "password", "Password", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "plex": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:32400",
+            required=True,
+        ),
+        FieldSpec(
+            "token", "X-Plex-Token", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "tautulli": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8181",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "bandwidth_threshold_kbps",
+            "Bandwidth Threshold (kbps)", "number",
+            help_text=(
+                "Alert when total bandwidth exceeds"
+                " this value (default: 100000 = 100 Mbps)"
+            ),
+            default=100_000, min_val=1,
+        ),
+    ],
+    "tdarr": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8265",
+            required=True,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "overseerr": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:5055",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
         ),
     ],
 
