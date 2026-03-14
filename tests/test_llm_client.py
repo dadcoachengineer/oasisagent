@@ -22,7 +22,7 @@ def _make_config(**overrides: Any) -> LlmConfig:
             base_url="http://localhost:11434/v1",
             model="qwen2.5:7b",
             api_key="",
-            timeout=5,
+            timeout=30,
             max_tokens=1024,
             temperature=0.1,
         ),
