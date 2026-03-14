@@ -606,6 +606,13 @@ class Orchestrator:
         except Exception:
             logger.exception("Failed to start notification dispatcher")
 
+        # LLM warm-up — probe each endpoint to establish initial health
+        if self._llm_client is not None:
+            try:
+                await self._llm_client.warm_up()
+            except Exception:
+                logger.exception("LLM warm-up failed unexpectedly")
+
         # Approval listener — background task
         if self._approval_listener is not None:
             self._approval_listener_task = asyncio.create_task(
