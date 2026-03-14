@@ -1,8 +1,8 @@
 # OasisAgent — Architecture Specification
 
-> **Version**: 0.3.0
-> **Status**: Phase 2 complete (v0.2.7). Phase 3 planned.
-> **Last updated**: March 11, 2026
+> **Version**: 0.3.4
+> **Status**: Phase 3 in progress (v0.3.3 shipped). See checklist in §14.
+> **Last updated**: March 14, 2026
 
 This document defines the architecture for OasisAgent, an autonomous infrastructure operations agent for home lab environments. It serves as the implementation contract — all code should conform to these designs.
 
@@ -26,39 +26,44 @@ OasisAgent is a standalone, containerized Python application that detects infras
 ## 2. System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     OasisAgent                          │
-│                                                         │
-│  ┌──────────────┐    ┌──────────────┐                   │
-│  │  Ingestion   │───▶│   Event      │                   │
-│  │  Adapters    │    │   Queue      │                   │
-│  │              │    └──────┬───────┘                   │
-│  │ • MQTT       │           │                           │
-│  │ • HA WS      │    ┌──────▼───────┐                   │
-│  │ • HA Log     │    │  Decision    │                   │
-│  │ • (future)   │    │  Engine      │                   │
-│  └──────────────┘    │              │                   │
-│                      │  T0: Lookup  │                   │
-│                      │  T1: Triage  │──▶ LLM Client    │
-│                      │  T2: Reason  │   (provider-     │
-│                      │              │    agnostic)      │
-│                      └──────┬───────┘                   │
-│                             │                           │
-│                      ┌──────▼───────┐                   │
-│                      │  Handlers    │                   │
-│                      │              │                   │
-│                      │ • HA         │──▶ HA REST API    │
-│                      │ • Docker     │──▶ Docker API     │
-│                      │ • Proxmox   │──▶ Proxmox API    │
-│                      │ • (future)   │                   │
-│                      └──────┬───────┘                   │
-│                             │                           │
-│                      ┌──────▼───────┐                   │
-│                      │  Audit &     │──▶ InfluxDB       │
-│                      │  Notify      │──▶ MQTT/Email/    │
-│                      │              │   Webhook/Push    │
-│                      └──────────────┘                   │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         OasisAgent                                │
+│                                                                   │
+│  ┌──────────────┐    ┌──────────────┐                             │
+│  │  Ingestion   │───▶│   Event      │                             │
+│  │  Adapters    │    │   Queue      │                             │
+│  │              │    └──────┬───────┘                             │
+│  │ • MQTT       │           │                                     │
+│  │ • HA WS      │    ┌──────▼───────┐    ┌──────────────┐        │
+│  │ • HA Log     │    │  Correlator  │    │  LLM Client  │        │
+│  │ • UniFi      │    └──────┬───────┘    │  (provider-  │        │
+│  │ • Cloudflare │           │            │   agnostic)  │        │
+│  │ • Uptime Kuma│    ┌──────▼───────┐    └──────▲───────┘        │
+│  │ • HTTP Poller│    │  Decision    │           │                 │
+│  │ • Webhooks   │    │  Engine      │───────────┘                 │
+│  │ • Scanners   │    │              │                             │
+│  └──────────────┘    │  T0: Lookup  │                             │
+│                      │  T1: Triage  │                             │
+│  ┌──────────────┐    │  T2: Reason  │                             │
+│  │  Web UI      │    └──────┬───────┘                             │
+│  │  (FastAPI)   │           │                                     │
+│  │              │    ┌──────▼───────┐                             │
+│  │ • Dashboard  │    │  Handlers    │                             │
+│  │ • Config     │    │              │                             │
+│  │ • Approvals  │    │ • HA         │──▶ HA REST API              │
+│  │ • Events     │    │ • Docker     │──▶ Docker API               │
+│  │ • Users      │    │ • Portainer  │──▶ Portainer API            │
+│  └──────┬───────┘    │ • Proxmox   │──▶ Proxmox API              │
+│         │            │ • UniFi      │──▶ UniFi API                │
+│  ┌──────▼───────┐    │ • Cloudflare │──▶ Cloudflare API           │
+│  │  SQLite      │    └──────┬───────┘                             │
+│  │  Config DB   │           │                                     │
+│  │  (Fernet)    │    ┌──────▼───────┐                             │
+│  └──────────────┘    │  Audit &     │──▶ InfluxDB                 │
+│                      │  Notify      │──▶ MQTT/Email/              │
+│                      │              │   Telegram/Webhook           │
+│                      └──────────────┘                             │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -146,7 +151,7 @@ class IngestAdapter(ABC):
         """Adapter identifier used in Event.source field."""
 ```
 
-### Phase 1 Adapters
+### Implemented Adapters
 
 #### MQTT Subscriber
 - Connects to EMQX (or any MQTT broker)
@@ -230,11 +235,83 @@ class IngestAdapter(ABC):
       dedup_window: 300          # seconds — same error within window = one event
   ```
 
-### Future Adapters (Phase 2+)
-- Docker event stream (`docker events`)
-- Proxmox log/task polling
+#### Webhook Receiver *(v0.3.0)*
+- HTTP endpoint for push-based ingestion from external services
+- FastAPI route at `/ingest/webhook/{source}` — the `{source}` slug matches
+  a `webhook_receiver` connector name in the config database
+- Per-source auth (API key, HMAC signature, or none)
+- JMESPath-based field extraction from incoming JSON payloads
+- Config stored in SQLite as `webhook_receiver` connector entries
+
+#### HTTP Poller *(v0.3.0)*
+- Periodically queries configured HTTP/REST endpoints and converts responses
+  to canonical Events
+- Three modes:
+  - `health_check` — HTTP 2xx = ok, anything else emits an event
+  - `extract` — Apply JMESPath expressions to extract Event fields from
+    JSON responses
+  - `threshold` — Extract a numeric value, emit events when crossing
+    warning/critical thresholds
+- Auth: Basic, bearer token, or none
+- State-based dedup for health_check and threshold modes (events only on
+  state transitions)
+- Each target gets its own concurrent polling loop
+
+#### UniFi Network Poller *(v0.3.3)*
+- Polls the UniFi controller API (UDM or standalone) at a configurable
+  interval
+- Monitors three endpoint categories:
+  - `stat/device` — device state transitions, CPU/memory resource alerts
+  - `rest/alarm` — new unarchived alarms (point-in-time dedup)
+  - `stat/health` — subsystem status transitions (WAN, WLAN, LAN, etc.)
+- State-based dedup ensures events fire only on transitions (e.g.,
+  connected → disconnected, cpu normal → high)
+- Uses the shared `UnifiClient` for session cookie auth with automatic
+  re-auth on 401/403
+- Per-endpoint health tracking — one failing endpoint doesn't mark the
+  entire adapter as unhealthy
+
+#### Cloudflare Poller *(v0.3.3)*
+- Polls the Cloudflare API v4 at a configurable interval
+- Monitors three data sources:
+  - **Tunnel status** — state-based dedup on tunnel_id → status transitions
+  - **WAF events** — time-window lookback via GraphQL Analytics API, spike
+    detection with configurable threshold
+  - **SSL certificates** — threshold-based alerts for cert expiry (30-day
+    warning, 7-day critical)
+- Uses the shared `CloudflareClient` for bearer token auth
+- Per-endpoint health tracking — individual poll failures are isolated
+
+#### Uptime Kuma Poller *(v0.3.4)*
+- Polls Uptime Kuma's Prometheus `/metrics` endpoint at a configurable
+  interval
+- Events emitted on state transitions:
+  - `monitor_down` / `monitor_recovered` — status transitions
+  - `monitor_slow` / `monitor_slow_recovered` — response time threshold
+    with hysteresis (clears at 80% of threshold)
+  - `certificate_expiry` / `certificate_renewed` — cert days remaining
+    threshold transitions
+- State-based dedup for all event types
+- Startup retry with exponential backoff (transient failures don't
+  permanently kill the adapter)
+
+#### Scanners *(v0.3.4)*
+- Scheduled scans that detect issues proactively on a configurable
+  interval. Scanners extend `IngestAdapter` via the `ScannerIngestAdapter`
+  base class, which provides the poll loop and enqueue helpers.
+- Scan results produce `Event` objects that flow through the normal
+  pipeline (T0/T1/T2, guardrails, audit, notifications).
+- Implemented scanners:
+  - **HA Health** — checks all integrations for `setup_error` state
+  - **Docker Health** — checks for unhealthy or restarting containers
+  - **Certificate Expiry** — TLS certificate checks on configured endpoints
+    via direct connections
+  - **Disk Space** — filesystem usage via `shutil.disk_usage()`
+
+### Future Adapters
+- Backup freshness scanner (verify last backup timestamp within threshold)
 - InfluxDB query-based alerting (metric thresholds → events)
-- Generic webhook receiver (for external tools to push events)
+- Servarr (Radarr/Sonarr) webhook + polling adapter
 
 ---
 
@@ -528,7 +605,7 @@ class Handler(ABC):
         """Gather system-specific context for diagnosis (called by T1/T2)."""
 ```
 
-### Phase 1: Home Assistant Handler
+### Home Assistant Handler
 
 Operations:
 - `notify` — Send diagnosis to operator (no system changes)
@@ -549,44 +626,82 @@ handlers:
     verify_timeout: 30          # Seconds to wait after action to verify effect
 ```
 
-### Phase 2: Docker Handler
+### Docker Handler *(v0.2.0)*
 
 Operations:
-- `restart_container` — Restart a container
+- `restart_container` — `POST /containers/{id}/restart`
 - `get_container_logs` — Fetch recent logs for context
 - `get_container_stats` — CPU/memory/network stats
 - `inspect_container` — Full container config
 
-Config:
-```yaml
-handlers:
-  docker:
-    enabled: false              # Disabled until Phase 2
-    socket: unix:///var/run/docker.sock
-    # OR for remote Docker hosts:
-    # url: tcp://192.168.1.120:2375
-    # tls_verify: true
-```
+Connection: Unix socket (default) or TCP with optional TLS. Uses `aiohttp`
+with `UnixConnector` for socket access.
 
-### Phase 3: Proxmox Handler
+Verification: After `restart_container`, polls container status until
+`running` or timeout.
+
+### Portainer Handler *(v0.3.0)*
+
+Manages Docker containers via the Portainer REST API. All container
+operations are proxied through Portainer's environment-scoped Docker API
+at `/api/endpoints/{endpoint_id}/docker/...`.
 
 Operations:
-- `restart_vm` / `restart_ct`
-- `get_vm_status` / `get_ct_status`
-- `get_task_log`
-- `get_node_status`
+- `restart_container`, `stop_container`, `start_container`
+- `get_container_logs`, `get_container_stats`, `inspect_container`
+- `list_containers`
 
-Config:
-```yaml
-handlers:
-  proxmox:
-    enabled: false              # Disabled until Phase 3
-    url: https://192.168.1.120:8006
-    user: ${PROXMOX_USER}
-    token_name: ${PROXMOX_TOKEN_NAME}
-    token_value: ${PROXMOX_TOKEN_VALUE}
-    verify_ssl: false
-```
+Auth: API key via `X-API-Key` header.
+
+Verification: `restart_container` and `start_container` poll for `running`.
+`stop_container` polls for `exited` or `stopped`.
+
+### Proxmox Handler *(v0.3.0)*
+
+Operations:
+- `start_vm`, `stop_vm` (graceful ACPI shutdown), `reboot_vm`
+- `get_vm_status`, `get_node_status`
+- `list_vms` — from cluster inventory cache
+- `list_tasks`, `get_task_log`
+
+Connection: Proxmox REST API with token-based auth
+(`PVEAPIToken=USER@REALM!TOKENID=UUID`). TLS with optional
+`verify_ssl: false` for self-signed certs.
+
+Cluster inventory: Maintains an in-memory cache of `/cluster/resources`
+with TTL-based refresh. VM resolution checks params first, then
+inventory, then refreshes on cache miss.
+
+Verification: `start_vm`, `stop_vm`, and `reboot_vm` poll the VM/CT
+status until the expected state is reached.
+
+### UniFi Handler *(v0.3.3)*
+
+Operations:
+- `notify` — no system changes
+- `restart_device` — restart via `cmd/devmgr`
+- `block_client`, `unblock_client` — client management via `cmd/stamgr`
+
+Connection: Uses the shared `UnifiClient` for session cookie auth with
+automatic re-auth on 401/403.
+
+Verification: `restart_device` polls device state until state=1
+(connected) or timeout.
+
+### Cloudflare Handler *(v0.3.3)*
+
+Operations:
+- `notify` — no system changes
+- `purge_cache` — purge entire zone cache
+- `purge_urls` — purge specific URLs from cache
+- `block_ip` — create firewall access rule to block an IP
+- `unblock_ip` — remove a firewall access rule
+
+Connection: Cloudflare API v4 with bearer token auth via the shared
+`CloudflareClient`.
+
+Verification: `block_ip` verifies the rule exists after creation.
+Other operations are fire-and-forget.
 
 ---
 
@@ -645,48 +760,160 @@ The notification dispatcher sends messages when:
 
 ### Channels
 
-```yaml
-notifications:
-  mqtt:
-    enabled: true
-    broker: mqtt://192.168.1.120:1883
-    topic_prefix: oasis/notifications
-    username: ${MQTT_USER}
-    password: ${MQTT_PASS}
-
-  email:
-    enabled: false
-    smtp_host: localhost
-    smtp_port: 587
-    from: oasis-agent@example.com
-    to:
-      - admin@example.com
-
-  webhook:
-    enabled: false
-    urls:
-      - https://hooks.example.com/oasis
-
-  # Future: ntfy, pushover, slack, discord, etc.
-```
-
-Notification channels implement a simple interface:
+All notification channels implement `NotificationChannel`:
 
 ```python
 class NotificationChannel(ABC):
     @abstractmethod
     async def send(self, notification: Notification) -> bool:
         """Send a notification. Returns True on success."""
+
+    @abstractmethod
+    def name(self) -> str:
+        """Channel identifier for logging and result tracking."""
+
+    async def healthy(self) -> bool:
+        """Check channel health. Default returns True."""
+
+    async def start(self) -> None:
+        """Initialize channel resources. Default no-op."""
+
+    async def stop(self) -> None:
+        """Clean up channel resources. Default no-op."""
 ```
+
+Channels that support interactive approval responses extend
+`InteractiveNotificationChannel`:
+
+```python
+class InteractiveNotificationChannel(NotificationChannel):
+    @abstractmethod
+    async def send_approval_request(self, pending: PendingAction) -> None:
+        """Send a message with approve/reject affordances."""
+
+    @abstractmethod
+    async def start_listener(
+        self, callback: Callable[[str, ApprovalDecision], Awaitable[None]],
+    ) -> None:
+        """Start listening for interactive approval responses."""
+
+    @abstractmethod
+    async def stop_listener(self) -> None:
+        """Stop the approval response listener."""
+
+    @abstractmethod
+    async def update_status(
+        self, action_id: str, status: PendingStatus,
+    ) -> None:
+        """Update a previously sent approval message with the resolution."""
+```
+
+### Implemented Channels
+
+| Channel | Type | Approval Support | Since |
+|---------|------|-----------------|-------|
+| **MQTT** | `NotificationChannel` | Via MQTT topics (CLI) | v0.1.0 |
+| **Email** | `NotificationChannel` | No | v0.2.0 |
+| **Webhook** | `NotificationChannel` | No | v0.2.0 |
+| **Telegram** | `InteractiveNotificationChannel` | Inline keyboard buttons | v0.3.2 |
+
+The `NotificationDispatcher` fans out notifications to all enabled
+channels. Channel failures are logged but never block the pipeline.
+
+### Future Channels
+- **Slack** — Block Kit buttons for interactive approvals
+- **Discord** — Webhook-based notifications
 
 ---
 
-## 11. Configuration Schema
+## 11. Configuration System
 
-Full config.yaml reference:
+### Three-Layer Config Model *(v0.3.0+)*
+
+| Layer | What | Where | Managed By |
+|-------|------|-------|------------|
+| **Bootstrap** | Port, data dir, secret key, log level | 4 env vars | `docker-compose.yml` |
+| **Runtime config** | All integrations, core services, notification channels, scanner settings | SQLite (secrets encrypted with Fernet) | Web UI + REST API |
+| **Content** | Known fixes YAML, prompt templates | Files on disk (mountable volume) | Git / file mount |
+
+**Bootstrap env vars (exhaustive list):**
+
+- `OASIS_PORT` — Listen port (default: `8080`)
+- `OASIS_DATA_DIR` — SQLite + data directory (default: `/data`)
+- `OASIS_SECRET_KEY` — Fernet key for encrypting secrets at rest
+  (auto-generated on first run if missing)
+- `OASIS_LOG_LEVEL` — Logging level (default: `info`)
+
+All other configuration — MQTT broker URL, InfluxDB endpoint, HA token,
+Proxmox connections, Telegram bot token, polling intervals — is
+configured through the web UI and stored in SQLite with secrets
+encrypted at rest via Fernet.
+
+### Secrets Handling
+
+Tokens, passwords, and API keys entered through the UI are encrypted
+using Fernet symmetric encryption (from the `cryptography` package).
+The `OASIS_SECRET_KEY` env var is the sole root of trust. Secrets are
+decrypted in-memory only when an adapter or handler needs them.
+
+The `CryptoProvider` class (`oasisagent/db/crypto.py`) handles all
+encryption/decryption. The key is sourced from (in order):
+1. `OASIS_SECRET_KEY` environment variable
+2. `{OASIS_DATA_DIR}/.secret_key` file
+3. Auto-generated on first run and persisted to the file above
+
+### SQLite Schema and Migrations
+
+The database uses a `schema_version` integer. On startup, the agent
+checks the version and runs sequential migration scripts from
+`oasisagent/db/migrations/`:
+
+- `001_initial.py` — Core tables (agent_config, connectors, services,
+  notifications, known fixes metadata)
+- `002_user_roles.py` — User table with roles, password hashes, TOTP
+- `003_pending_actions.py` — Pending action queue persistence
+- `004_stats.py` — Counters (events processed, actions taken, errors)
+
+### Connector/Service Registry
+
+The type registry (`oasisagent/db/registry.py`) maps storage type
+strings to Pydantic model classes and their secret fields. This is the
+single source of truth for what gets encrypted. On write, only fields
+in `secret_fields` are extracted to `secrets_json`. On read,
+`secrets_json` keys win on conflict with `config_json` keys.
+
+Registered connector types: `mqtt`, `ha_websocket`, `ha_log_poller`,
+`unifi`, `cloudflare`, `uptime_kuma`, `http_poller`, `webhook_receiver`
+
+Registered service types: `ha_handler`, `docker_handler`,
+`portainer_handler`, `proxmox_handler`, `unifi_handler`,
+`cloudflare_handler`, `llm_triage`, `llm_reasoning`, `llm_options`,
+`influxdb`, `guardrails`, `circuit_breaker`, `scanner`
+
+Registered notification types: `mqtt_notification`, `email`, `webhook`,
+`telegram`
+
+### Legacy Config Support
+
+The `config.yaml` file is still loaded as a fallback when the SQLite
+database has its default seed row and zero connectors/services/
+notifications exist. Once any config is written to SQLite, YAML is
+permanently ignored. This is a one-way door.
+
+CLI commands for headless deployments:
+```bash
+oasisagent config import seed.yaml   # Seed database from YAML
+oasisagent config export > backup.yaml  # Export for backup/migration
+```
+
+### Full Config Schema Reference
+
+The Pydantic config models in `oasisagent/config.py` define all valid
+configuration fields. Below is the legacy YAML reference — these same
+fields are now configurable through the web UI and stored in SQLite:
 
 ```yaml
-# OasisAgent Configuration
+# OasisAgent Configuration (legacy YAML format)
 # All ${VAR} references are resolved from environment variables
 
 agent:
@@ -694,6 +921,8 @@ agent:
   log_level: info               # debug, info, warning, error
   event_queue_size: 1000        # Internal event queue buffer
   shutdown_timeout: 30          # Seconds to wait for graceful shutdown
+  correlation_window: 30        # Seconds — 0 to disable event correlation
+  metrics_port: 9090            # Prometheus metrics — 0 to disable
 
 ingestion:
   mqtt:
@@ -728,6 +957,44 @@ ingestion:
     patterns: []
     dedup_window: 300
 
+  unifi:
+    enabled: false
+    url: https://192.168.1.1
+    username: ${UNIFI_USER}
+    password: ${UNIFI_PASS}
+    site: default
+    is_udm: true
+    verify_ssl: false
+    poll_interval: 30
+    poll_alarms: true
+    poll_health: true
+    cpu_threshold: 90.0
+    memory_threshold: 90.0
+
+  cloudflare:
+    enabled: false
+    api_token: ${CLOUDFLARE_API_TOKEN}
+    account_id: ""
+    zone_id: ""
+    poll_interval: 60
+    poll_tunnels: true
+    poll_waf: true
+    poll_ssl: true
+    waf_lookback_minutes: 5
+    waf_spike_threshold: 10
+
+  uptime_kuma:
+    enabled: false
+    url: http://localhost:3001
+    api_key: ""
+    poll_interval: 30
+    response_time_threshold_ms: 5000
+    cert_warning_days: 30
+    cert_critical_days: 7
+
+  http_poller:
+    targets: []                 # List of HttpPollerTargetConfig
+
 llm:
   triage:
     base_url: http://localhost:11434/v1
@@ -761,6 +1028,16 @@ handlers:
   docker:
     enabled: false
     socket: unix:///var/run/docker.sock
+    # OR for remote Docker hosts:
+    # url: tcp://192.168.1.120:2375
+    # tls_verify: true
+
+  portainer:
+    enabled: false
+    url: https://localhost:9443
+    api_key: ${PORTAINER_API_KEY}
+    endpoint_id: 1
+    verify_ssl: false
 
   proxmox:
     enabled: false
@@ -769,6 +1046,21 @@ handlers:
     token_name: ${PROXMOX_TOKEN_NAME}
     token_value: ${PROXMOX_TOKEN_VALUE}
     verify_ssl: false
+
+  unifi:
+    enabled: false
+    url: https://192.168.1.1
+    username: ${UNIFI_USER}
+    password: ${UNIFI_PASS}
+    site: default
+    is_udm: true
+    verify_ssl: false
+
+  cloudflare:
+    enabled: false
+    api_token: ${CLOUDFLARE_API_TOKEN}
+    account_id: ""
+    zone_id: ""
 
 guardrails:
   blocked_domains:
@@ -779,6 +1071,7 @@ guardrails:
   blocked_entities: []
   kill_switch: false
   dry_run: false
+  approval_timeout_minutes: 30
   circuit_breaker:
     max_attempts_per_entity: 3
     window_minutes: 60
@@ -804,8 +1097,35 @@ notifications:
     password: ${MQTT_PASS}
   email:
     enabled: false
+    smtp_host: localhost
+    smtp_port: 587
+    from: oasis-agent@example.com
+    to:
+      - admin@example.com
   webhook:
     enabled: false
+    urls:
+      - https://hooks.example.com/oasis
+  telegram:
+    enabled: false
+    bot_token: ${TELEGRAM_BOT_TOKEN}
+    chat_id: ${TELEGRAM_CHAT_ID}
+    min_severity: warning
+
+scanner:
+  enabled: false
+  interval: 900                 # seconds (15 minutes)
+  checks:
+    ha_integrations: true
+    docker_health: true
+    certificate_expiry:
+      enabled: true
+      endpoints:
+        - https://ha.local:8123
+      warning_days: 30
+    disk_space:
+      enabled: false
+      paths: []
 ```
 
 ---
@@ -820,25 +1140,46 @@ oasisagent/
 │   ├── orchestrator.py          # Main loop, component lifecycle, pipeline
 │   ├── config.py                # Config loading and validation (pydantic)
 │   ├── models.py                # Event, Severity, ActionResult, etc.
+│   ├── metrics.py               # Prometheus metrics endpoint
+│   ├── bootstrap.py             # Bootstrap env var loading
+│   ├── backoff.py               # Exponential backoff helper
+│   ├── cli.py                   # CLI commands (queue, config)
+│   ├── cli_config.py            # Config import/export CLI
 │   │
 │   ├── ingestion/               # Ingestion adapters
 │   │   ├── __init__.py
 │   │   ├── base.py              # IngestAdapter ABC
 │   │   ├── mqtt.py
 │   │   ├── ha_websocket.py
-│   │   └── ha_log_poller.py
+│   │   ├── ha_log_poller.py
+│   │   ├── http_poller.py       # Generic HTTP polling with JMESPath
+│   │   ├── webhook.py           # Webhook payload processing
+│   │   ├── unifi.py             # UniFi controller polling
+│   │   ├── cloudflare.py        # Cloudflare API polling
+│   │   └── uptime_kuma.py       # Uptime Kuma metrics polling
+│   │
+│   ├── clients/                 # Shared API clients
+│   │   ├── __init__.py
+│   │   ├── unifi.py             # UniFi session cookie auth client
+│   │   ├── cloudflare.py        # Cloudflare bearer token client
+│   │   └── uptime_kuma.py       # Uptime Kuma Prometheus parser
 │   │
 │   ├── engine/                  # Decision engine
 │   │   ├── __init__.py
-│   │   ├── decision.py          # Core orchestrator
+│   │   ├── decision.py          # Core decision engine
 │   │   ├── known_fixes.py       # T0 — YAML registry matcher
-│   │   └── circuit_breaker.py
+│   │   ├── circuit_breaker.py
+│   │   ├── correlator.py        # Event correlation
+│   │   ├── guardrails.py        # Risk tier + blocked domain logic
+│   │   └── queue.py             # Event queue with backpressure
 │   │
 │   ├── llm/                     # LLM abstraction
 │   │   ├── __init__.py
 │   │   ├── client.py            # Provider-agnostic LLM client
-│   │   ├── roles.py             # LLMRole enum, config mapping
+│   │   ├── triage.py            # T1 triage service
+│   │   ├── reasoning.py         # T2 reasoning service
 │   │   └── prompts/             # Prompt templates
+│   │       ├── __init__.py
 │   │       ├── classify_event.py
 │   │       ├── diagnose_failure.py
 │   │       └── summarize_context.py
@@ -847,44 +1188,100 @@ oasisagent/
 │   │   ├── __init__.py
 │   │   ├── base.py              # Handler ABC
 │   │   ├── homeassistant.py
-│   │   ├── docker.py            # Stub until Phase 2
-│   │   └── proxmox.py           # Stub until Phase 3
+│   │   ├── docker.py
+│   │   ├── portainer.py         # Docker via Portainer API
+│   │   ├── proxmox.py           # Proxmox VE REST API
+│   │   ├── unifi.py             # UniFi controller actions
+│   │   └── cloudflare.py        # Cloudflare API actions
+│   │
+│   ├── approval/                # Approval queue
+│   │   ├── __init__.py
+│   │   ├── pending.py           # PendingAction, PendingQueue
+│   │   └── listener.py          # MQTT + interactive approval listener
 │   │
 │   ├── audit/                   # Audit logging
 │   │   ├── __init__.py
-│   │   └── influxdb.py
+│   │   ├── influxdb.py          # InfluxDB writer
+│   │   └── reader.py            # Audit query reader
 │   │
-│   └── notifications/           # Notification dispatch
+│   ├── notifications/           # Notification dispatch
+│   │   ├── __init__.py
+│   │   ├── base.py              # NotificationChannel ABC
+│   │   ├── interactive.py       # InteractiveNotificationChannel ABC
+│   │   ├── dispatcher.py        # Fan-out to all enabled channels
+│   │   ├── mqtt.py
+│   │   ├── email.py
+│   │   ├── webhook.py
+│   │   └── telegram.py          # Telegram bot with inline keyboards
+│   │
+│   ├── scanner/                 # Preventive scanning
+│   │   ├── __init__.py
+│   │   ├── base.py              # ScannerIngestAdapter base class
+│   │   ├── cert_expiry.py       # TLS certificate expiry scanner
+│   │   ├── disk_space.py        # Filesystem usage scanner
+│   │   ├── docker_health.py     # Container health scanner
+│   │   └── ha_health.py         # HA integration health scanner
+│   │
+│   ├── db/                      # Database layer
+│   │   ├── __init__.py
+│   │   ├── schema.py            # SQLite schema and bootstrap
+│   │   ├── config_store.py      # Read/write config to SQLite
+│   │   ├── crypto.py            # Fernet encryption for secrets
+│   │   ├── registry.py          # Type → Pydantic model registry
+│   │   ├── api_models.py        # API request/response models
+│   │   ├── stats_store.py       # Persistent counters
+│   │   └── migrations/
+│   │       ├── __init__.py      # Migration runner
+│   │       ├── 001_initial.py
+│   │       ├── 002_user_roles.py
+│   │       ├── 003_pending_actions.py
+│   │       └── 004_stats.py
+│   │
+│   ├── web/                     # FastAPI application
+│   │   ├── __init__.py
+│   │   ├── app.py               # Application factory + lifespan
+│   │   ├── api.py               # REST API routes (/api/v1/)
+│   │   ├── api_config.py        # Config CRUD API (connectors, services)
+│   │   ├── api_setup.py         # First-run setup wizard API
+│   │   ├── webhook.py           # Webhook receiver (/ingest/webhook/)
+│   │   └── middleware.py        # Setup guard, sliding window session
+│   │
+│   └── ui/                      # Web admin UI
 │       ├── __init__.py
-│       ├── base.py              # NotificationChannel ABC
-│       ├── mqtt.py
-│       ├── email.py
-│       └── webhook.py
+│       ├── auth.py              # JWT + TOTP auth, RBAC
+│       ├── router.py            # UI route aggregator
+│       ├── form_specs.py        # Dynamic form definitions per type
+│       ├── routes/              # Page-level route modules
+│       │   ├── __init__.py
+│       │   ├── dashboard.py     # Real-time dashboard (SSE)
+│       │   ├── connectors.py    # Add/edit/test integrations
+│       │   ├── approvals.py     # Approval queue management
+│       │   ├── events.py        # Event explorer
+│       │   ├── known_fixes.py   # Known fixes browser
+│       │   ├── users.py         # User management (admin only)
+│       │   ├── auth_routes.py   # Login, logout, TOTP enrollment
+│       │   └── setup_routes.py  # First-run setup wizard
+│       ├── templates/           # Jinja2 + HTMX templates
+│       └── static/              # CSS, JS, icons
 │
 ├── known_fixes/                 # YAML fix registries
 │   ├── homeassistant.yaml
-│   ├── docker.yaml              # Empty until Phase 2
-│   └── proxmox.yaml             # Empty until Phase 3
+│   ├── docker.yaml
+│   ├── proxmox.yaml
+│   ├── unifi.yaml
+│   ├── cloudflare.yaml
+│   ├── uptime_kuma.yaml
+│   └── iot.yaml
 │
 ├── tests/
-│   ├── conftest.py
-│   ├── test_models.py
-│   ├── test_decision_engine.py
-│   ├── test_known_fixes.py
-│   ├── test_circuit_breaker.py
-│   ├── test_llm_client.py
-│   ├── test_ha_handler.py
-│   └── test_ingestion/
-│       ├── test_mqtt.py
-│       ├── test_ha_websocket.py
-│       └── test_ha_log_poller.py
+│   └── ...                      # pytest + pytest-asyncio
 │
+├── dashboards/                  # Grafana dashboard templates
 ├── config.yaml                  # Default/example configuration
 ├── config.example.yaml          # Documented example for new users
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml               # Project metadata, dependencies
-├── requirements.txt             # Pinned dependencies
 ├── LICENSE                      # MIT
 ├── README.md
 ├── ARCHITECTURE.md              # This file
@@ -901,20 +1298,34 @@ Core:
 - `pydantic` — Config validation, data models
 - `pyyaml` — Config and known_fixes parsing
 - `litellm` — Provider-agnostic LLM client
-- `aiomqtt` — Async MQTT client (for ingestion + notifications)
-- `aiohttp` — Async HTTP client (HA API, webhooks)
+- `aiomqtt` — Async MQTT client (ingestion + notifications)
+- `aiohttp` — Async HTTP client (HA API, Proxmox, Docker, UniFi,
+  Cloudflare, webhooks)
+- `aiosmtplib` — Async SMTP client (email notifications)
 - `influxdb-client[async]` — InfluxDB v2 async client
+- `fastapi` + `uvicorn` — Web UI, REST API, webhook receiver
+- `aiosqlite` — SQLite async driver (config store)
+- `cryptography` — Fernet encryption for secrets at rest
+- `jmespath` — JSON query expressions (HTTP poller, webhook receiver)
+- `jinja2` — Server-side template rendering (HTMX UI)
+- `sse-starlette` — Server-Sent Events (real-time dashboard)
+- `prometheus_client` — Prometheus metrics endpoint
+- `pyjwt` + `pyotp` — JWT auth + TOTP two-factor authentication
+- `argon2-cffi` — Password hashing (Argon2id)
+- `aiogram` — Async Telegram bot framework (notifications + approvals)
+- `bcrypt` — Legacy password hashing support
 
 Dev/Test:
 - `pytest` + `pytest-asyncio`
 - `pytest-cov`
 - `ruff` — Linting and formatting
+- `httpx` — Async HTTP test client (FastAPI TestClient)
 
 ---
 
 ## 14. Phasing
 
-### Phase 1 — Core Framework
+### Phase 1 — Core Framework (v0.1.x) **COMPLETE**
 - [x] Project scaffolding (pyproject.toml, Docker, CI)
 - [x] Config loading and validation
 - [x] Canonical Event model
@@ -934,10 +1345,10 @@ Dev/Test:
 - [x] Docker image + compose file
 - [x] Documentation: README, config.example.yaml, .env.example
 
-### Phase 2 — Extended Capabilities
+### Phase 2 — Extended Capabilities (v0.2.x) **COMPLETE**
 See §16 for full specification.
 
-### Phase 3 — Production Operations
+### Phase 3 — Production Operations (v0.3.x) **IN PROGRESS**
 See §17 for full specification.
 
 ---
@@ -967,62 +1378,91 @@ This is the bridge between "library of components" and "running system."
 Startup order reflects dependencies — a component only starts after everything
 it depends on is ready.
 
+**Standalone mode** (`oasisagent run`): The orchestrator installs signal
+handlers and runs the event loop directly.
+
+**Web mode** (FastAPI lifespan): The FastAPI application factory manages
+the lifecycle. The orchestrator's `start()` / `run_loop()` / `stop()`
+methods are called from the lifespan context manager. Signal handling
+belongs to uvicorn. The event processing loop runs as a background
+asyncio task.
+
 **Startup:**
 
 ```
- 1. Load config.yaml → validate with Pydantic
+ 1. Load config from SQLite (or fallback to config.yaml for virgin DB)
  2. Load known_fixes/ YAML files → KnownFixRegistry
- 3. Create CircuitBreaker
- 4. Create GuardrailsEngine (needs config.guardrails)
- 5. Create LLMClient (stateless — no start() needed)
- 6. Create TriageService (needs LLMClient)
- 7. Create DecisionEngine (needs KnownFixRegistry, TriageService,
-    GuardrailsEngine, CircuitBreaker)
- 8. Create Handlers → start() each enabled handler
- 9. Create AuditWriter → start()
-10. Create NotificationDispatcher → start()
-11. Create EventQueue (asyncio.Queue, max_size from config)
-12. Create Ingestion Adapters (need queue reference)
-13. Start Ingestion Adapters as background asyncio.Tasks
-14. Enter main event loop
+ 3. Create EventCorrelator
+ 4. Create CircuitBreaker
+ 5. Create GuardrailsEngine (needs config.guardrails)
+ 6. Create LLMClient (stateless — no start() needed)
+ 7. Create TriageService (needs LLMClient)
+ 8. Create ReasoningService (needs LLMClient)
+ 9. Create DecisionEngine (needs KnownFixRegistry, TriageService,
+    ReasoningService, GuardrailsEngine, CircuitBreaker)
+10. Create Handlers → start() each enabled handler
+11. Create AuditWriter → start()
+12. Create NotificationDispatcher → start()
+13. Create PendingQueue (load from SQLite if available)
+14. Create ApprovalListener → start()
+15. Create StatsStore (load counters from SQLite)
+16. Create MetricsServer → start()
+17. Create EventQueue (asyncio.Queue, max_size from config)
+18. Create Ingestion Adapters + Scanners (need queue reference)
+19. Start Ingestion Adapters + Scanners as background asyncio.Tasks
+20. Enter main event loop
 ```
 
 **Shutdown (SIGTERM/SIGINT):**
 
 ```
-1. Signal ingestion adapters to stop (no new events)
+1. Signal ingestion adapters and scanners to stop (no new events)
 2. Drain queue: process remaining events with a timeout
    (config: agent.shutdown_timeout seconds)
 3. Cancel any in-flight LLM calls
 4. Stop handlers (close HTTP sessions)
-5. Stop notification dispatcher (close MQTT connections)
-6. Stop audit writer (flush pending writes, close InfluxDB client)
-7. Log final stats (events processed, actions taken, errors)
+5. Stop approval listener
+6. Stop notification dispatcher (close MQTT, Telegram connections)
+7. Stop audit writer (flush pending writes, close InfluxDB client)
+8. Stop metrics server
+9. Flush stats to SQLite
+10. Log final stats (events processed, actions taken, errors)
 ```
 
 ### Main Event Loop
 
 ```python
 async def run(self) -> None:
-    """Main loop. Blocks until shutdown signal received."""
-    await self._start_components()
-    self._install_signal_handlers()
+    """Start all components and enter the main event loop.
 
+    Blocks until shutdown signal. This is the standalone entry point.
+    Under FastAPI, use start() / run_loop() / stop() instead.
+    """
+    await self.start()
+    self._install_signal_handlers()
     try:
-        while not self._shutting_down:
-            try:
-                event = await asyncio.wait_for(
-                    self._queue.get(), timeout=1.0
-                )
-            except asyncio.TimeoutError:
-                continue  # Check shutdown flag
-            if event is None:  # Poison pill for shutdown
-                break
-            await self._process_one(event)
-    except asyncio.CancelledError:
-        pass
+        await self.run_loop()
     finally:
-        await self._shutdown()
+        await self.stop()
+
+
+async def run_loop(self) -> None:
+    """Run the main event processing loop.
+
+    Blocks until _shutting_down is set or the task is cancelled.
+    Call this as a background task from FastAPI lifespan.
+    """
+    while not self._shutting_down:
+        await self._expire_stale_actions()
+
+        try:
+            event = await asyncio.wait_for(
+                self._queue.get(), timeout=1.0
+            )
+        except TimeoutError:
+            continue
+        await self._process_one(event)
+        self._queue.task_done()
 
 
 async def _process_one(self, event: Event) -> None:
@@ -1033,21 +1473,26 @@ async def _process_one(self, event: Event) -> None:
     try:
         # 1. TTL check
         if self._is_expired(event):
-            logger.info("Event %s expired (TTL), dropping", event.id)
             return
 
-        # 2. Decision (T0 → T1 → T2, guardrails applied)
+        # 2. Correlation check
+        correlation = self._correlator.check(event)
+        if not correlation.is_leader:
+            # Correlated follower — audit but skip processing
+            return
+
+        # 3. Decision (T0 → T1 → T2, guardrails applied)
         result = await self._decision_engine.process_event(event)
 
-        # 3. Audit the decision (best-effort)
+        # 4. Audit the decision (best-effort)
         await self._audit_decision(event, result)
 
-        # 4. Handler dispatch (if action required and not dry-run)
+        # 5. Handler dispatch (if action required and not dry-run)
         if self._should_execute(result):
             action_result = await self._dispatch_handler(event, result)
             await self._audit_action(event, result, action_result)
 
-        # 5. Notification (if warranted)
+        # 6. Notification (if warranted)
         if self._should_notify(result):
             await self._send_notification(event, result)
 
@@ -1092,27 +1537,123 @@ The orchestrator maps `DecisionResult` fields to downstream actions:
 
 ```python
 class Orchestrator:
-    def __init__(self, config: OasisAgentConfig) -> None: ...
+    def __init__(
+        self,
+        config: OasisAgentConfig,
+        db: aiosqlite.Connection | None = None,
+    ) -> None: ...
 
     async def run(self) -> None:
         """Start all components and enter the main event loop.
-        Blocks until shutdown signal. This is the application entry point."""
+        Blocks until shutdown signal. Standalone entry point."""
 
-    async def shutdown(self) -> None:
-        """Graceful shutdown. Called by signal handler or externally."""
+    async def start(self) -> None:
+        """Build and start all components without entering the event loop.
+        Call from FastAPI lifespan startup."""
+
+    async def run_loop(self) -> None:
+        """Run the main event processing loop. Blocks until shutdown.
+        Call as a background task from FastAPI lifespan."""
+
+    async def stop(self) -> None:
+        """Graceful shutdown. Called by signal handler or FastAPI lifespan."""
+
+    def enqueue(self, event: Event) -> None:
+        """Submit an event for processing (used by webhook receiver)."""
+
+    async def get_component_health(self) -> dict[str, dict[str, str]]:
+        """Return live health status for all active components."""
 ```
 
-`__main__.py` is thin:
+**Entry points:**
 
-```python
-async def main() -> None:
-    config = load_config()
-    orchestrator = Orchestrator(config)
-    await orchestrator.run()
+- **Standalone** (`oasisagent run`): `Orchestrator.run()` — installs
+  signal handlers, enters event loop.
+- **Web** (`uvicorn`): FastAPI lifespan calls `start()`, spawns
+  `run_loop()` as background task, calls `stop()` on shutdown.
 
-if __name__ == "__main__":
-    asyncio.run(main())
-```
+---
+
+## 15a. Web Admin UI *(v0.3.1)*
+
+The web admin UI is the primary operator interface. It runs as part of
+the single FastAPI process alongside the REST API and webhook receiver.
+
+### Stack
+
+- **Backend**: FastAPI (async, integrates with the existing asyncio loop)
+- **Frontend**: HTMX + Jinja2 templates (no JavaScript build toolchain)
+- **Styling**: Tailwind CSS via CDN
+- **Real-time**: Server-Sent Events (SSE) via `sse-starlette`
+- **Auth**: JWT with httpOnly cookies, sliding window expiry, TOTP 2FA
+
+### Route Mount Points
+
+| Path | What |
+|------|------|
+| `/` | Admin UI (HTMX pages) |
+| `/api/v1/` | REST API (consumed by UI + external automation) |
+| `/ingest/webhook/{source}` | Webhook receiver for push-based ingestion |
+| `/healthz` | Health check |
+| `/metrics` | Prometheus metrics |
+
+### RBAC Roles
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | Full access: config changes, user management, approve/reject |
+| `operator` | Approve/reject pending actions, view dashboards, ack alerts |
+| `viewer` | Read-only: dashboards, event history, audit trail |
+
+### Authentication
+
+- Passwords hashed with Argon2id (`argon2-cffi`)
+- JWT tokens in httpOnly cookies with sliding window expiry
+  (120 min inactivity, 24 hr max lifetime)
+- TOTP two-factor authentication via `pyotp` (mandatory for admin/operator)
+- CSRF protection via per-session token, validated on state-changing requests
+- Rate limiting via `failed_attempts` + `locked_until` columns in users table
+
+### Pages
+
+- **Setup Wizard** — First-run flow: admin account → core services → first integration
+- **Dashboard** — Real-time event feed (SSE), queue depth, circuit breaker status, recent actions
+- **Connectors** — Add/configure/test integrations (CRUD via REST API)
+- **Services** — Core service configuration (LLM, InfluxDB, guardrails)
+- **Approvals** — Pending action queue: approve/reject with optional comment
+- **Events** — Search and filter historical events, drill into decision chain
+- **Known Fixes** — Read-only browser of the YAML fix registry
+- **Users** — User management, role assignment, TOTP enrollment (admin only)
+
+### Files
+
+- `oasisagent/web/app.py` — Application factory + lifespan
+- `oasisagent/web/api.py` — REST API routes
+- `oasisagent/web/api_config.py` — Config CRUD API
+- `oasisagent/web/api_setup.py` — Setup wizard API
+- `oasisagent/web/webhook.py` — Webhook receiver routes
+- `oasisagent/ui/auth.py` — JWT + TOTP + RBAC
+- `oasisagent/ui/routes/` — Page-level route modules
+- `oasisagent/ui/templates/` — Jinja2 + HTMX templates
+- `oasisagent/ui/static/` — CSS, JS, icons
+
+---
+
+## 15b. Shared API Clients
+
+Adapters and handlers that interact with the same external service share
+a client class. This avoids duplicate auth logic and connection management.
+
+| Client | Auth Method | Used By |
+|--------|------------|---------|
+| `UnifiClient` | Session cookie, auto re-auth on 401/403 | UniFi adapter, UniFi handler |
+| `CloudflareClient` | Bearer token | Cloudflare adapter, Cloudflare handler |
+| `UptimeKumaClient` | Prometheus `/metrics` endpoint, optional API key | Uptime Kuma adapter |
+
+Client classes live in `oasisagent/clients/` and handle only HTTP
+session management, authentication, and request/response serialization.
+Business logic (event dedup, state tracking, action dispatch) remains
+in the adapter or handler that uses the client.
 
 ---
 
@@ -1479,35 +2020,67 @@ research, integration catalog, and implementation details.
 
 ### Milestone Plan
 
-| Version | Content | Tracking |
-|---------|---------|----------|
-| v0.3.0 | Foundation: config backend (SQLite + Fernet), FastAPI scaffold, webhook receiver, HTTP poller, Proxmox handler, Docker handler, MQTT expansion | Issues #47–#55 |
-| v0.3.1 | Web Admin UI: HTMX + Jinja2, auth, setup wizard, dashboard, connectors, approval queue | Issue #56 |
-| v0.3.2 | Messaging: InteractiveNotificationChannel ABC, Telegram, Slack, Discord | Issues #57–#60 |
-| v0.3.3 | Networking: UniFi, Cloudflare, Servarr (Radarr + Sonarr) | Issues #61–#63 |
-| v0.3.4 | Preventive scanning: certs, disk, backups, health sweeps | Issue #64 |
-| v0.3.5 | Learning loop: T2→T0 candidate generation + promotion | Issue #65 |
-| v0.3.6 | Plugins, multi-instance coordination, Tier 3 integrations | Issues #66–#68 |
-| v1.0.0 | Full test pass, documentation, migration guide | Epic #70 |
+| Version | Content | Status |
+|---------|---------|--------|
+| v0.3.0 | Foundation: config backend (SQLite + Fernet), FastAPI scaffold, webhook receiver, HTTP poller, Proxmox handler, Docker/Portainer handler | **Complete** |
+| v0.3.1 | Web Admin UI: HTMX + Jinja2, auth + TOTP, setup wizard, dashboard, connectors, approval queue, event explorer | **Complete** |
+| v0.3.2 | Messaging: InteractiveNotificationChannel ABC, Telegram with inline keyboards | **Complete** (Slack/Discord deferred) |
+| v0.3.3 | Networking: UniFi adapter + handler, Cloudflare adapter + handler, Uptime Kuma adapter | **Complete** (Servarr deferred) |
+| v0.3.4 | Preventive scanning: cert expiry, disk space, Docker health, HA health | **Complete** (backup freshness deferred) |
+| v0.3.5 | Learning loop: T2→T0 candidate generation + promotion | Planned |
+| v0.3.6 | Plugins, multi-instance coordination, Tier 3 integrations | Planned |
+| v0.3.7 | Application integrations: Servarr, qBittorrent, Plex | Planned |
+| v1.0.0 | Full test pass, documentation, migration guide | Target |
 
 ### Phase 3 Checklist
 
-- [ ] Config backend: SQLite schema + Fernet encryption + connector CRUD API (§17.0)
-- [ ] Config import/export CLI commands (§17.0)
-- [ ] First-run setup wizard API (§17.0)
-- [ ] FastAPI application scaffold — single process (§17.1)
-- [ ] Webhook receiver ingestion adapter (§17.1a)
-- [ ] HTTP polling ingestion adapter with JMESPath (§17.1b)
-- [ ] Proxmox VE handler (§17.5)
-- [ ] Docker/Portainer handler
-- [ ] MQTT topic expansion (Zigbee2MQTT, Frigate, ESPresence, Valetudo)
-- [ ] Web admin UI with auth + RBAC (§17.1)
-- [ ] Telegram notification + approval channel (§17.2)
+#### v0.3.0 — Foundation **COMPLETE**
+- [x] Config backend: SQLite schema + Fernet encryption + connector CRUD API (§17.0)
+- [x] Config import/export CLI commands (§17.0)
+- [x] First-run setup wizard API (§17.0)
+- [x] FastAPI application scaffold — single process (§17.1)
+- [x] Webhook receiver ingestion adapter (§17.1a)
+- [x] HTTP polling ingestion adapter with JMESPath (§17.1b)
+- [x] Proxmox VE handler (§17.5)
+- [x] Docker handler (via Docker Engine API)
+- [x] Portainer handler (Docker via Portainer API)
+
+#### v0.3.1 — Web Admin UI **COMPLETE**
+- [x] Web admin UI with auth + RBAC (§17.1)
+- [x] JWT + TOTP authentication, CSRF protection
+- [x] Dashboard with real-time event feed (SSE)
+- [x] Connector management (add/edit/test integrations)
+- [x] Service management
+- [x] Approval queue (approve/reject with UI)
+- [x] Event explorer
+- [x] Known fixes browser
+- [x] User management (admin only)
+- [x] First-run setup wizard
+
+#### v0.3.2 — Messaging **PARTIAL**
+- [x] InteractiveNotificationChannel ABC
+- [x] Telegram notification + approval channel (§17.2)
 - [ ] Slack notification + approval channel (§17.3)
 - [ ] Discord webhook notification channel
-- [ ] UniFi, Cloudflare, Servarr integrations
-- [ ] Preventive scanning (§17.6)
-- [ ] Learning loop (§17.7)
+
+#### v0.3.3 — Networking **PARTIAL**
+- [x] UniFi adapter (device status, alarms, health, IDS/IPS, client tracking)
+- [x] UniFi handler (restart_device, block/unblock_client)
+- [x] Cloudflare adapter (tunnels, WAF, SSL certificates)
+- [x] Cloudflare handler (purge_cache, block/unblock_ip)
+- [x] Uptime Kuma adapter (monitor status, response time, cert expiry)
+- [ ] Servarr (Radarr/Sonarr) integration
+
+#### v0.3.4 — Preventive Scanning **COMPLETE**
+- [x] Scanner base class (ScannerIngestAdapter)
+- [x] HA integration health scanner
+- [x] Docker container health scanner
+- [x] TLS certificate expiry scanner
+- [x] Disk space usage scanner
+- [ ] Backup freshness scanner
+
+#### Remaining Phase 3
+- [ ] Learning loop: T2→T0 candidate generation + promotion (§17.7)
 - [ ] Multi-instance coordination (§17.8)
 - [ ] Plugin system (§17.9)
 - [ ] Tier 3 integrations (Stalwart, EMQX, Synology, N8N, Nextcloud, Ollama)
