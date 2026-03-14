@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from oasisagent.audit.influxdb import AuditNotStartedError, AuditWriter
+from oasisagent.audit.influxdb import _BUFFER_MAX, AuditNotStartedError, AuditWriter
 from oasisagent.config import AuditConfig, InfluxDbConfig
 from oasisagent.engine.circuit_breaker import CircuitBreakerResult
 from oasisagent.engine.decision import (
@@ -374,3 +374,152 @@ class TestErrorHandling:
 
         assert any("Audit write failed" in r.message for r in caplog.records)
         # Should NOT raise
+
+    async def test_non_retryable_error_buffers_immediately(self) -> None:
+        """A non-retryable error should buffer after 1 attempt (no retry)."""
+        writer = await _started_writer()
+        writer._write_api.write.side_effect = ValueError("bad data")
+
+        await writer.write_event(_make_event())
+
+        # Only 1 call (no retries for non-retryable errors)
+        assert writer._write_api.write.call_count == 1
+        assert writer.buffer_size == 1
+
+    @patch("oasisagent.audit.influxdb.asyncio.sleep", new_callable=AsyncMock)
+    async def test_retryable_error_retries_then_buffers(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        """ConnectionError should retry 3 times, then buffer."""
+        writer = await _started_writer()
+        writer._write_api.write.side_effect = ConnectionError("refused")
+
+        await writer.write_event(_make_event())
+
+        # 3 attempts total (1 initial + 2 retries)
+        assert writer._write_api.write.call_count == 3
+        assert writer.buffer_size == 1
+        # Backoff: 0.5s, 1.0s
+        assert mock_sleep.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Retry buffer
+# ---------------------------------------------------------------------------
+
+
+class TestRetryBuffer:
+    """Tests for the in-memory retry buffer for failed writes."""
+
+    async def test_failed_write_buffered(self) -> None:
+        writer = await _started_writer()
+        writer._write_api.write.side_effect = ValueError("fail")
+
+        await writer.write_event(_make_event())
+
+        assert writer.buffer_size == 1
+
+    async def test_buffer_drained_on_next_success(self) -> None:
+        writer = await _started_writer()
+
+        # First write fails — point is buffered
+        writer._write_api.write.side_effect = ValueError("fail")
+        await writer.write_event(_make_event())
+        assert writer.buffer_size == 1
+
+        # Second write succeeds — buffer should drain
+        writer._write_api.write.side_effect = None
+        writer._write_api.write.reset_mock()
+        await writer.write_event(_make_event())
+
+        # 1 call for the new point + 1 call to drain the buffered point
+        assert writer._write_api.write.call_count == 2
+        assert writer.buffer_size == 0
+
+    async def test_buffer_drain_stops_on_failure(self) -> None:
+        writer = await _started_writer()
+
+        # Buffer 2 points
+        writer._write_api.write.side_effect = ValueError("fail")
+        await writer.write_event(_make_event())
+        await writer.write_event(_make_event())
+        assert writer.buffer_size == 2
+
+        # Next write succeeds for the new point, but drain fails
+        call_count = 0
+
+        async def succeed_then_fail(**kwargs: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise ConnectionError("down again")
+
+        writer._write_api.write.side_effect = succeed_then_fail
+        writer._write_api.write.reset_mock()
+        await writer.write_event(_make_event())
+
+        # New point succeeded (call 1), drain attempt failed (call 2)
+        assert writer.buffer_size == 2  # both still in buffer
+
+    async def test_buffer_bounded(self) -> None:
+        writer = await _started_writer()
+        writer._write_api.write.side_effect = ValueError("fail")
+
+        # Fill buffer past max
+        for _ in range(_BUFFER_MAX + 5):
+            await writer.write_event(_make_event())
+
+        assert writer.buffer_size == _BUFFER_MAX
+
+    async def test_buffer_cleared_on_stop(self) -> None:
+        writer = await _started_writer()
+        writer._write_api.write.side_effect = ValueError("fail")
+
+        await writer.write_event(_make_event())
+        assert writer.buffer_size == 1
+
+        await writer.stop()
+        assert writer.buffer_size == 0
+
+    async def test_stop_warns_about_buffered_points(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        writer = await _started_writer()
+        writer._write_api.write.side_effect = ValueError("fail")
+        await writer.write_event(_make_event())
+
+        with caplog.at_level(logging.WARNING, logger="oasisagent.audit.influxdb"):
+            await writer.stop()
+
+        assert any("buffered points" in r.message for r in caplog.records)
+
+    async def test_multiple_buffered_points_drain_in_order(self) -> None:
+        writer = await _started_writer()
+
+        # Buffer 3 points
+        writer._write_api.write.side_effect = ValueError("fail")
+        for _ in range(3):
+            await writer.write_event(_make_event())
+        assert writer.buffer_size == 3
+
+        # All succeed on next write
+        writer._write_api.write.side_effect = None
+        writer._write_api.write.reset_mock()
+        await writer.write_event(_make_event())
+
+        # 1 new point + 3 drained = 4 calls
+        assert writer._write_api.write.call_count == 4
+        assert writer.buffer_size == 0
+
+    async def test_buffer_size_property(self) -> None:
+        writer = await _started_writer()
+        assert writer.buffer_size == 0
+
+        writer._write_api.write.side_effect = ValueError("fail")
+        await writer.write_event(_make_event())
+        assert writer.buffer_size == 1
+
+        await writer.write_event(_make_event())
+        assert writer.buffer_size == 2

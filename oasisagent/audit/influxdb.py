@@ -4,6 +4,11 @@ Every event, decision, and action that passes through OasisAgent is
 recorded to InfluxDB for full audit trail. This is best-effort: write
 failures are logged but never crash the pipeline.
 
+When InfluxDB is temporarily unreachable, failed points are buffered
+in-memory (bounded to ``_BUFFER_MAX`` entries) and retried on the
+next successful write. This prevents data loss during transient
+outages without risking unbounded memory growth.
+
 ARCHITECTURE.md §9 defines the measurement schemas.
 
 Tag vs. field split (InfluxDB performance):
@@ -20,6 +25,7 @@ Tag vs. field split (InfluxDB performance):
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 from datetime import UTC, datetime
@@ -39,6 +45,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of failed points to buffer in memory.  Oldest entries
+# are evicted when the buffer is full to prevent unbounded growth
+# during extended outages.
+_BUFFER_MAX = 1000
+
 
 class AuditNotStartedError(Exception):
     """Raised when audit methods are called before start()."""
@@ -50,12 +61,19 @@ class AuditWriter:
     Follows the same lifecycle pattern as Handler: start() creates
     async resources, stop() tears them down. If InfluxDB is disabled
     in config, all methods are no-ops.
+
+    Failed writes are buffered in-memory (up to ``_BUFFER_MAX`` points)
+    and retried on the next successful write, preventing data loss
+    during transient InfluxDB outages.
     """
 
     def __init__(self, config: AuditConfig) -> None:
         self._config = config
         self._client: InfluxDBClientAsync | None = None
         self._write_api: WriteApiAsync | None = None
+        self._buffer: collections.deque[tuple[Point, str]] = collections.deque(
+            maxlen=_BUFFER_MAX,
+        )
 
     @property
     def _enabled(self) -> bool:
@@ -83,9 +101,16 @@ class AuditWriter:
     async def stop(self) -> None:
         """Close InfluxDB client. No-op if disabled or not started."""
         if self._client is not None:
+            if self._buffer:
+                logger.warning(
+                    "Audit writer stopping with %d buffered points "
+                    "(these will be lost)",
+                    len(self._buffer),
+                )
             await self._client.close()
             self._client = None
             self._write_api = None
+            self._buffer.clear()
             logger.info("Audit writer stopped")
 
     async def write_event(self, event: Event) -> None:
@@ -254,8 +279,18 @@ class AuditWriter:
                 "AuditWriter.start() must be called before writing"
             )
 
+    @property
+    def buffer_size(self) -> int:
+        """Number of points waiting in the retry buffer."""
+        return len(self._buffer)
+
     async def _write(self, point: Point, *, measurement: str = "") -> None:
-        """Write a point to InfluxDB. Best-effort with transient retry."""
+        """Write a point to InfluxDB. Best-effort with transient retry.
+
+        On success the method also drains any previously buffered points.
+        On final failure the point is added to a bounded in-memory buffer
+        so it can be retried on the next successful write.
+        """
         if self._write_api is None:
             logger.warning(
                 "Audit write skipped for %s: write API not initialized",
@@ -263,11 +298,23 @@ class AuditWriter:
             )
             return
 
+        if await self._try_write(point, measurement=measurement):
+            # Current point succeeded — drain buffered points.
+            await self._drain_buffer()
+        else:
+            # All retries exhausted — buffer for later.
+            self._enqueue(point, measurement)
+
+    async def _try_write(
+        self, point: Point, *, measurement: str = ""
+    ) -> bool:
+        """Attempt to write a single point with retry. Return True on success."""
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
+                assert self._write_api is not None
                 await self._write_api.write(bucket=self._bucket, record=point)
-                return
+                return True
             except Exception as exc:
                 if attempt < max_retries and self._is_retryable(exc):
                     delay = 0.5 * (2**attempt)
@@ -283,11 +330,67 @@ class AuditWriter:
                     await asyncio.sleep(delay)
                 else:
                     logger.warning(
-                        "Audit write failed for %s (dropping): %s",
+                        "Audit write failed for %s (attempt %d/%d): %s",
                         measurement,
+                        attempt + 1,
+                        max_retries + 1,
                         exc,
                     )
-                    return
+                    return False
+        return False  # pragma: no cover — unreachable, satisfies type checker
+
+    def _enqueue(self, point: Point, measurement: str) -> None:
+        """Add a failed point to the retry buffer.
+
+        The buffer is a bounded deque — oldest entries are evicted
+        automatically when ``_BUFFER_MAX`` is reached.
+        """
+        was_full = len(self._buffer) == self._buffer.maxlen
+        self._buffer.append((point, measurement))
+        if was_full:
+            logger.warning(
+                "Audit retry buffer full (%d); oldest point evicted",
+                _BUFFER_MAX,
+            )
+        else:
+            logger.info(
+                "Audit point buffered for retry (%s); buffer size: %d",
+                measurement,
+                len(self._buffer),
+            )
+
+    async def _drain_buffer(self) -> None:
+        """Attempt to flush buffered points after a successful write.
+
+        Stops at the first failure so we don't spin through the entire
+        buffer when InfluxDB goes down again mid-drain.
+        """
+        if not self._buffer:
+            return
+
+        drained = 0
+        while self._buffer:
+            point, meas = self._buffer[0]  # peek
+            try:
+                assert self._write_api is not None
+                await self._write_api.write(bucket=self._bucket, record=point)
+            except Exception as exc:
+                logger.warning(
+                    "Audit buffer drain failed after %d points (%s): %s",
+                    drained,
+                    meas,
+                    exc,
+                )
+                break
+            self._buffer.popleft()
+            drained += 1
+
+        if drained:
+            logger.info(
+                "Audit buffer drained %d points; %d remaining",
+                drained,
+                len(self._buffer),
+            )
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
