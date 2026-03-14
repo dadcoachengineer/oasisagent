@@ -62,7 +62,7 @@
                class="block px-3 py-2 rounded text-sm {% if request.url.path.startswith(href) %}bg-gray-800 text-white{% else %}hover:bg-gray-800 hover:text-white{% endif %}">
                 {{ label }}{% if label == "Notifications" %}<span
                     hx-get="/ui/notifications/unread-count"
-                    hx-trigger="load, every 10s"
+                    hx-trigger="load, every 30s [document.visibilityState === 'visible']"
                     hx-swap="innerHTML"></span>{% endif %}
             </a>
             {% endif %}
