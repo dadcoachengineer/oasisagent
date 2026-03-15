@@ -454,6 +454,7 @@ class FrigateAdapterConfig(BaseModel):
     poll_events: bool = False
     detector_fps_threshold: float = 5.0
     detection_spike_threshold: int = 20
+    verify_ssl: bool = False
     timeout: int = 10
 
 
