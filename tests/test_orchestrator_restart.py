@@ -131,9 +131,9 @@ class TestRestartConnector:
         orch._adapters = [old_adapter]
         orch._adapter_tasks = [asyncio.create_task(asyncio.sleep(999))]
 
-        # Mock _build_adapter to return a new mock
+        # Mock _build_adapter_from_row to return a new mock
         new_adapter = _mock_adapter("mqtt")
-        with patch.object(orch, "_build_adapter", return_value=new_adapter):
+        with patch.object(orch, "_build_adapter_from_row", return_value=new_adapter):
             result = await orch.restart_connector(1)
 
         assert result is True
