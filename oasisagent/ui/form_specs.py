@@ -189,9 +189,16 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "slack": "Send notifications via Slack Incoming Webhook",
 }
 
-# Types that only allow a single instance
+# Types that allow multiple instances (e.g., multiple Servarr apps)
+MULTI_INSTANCE_TYPES: frozenset[str] = frozenset({
+    "servarr",
+    "http_poller",
+    "webhook_receiver",
+})
+
+# Types that only allow a single instance (everything else)
 SINGLE_INSTANCE_TYPES: frozenset[str] = frozenset(
-    TYPE_DISPLAY_NAMES.keys()
+    TYPE_DISPLAY_NAMES.keys() - MULTI_INSTANCE_TYPES
 )
 
 
