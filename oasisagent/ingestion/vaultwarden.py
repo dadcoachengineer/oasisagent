@@ -75,32 +75,35 @@ class VaultwardenAdapter(IngestAdapter):
         backoff = self._config.poll_interval
         max_backoff = 300
 
-        while not self._stopping:
-            try:
-                async with aiohttp.ClientSession(
-                    timeout=timeout, connector=connector,
-                    connector_owner=False,
-                ) as session:
-                    await self._poll_health(session)
-                    self._connected = True
-                    backoff = self._config.poll_interval  # reset on success
-            except asyncio.CancelledError:
-                return
-            except (TimeoutError, aiohttp.ClientError) as exc:
-                self._connected = False
-                self._handle_failure(str(exc))
-                backoff = min(backoff * 2, max_backoff)
-            except Exception:
-                self._connected = False
-                logger.exception("Vaultwarden: unexpected error")
-                self._handle_failure("unexpected error")
-                backoff = min(backoff * 2, max_backoff)
-
-            wait = self._config.poll_interval if self._connected else backoff
-            for _ in range(wait):
-                if self._stopping:
+        try:
+            while not self._stopping:
+                try:
+                    async with aiohttp.ClientSession(
+                        timeout=timeout, connector=connector,
+                        connector_owner=False,
+                    ) as session:
+                        await self._poll_health(session)
+                        self._connected = True
+                        backoff = self._config.poll_interval
+                except asyncio.CancelledError:
                     return
-                await asyncio.sleep(1)
+                except (TimeoutError, aiohttp.ClientError) as exc:
+                    self._connected = False
+                    self._handle_failure(str(exc))
+                    backoff = min(backoff * 2, max_backoff)
+                except Exception:
+                    self._connected = False
+                    logger.exception("Vaultwarden: unexpected error")
+                    self._handle_failure("unexpected error")
+                    backoff = min(backoff * 2, max_backoff)
+
+                wait = self._config.poll_interval if self._connected else backoff
+                for _ in range(wait):
+                    if self._stopping:
+                        return
+                    await asyncio.sleep(1)
+        finally:
+            await connector.close()
 
     # -----------------------------------------------------------------
     # Health check
