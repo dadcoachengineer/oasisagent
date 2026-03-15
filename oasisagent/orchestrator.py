@@ -167,7 +167,8 @@ class Orchestrator:
         self._config_store = config_store
         self._shutting_down = False
 
-        # Components — populated by _build_components()
+        # Components — populated by _build_infrastructure() + _build_db_components()
+        # (or _build_components_from_config() as fallback)
         self._queue: EventQueue | None = None
         self._correlator: EventCorrelator | None = None
         self._registry: KnownFixRegistry | None = None
@@ -236,12 +237,23 @@ class Orchestrator:
 
         Call this from FastAPI lifespan startup. Does NOT install signal
         handlers — under uvicorn, signal handling belongs to uvicorn.
+
+        Two-phase startup:
+        1. ``_build_infrastructure()`` — sync singletons from config
+        2. ``_build_db_components()`` — async, queries SQLite tables
+           OR ``_build_components_from_config()`` — sync fallback
         """
-        self._build_components()
+        # Phase A: infrastructure singletons (always from config)
+        self._build_infrastructure()
+
+        # Phase B: user-configurable components (DB or config fallback)
+        if self._config_store is not None:
+            await self._build_db_components()
+        else:
+            self._build_components_from_config()
 
         # Upgrade pending queue, notification store, and stats from SQLite
-        # when available. Must happen after _build_components and before
-        # _start_components.
+        # when available. Must happen after components and before start.
         if self._db is not None:
             self._pending_queue = await PendingQueue.from_db(self._db)
 
@@ -570,13 +582,6 @@ class Orchestrator:
             )
             return False
 
-        # Reload full config from database
-        try:
-            new_config = await store.load_config()
-        except Exception:
-            logger.exception("Failed to reload config for service restart")
-            return False
-
         # Stop the old handler
         old_handler = self._handlers.get(handler_name)
         if old_handler is not None:
@@ -590,10 +595,10 @@ class Orchestrator:
             logger.info("Service %d disabled, removed handler", service_id)
             return True
 
-        # Build a new handler from the refreshed config
-        new_handler = self._build_handler(handler_name, new_config)
+        # Build a new handler directly from the database row config
+        new_handler = self._build_handler_from_row(db_type, row["config"])
         if new_handler is None:
-            logger.info("Service %d not enabled in config after reload", service_id)
+            logger.info("Service %d: handler type %s not buildable", service_id, db_type)
             return True
 
         # Start the new handler
@@ -635,13 +640,6 @@ class Orchestrator:
             logger.error("Cannot restart notification: no dispatcher")
             return False
 
-        # Reload full config from database
-        try:
-            new_config = await store.load_config()
-        except Exception:
-            logger.exception("Failed to reload config for notification restart")
-            return False
-
         # Find the channel name that maps to this DB type
         channel_name: str | None = None
         for cname, ctype in self._CHANNEL_NAME_TO_TYPE.items():
@@ -673,10 +671,12 @@ class Orchestrator:
             logger.info("Notification %d disabled, removed channel", notification_id)
             return True
 
-        # Build a new channel from the refreshed config
-        new_channel = self._build_notification_channel(db_type, new_config)
+        # Build a new channel directly from the database row config
+        new_channel = self._build_notification_from_row(db_type, row["config"])
         if new_channel is None:
-            logger.info("Notification %d not enabled in config after reload", notification_id)
+            logger.info(
+                "Notification %d: type %s not buildable", notification_id, db_type,
+            )
             return True
 
         # Start and add the new channel
@@ -697,10 +697,14 @@ class Orchestrator:
     ) -> IngestAdapter | None:
         """Build an adapter directly from a database row's config dict.
 
-        This is used by restart_connector to construct adapters from
-        UI-created connectors that aren't in the YAML config file.
+        Uses the registry's ``module_path`` / ``class_name`` to locate the
+        adapter class — no hardcoded mapping needed.  Returns ``None`` for
+        types that have no adapter class (webhook_receiver, http_poller
+        when handled via aggregation).
         """
         assert self._queue is not None
+        import importlib
+
         from oasisagent.db.registry import get_type_meta
 
         try:
@@ -708,37 +712,66 @@ class Orchestrator:
         except ValueError:
             return None
 
+        if not meta.module_path:
+            return None
+
         # Validate the config through the Pydantic model
         adapter_config = meta.model(**{**row_config, "enabled": True})
 
-        # Map db_type → adapter class
-        adapter_map: dict[str, tuple[str, str]] = {
-            "mqtt": ("oasisagent.ingestion.mqtt", "MqttAdapter"),
-            "ha_websocket": ("oasisagent.ingestion.ha_websocket", "HaWebSocketAdapter"),
-            "ha_log_poller": ("oasisagent.ingestion.ha_log_poller", "HaLogPollerAdapter"),
-            "uptime_kuma": ("oasisagent.ingestion.uptime_kuma", "UptimeKumaAdapter"),
-            "unifi": ("oasisagent.ingestion.unifi", "UnifiAdapter"),
-            "cloudflare": ("oasisagent.ingestion.cloudflare", "CloudflareAdapter"),
-            "npm": ("oasisagent.ingestion.npm", "NpmAdapter"),
-            "frigate": ("oasisagent.ingestion.frigate", "FrigateAdapter"),
-            "n8n": ("oasisagent.ingestion.n8n", "N8nAdapter"),
-            "vaultwarden": ("oasisagent.ingestion.vaultwarden", "VaultwardenAdapter"),
-            "overseerr": ("oasisagent.ingestion.overseerr", "OverseerrAdapter"),
-            "qbittorrent": ("oasisagent.ingestion.qbittorrent", "QBittorrentAdapter"),
-            "plex": ("oasisagent.ingestion.plex", "PlexAdapter"),
-            "tautulli": ("oasisagent.ingestion.tautulli", "TautulliAdapter"),
-            "tdarr": ("oasisagent.ingestion.tdarr", "TdarrAdapter"),
-            "servarr": ("oasisagent.ingestion.servarr", "ServarrAdapter"),
-        }
+        module = importlib.import_module(meta.module_path)
+        cls = getattr(module, meta.class_name)
+        return cls(adapter_config, self._queue)
 
-        entry = adapter_map.get(db_type)
-        if entry is None:
+    def _build_handler_from_row(
+        self, db_type: str, row_config: dict[str, Any],
+    ) -> Handler | None:
+        """Build a handler directly from a database row's config dict.
+
+        Uses the registry's ``module_path`` / ``class_name``.  Returns
+        ``None`` for non-handler service types (LLM, guardrails, etc.)
+        which have empty ``module_path``.
+        """
+        import importlib
+
+        from oasisagent.db.registry import get_type_meta
+
+        try:
+            meta = get_type_meta("core_services", db_type)
+        except ValueError:
             return None
 
+        if not meta.module_path:
+            return None
+
+        config = meta.model(**{**row_config, "enabled": True})
+        module = importlib.import_module(meta.module_path)
+        cls = getattr(module, meta.class_name)
+        return cls(config)
+
+    def _build_notification_from_row(
+        self, db_type: str, row_config: dict[str, Any],
+    ) -> NotificationChannel | None:
+        """Build a notification channel directly from a database row's config.
+
+        Uses the registry's ``module_path`` / ``class_name``.  Returns
+        ``None`` for unknown types.
+        """
         import importlib
-        module = importlib.import_module(entry[0])
-        cls = getattr(module, entry[1])
-        return cls(adapter_config, self._queue)
+
+        from oasisagent.db.registry import get_type_meta
+
+        try:
+            meta = get_type_meta("notification_channels", db_type)
+        except ValueError:
+            return None
+
+        if not meta.module_path:
+            return None
+
+        config = meta.model(**{**row_config, "enabled": True})
+        module = importlib.import_module(meta.module_path)
+        cls = getattr(module, meta.class_name)
+        return cls(config)
 
     def _build_adapter(
         self, db_type: str, config: OasisAgentConfig,
@@ -872,8 +905,13 @@ class Orchestrator:
     # Component construction
     # -------------------------------------------------------------------
 
-    def _build_components(self) -> None:
-        """Instantiate all components from config. No I/O — just wiring."""
+    def _build_infrastructure(self) -> None:
+        """Instantiate system singletons from config. No I/O — just wiring.
+
+        These are infrastructure components that are NOT configurable
+        per-component via the UI. They are always built from
+        ``self._config`` (the OasisAgentConfig from ``store.load_config()``).
+        """
         cfg = self._config
 
         # 1. Event queue
@@ -895,24 +933,22 @@ class Orchestrator:
         else:
             logger.warning("Known fixes directory not found: %s", fixes_dir)
 
-        # 3. Circuit breaker
+        # 4. Circuit breaker
         self._circuit_breaker = CircuitBreaker(cfg.guardrails.circuit_breaker)
 
-        # 4. Guardrails engine
+        # 5. Guardrails engine
         self._guardrails = GuardrailsEngine(cfg.guardrails)
 
-        # 5. LLM client (stateless)
+        # 6. LLM client (stateless)
         self._llm_client = LLMClient(cfg.llm)
 
-        # 6. Triage service
+        # 7. Triage service
         self._triage_service = TriageService(self._llm_client)
 
-        # 7. Reasoning service (T2)
-        # TODO: Wire entity_context fetching (handler.get_context()) into the
-        # T2 pipeline once §16.2 entity context enrichment is implemented.
+        # 8. Reasoning service (T2)
         self._reasoning_service = ReasoningService(self._llm_client)
 
-        # 8. Decision engine
+        # 9. Decision engine
         self._decision_engine = DecisionEngine(
             registry=self._registry,
             guardrails=self._guardrails,
@@ -920,7 +956,39 @@ class Orchestrator:
             reasoning_service=self._reasoning_service,
         )
 
-        # 9. Handlers
+        # 10. Audit writer
+        self._audit = AuditWriter(cfg.audit)
+
+        # 11. Pending action queue (in-memory; upgraded to persistent in start())
+        self._pending_queue = PendingQueue()
+
+        # 12. Metrics server (Prometheus)
+        if cfg.agent.metrics_port > 0:
+            from oasisagent import metrics as metrics_mod
+
+            self._metrics_server = MetricsServer(cfg.agent.metrics_port)
+            metrics_mod.set_callback_sources(self._queue, self._pending_queue)
+
+    def _build_components(self) -> None:
+        """Build all components from config (backward-compat for tests).
+
+        Equivalent to ``_build_infrastructure()`` +
+        ``_build_components_from_config()``.
+        """
+        self._build_infrastructure()
+        self._build_components_from_config()
+
+    def _build_components_from_config(self) -> None:
+        """Build user-configurable components from OasisAgentConfig.
+
+        This is the sync fallback for standalone mode (no DB / tests).
+        Only builds adapters, handlers, and notifications — infrastructure
+        singletons must already be built by ``_build_infrastructure()``.
+        """
+        cfg = self._config
+        assert self._queue is not None
+
+        # --- Handlers ---
         if cfg.handlers.homeassistant.enabled:
             ha = HomeAssistantHandler(cfg.handlers.homeassistant)
             self._handlers[ha.name()] = ha
@@ -948,11 +1016,8 @@ class Orchestrator:
             cf_h = CloudflareHandler(cfg.handlers.cloudflare)
             self._handlers[cf_h.name()] = cf_h
 
-        # 10. Audit writer
-        self._audit = AuditWriter(cfg.audit)
-
-        # 11. Notification channels
-        channels = []
+        # --- Notification channels ---
+        channels: list[NotificationChannel] = []
         if cfg.notifications.mqtt.enabled:
             channels.append(MqttNotificationChannel(cfg.notifications.mqtt))
         if cfg.notifications.email.enabled:
@@ -977,12 +1042,7 @@ class Orchestrator:
             channels.append(SlackNotificationChannel(cfg.notifications.slack))
         self._dispatcher = NotificationDispatcher(channels)
 
-        # 12. Pending action queue (for RECOMMEND-tier actions)
-        # Initialized as in-memory here; upgraded to persistent in start()
-        # when a database connection is available.
-        self._pending_queue = PendingQueue()
-
-        # 13. Approval listener (subscribes to MQTT approve/reject topics)
+        # --- Approval listener ---
         if cfg.ingestion.mqtt.enabled:
             self._approval_listener = ApprovalListener(
                 config=cfg.ingestion.mqtt,
@@ -990,7 +1050,7 @@ class Orchestrator:
                 on_reject=self._handle_rejection,
             )
 
-        # 14. Ingestion adapters
+        # --- Ingestion adapters ---
         if cfg.ingestion.mqtt.enabled:
             self._adapters.append(MqttAdapter(cfg.ingestion.mqtt, self._queue))
         if cfg.ingestion.ha_websocket.enabled:
@@ -1026,65 +1086,304 @@ class Orchestrator:
                 UptimeKumaAdapter(cfg.ingestion.uptime_kuma, self._queue)
             )
 
-        # 14b. Scanner adapters (each scanner is its own adapter)
-        if cfg.scanner.enabled:
-            adaptive_kw = {
-                "adaptive_enabled": cfg.scanner.adaptive_enabled,
-                "adaptive_fast_factor": cfg.scanner.adaptive_fast_factor,
-                "adaptive_recovery_scans": cfg.scanner.adaptive_recovery_scans,
-            }
-            if cfg.scanner.certificate_expiry.enabled:
+        # --- Scanners ---
+        self._build_scanners_from_config(cfg)
+
+    def _build_scanners_from_config(self, cfg: OasisAgentConfig) -> None:
+        """Build scanner adapters from config (config-driven fallback)."""
+        assert self._queue is not None
+        if not cfg.scanner.enabled:
+            return
+
+        adaptive_kw = {
+            "adaptive_enabled": cfg.scanner.adaptive_enabled,
+            "adaptive_fast_factor": cfg.scanner.adaptive_fast_factor,
+            "adaptive_recovery_scans": cfg.scanner.adaptive_recovery_scans,
+        }
+        if cfg.scanner.certificate_expiry.enabled:
+            from oasisagent.scanner.cert_expiry import CertExpiryScannerAdapter
+
+            interval = cfg.scanner.certificate_expiry.interval or cfg.scanner.interval
+            self._adapters.append(CertExpiryScannerAdapter(
+                cfg.scanner.certificate_expiry, self._queue, interval,
+                **adaptive_kw,
+            ))
+        if cfg.scanner.disk_space.enabled:
+            from oasisagent.scanner.disk_space import DiskSpaceScannerAdapter
+
+            interval = cfg.scanner.disk_space.interval or cfg.scanner.interval
+            self._adapters.append(DiskSpaceScannerAdapter(
+                cfg.scanner.disk_space, self._queue, interval,
+                **adaptive_kw,
+            ))
+        if cfg.scanner.ha_health.enabled and cfg.handlers.homeassistant.enabled:
+            from oasisagent.scanner.ha_health import HaHealthScannerAdapter
+
+            interval = cfg.scanner.ha_health.interval or cfg.scanner.interval
+            self._adapters.append(HaHealthScannerAdapter(
+                cfg.scanner.ha_health, self._queue, interval,
+                ha_config=cfg.handlers.homeassistant,
+                **adaptive_kw,
+            ))
+        if cfg.scanner.docker_health.enabled and cfg.handlers.docker.enabled:
+            from oasisagent.scanner.docker_health import DockerHealthScannerAdapter
+
+            interval = cfg.scanner.docker_health.interval or cfg.scanner.interval
+            self._adapters.append(DockerHealthScannerAdapter(
+                cfg.scanner.docker_health, self._queue, interval,
+                docker_config=cfg.handlers.docker,
+                **adaptive_kw,
+            ))
+        if cfg.scanner.backup_freshness.enabled:
+            from oasisagent.scanner.backup_freshness import (
+                BackupFreshnessScannerAdapter,
+            )
+
+            interval = (
+                cfg.scanner.backup_freshness.interval or cfg.scanner.interval
+            )
+            self._adapters.append(BackupFreshnessScannerAdapter(
+                cfg.scanner.backup_freshness, self._queue, interval,
+            ))
+
+    async def _build_db_components(self) -> None:
+        """Build all user-configurable components from SQLite tables.
+
+        Queries ``connectors``, ``core_services``, and
+        ``notification_channels`` tables directly. Per-row try/except so
+        one bad config row never blocks others from starting.
+        """
+        store = self._config_store
+        assert store is not None
+        assert self._queue is not None
+
+        from oasisagent.db.registry import get_type_meta
+
+        # === Pass 1: Connectors ===
+        connector_rows = await store.list_connectors()
+        http_poller_configs: list[dict[str, Any]] = []
+
+        for row in connector_rows:
+            if not row["enabled"]:
+                continue
+            if row["type"] == "http_poller":
+                http_poller_configs.append(row["config"])
+                continue
+            try:
+                adapter = self._build_adapter_from_row(row["type"], row["config"])
+                if adapter is not None:
+                    self._adapters.append(adapter)
+            except Exception:
+                logger.exception(
+                    "Failed to build adapter %s (id=%d)", row["type"], row["id"],
+                )
+
+        # HTTP poller is many-to-one: all rows become one adapter
+        if http_poller_configs:
+            try:
+                from oasisagent.config import HttpPollerTargetConfig
+
+                targets = [
+                    HttpPollerTargetConfig(**{**cfg, "enabled": True})
+                    for cfg in http_poller_configs
+                ]
+                self._adapters.append(HttpPollerAdapter(targets, self._queue))
+            except Exception:
+                logger.exception("Failed to build http_poller adapter")
+
+        # === Pass 2: Handlers (before scanners) ===
+        service_rows = await store.list_services()
+        handler_db_types = set(self._HANDLER_NAME_TO_TYPE.values())
+
+        for row in service_rows:
+            if not row["enabled"] or row["type"] not in handler_db_types:
+                continue
+            try:
+                handler = self._build_handler_from_row(row["type"], row["config"])
+                if handler is not None:
+                    self._handlers[handler.name()] = handler
+            except Exception:
+                logger.exception(
+                    "Failed to build handler %s (id=%d)", row["type"], row["id"],
+                )
+
+        # === Pass 3: Scanners (after handlers — needs handler configs) ===
+        await self._build_scanners_from_db(service_rows)
+
+        # === Pass 4: Notification channels ===
+        notification_rows = await store.list_notifications()
+        channels: list[NotificationChannel] = []
+        for row in notification_rows:
+            if not row["enabled"]:
+                continue
+            try:
+                channel = self._build_notification_from_row(
+                    row["type"], row["config"],
+                )
+                if channel is not None:
+                    channels.append(channel)
+            except Exception:
+                logger.exception(
+                    "Failed to build notification %s (id=%d)",
+                    row["type"], row["id"],
+                )
+        self._dispatcher = NotificationDispatcher(channels)
+
+        # === Pass 5: Approval listener ===
+        mqtt_rows = [
+            r for r in connector_rows
+            if r["type"] == "mqtt" and r["enabled"]
+        ]
+        if len(mqtt_rows) > 1:
+            logger.warning(
+                "Multiple MQTT connectors enabled (%d) — using first for approval listener",
+                len(mqtt_rows),
+            )
+        if mqtt_rows:
+            try:
+                meta = get_type_meta("connectors", "mqtt")
+                mqtt_config = meta.model(**{**mqtt_rows[0]["config"], "enabled": True})
+                self._approval_listener = ApprovalListener(
+                    config=mqtt_config,
+                    on_approve=self._handle_approval,
+                    on_reject=self._handle_rejection,
+                )
+            except Exception:
+                logger.exception("Failed to build approval listener from MQTT row")
+
+    async def _build_scanners_from_db(
+        self, service_rows: list[dict[str, Any]],
+    ) -> None:
+        """Build scanner adapters from the 'scanner' service row.
+
+        Scanners need handler configs for cross-references (ha_health needs
+        ha_handler config, docker_health needs docker_handler config), so
+        this runs after handlers are built (Pass 3).
+        """
+        assert self._queue is not None
+
+        from oasisagent.config import (
+            DockerHandlerConfig,
+            HaHandlerConfig,
+            ScannerConfig,
+        )
+
+        # Find the scanner service row
+        scanner_row = None
+        for row in service_rows:
+            if row["type"] == "scanner" and row["enabled"]:
+                scanner_row = row
+                break
+        if scanner_row is None:
+            return
+
+        try:
+            scanner_cfg = ScannerConfig(**{**scanner_row["config"], "enabled": True})
+        except Exception:
+            logger.exception("Failed to parse scanner config (id=%d)", scanner_row["id"])
+            return
+
+        adaptive_kw = {
+            "adaptive_enabled": scanner_cfg.adaptive_enabled,
+            "adaptive_fast_factor": scanner_cfg.adaptive_fast_factor,
+            "adaptive_recovery_scans": scanner_cfg.adaptive_recovery_scans,
+        }
+
+        if scanner_cfg.certificate_expiry.enabled:
+            try:
                 from oasisagent.scanner.cert_expiry import CertExpiryScannerAdapter
 
-                interval = cfg.scanner.certificate_expiry.interval or cfg.scanner.interval
+                interval = scanner_cfg.certificate_expiry.interval or scanner_cfg.interval
                 self._adapters.append(CertExpiryScannerAdapter(
-                    cfg.scanner.certificate_expiry, self._queue, interval,
+                    scanner_cfg.certificate_expiry, self._queue, interval,
                     **adaptive_kw,
                 ))
-            if cfg.scanner.disk_space.enabled:
+            except Exception:
+                logger.exception("Failed to build cert_expiry scanner")
+
+        if scanner_cfg.disk_space.enabled:
+            try:
                 from oasisagent.scanner.disk_space import DiskSpaceScannerAdapter
 
-                interval = cfg.scanner.disk_space.interval or cfg.scanner.interval
+                interval = scanner_cfg.disk_space.interval or scanner_cfg.interval
                 self._adapters.append(DiskSpaceScannerAdapter(
-                    cfg.scanner.disk_space, self._queue, interval,
+                    scanner_cfg.disk_space, self._queue, interval,
                     **adaptive_kw,
                 ))
-            if cfg.scanner.ha_health.enabled and cfg.handlers.homeassistant.enabled:
-                from oasisagent.scanner.ha_health import HaHealthScannerAdapter
+            except Exception:
+                logger.exception("Failed to build disk_space scanner")
 
-                interval = cfg.scanner.ha_health.interval or cfg.scanner.interval
-                self._adapters.append(HaHealthScannerAdapter(
-                    cfg.scanner.ha_health, self._queue, interval,
-                    ha_config=cfg.handlers.homeassistant,
-                    **adaptive_kw,
-                ))
-            if cfg.scanner.docker_health.enabled and cfg.handlers.docker.enabled:
-                from oasisagent.scanner.docker_health import DockerHealthScannerAdapter
+        # ha_health needs the ha_handler config
+        if scanner_cfg.ha_health.enabled:
+            ha_config = self._find_handler_config(service_rows, "ha_handler", HaHandlerConfig)
+            if ha_config is not None:
+                try:
+                    from oasisagent.scanner.ha_health import HaHealthScannerAdapter
 
-                interval = cfg.scanner.docker_health.interval or cfg.scanner.interval
-                self._adapters.append(DockerHealthScannerAdapter(
-                    cfg.scanner.docker_health, self._queue, interval,
-                    docker_config=cfg.handlers.docker,
-                    **adaptive_kw,
-                ))
-            if cfg.scanner.backup_freshness.enabled:
+                    interval = scanner_cfg.ha_health.interval or scanner_cfg.interval
+                    self._adapters.append(HaHealthScannerAdapter(
+                        scanner_cfg.ha_health, self._queue, interval,
+                        ha_config=ha_config,
+                        **adaptive_kw,
+                    ))
+                except Exception:
+                    logger.exception("Failed to build ha_health scanner")
+            else:
+                logger.warning(
+                    "ha_health scanner enabled but no enabled ha_handler found — skipping",
+                )
+
+        # docker_health needs the docker_handler config
+        if scanner_cfg.docker_health.enabled:
+            docker_config = self._find_handler_config(
+                service_rows, "docker_handler", DockerHandlerConfig,
+            )
+            if docker_config is not None:
+                try:
+                    from oasisagent.scanner.docker_health import DockerHealthScannerAdapter
+
+                    interval = scanner_cfg.docker_health.interval or scanner_cfg.interval
+                    self._adapters.append(DockerHealthScannerAdapter(
+                        scanner_cfg.docker_health, self._queue, interval,
+                        docker_config=docker_config,
+                        **adaptive_kw,
+                    ))
+                except Exception:
+                    logger.exception("Failed to build docker_health scanner")
+            else:
+                logger.warning(
+                    "docker_health scanner enabled but no enabled docker_handler found — skipping",
+                )
+
+        if scanner_cfg.backup_freshness.enabled:
+            try:
                 from oasisagent.scanner.backup_freshness import (
                     BackupFreshnessScannerAdapter,
                 )
 
                 interval = (
-                    cfg.scanner.backup_freshness.interval or cfg.scanner.interval
+                    scanner_cfg.backup_freshness.interval or scanner_cfg.interval
                 )
                 self._adapters.append(BackupFreshnessScannerAdapter(
-                    cfg.scanner.backup_freshness, self._queue, interval,
+                    scanner_cfg.backup_freshness, self._queue, interval,
                 ))
+            except Exception:
+                logger.exception("Failed to build backup_freshness scanner")
 
-        # 15. Metrics server (Prometheus)
-        if cfg.agent.metrics_port > 0:
-            from oasisagent import metrics as metrics_mod
-
-            self._metrics_server = MetricsServer(cfg.agent.metrics_port)
-            metrics_mod.set_callback_sources(self._queue, self._pending_queue)
+    @staticmethod
+    def _find_handler_config(
+        service_rows: list[dict[str, Any]],
+        handler_type: str,
+        config_cls: type,
+    ) -> object | None:
+        """Find an enabled handler row and return its validated config."""
+        for row in service_rows:
+            if row["type"] == handler_type and row["enabled"]:
+                try:
+                    return config_cls(**{**row["config"], "enabled": True})
+                except Exception:
+                    return None
+        return None
 
     # -------------------------------------------------------------------
     # Component lifecycle
