@@ -1645,7 +1645,7 @@ class TestAutoDisable404:
                 await adapter._poll_anomalies()
                 adapter._404_counts.pop(ep_name, None)
             except Exception as exc:
-                if adapter._is_404(exc):
+                if adapter._is_unsupported(exc):
                     count = adapter._404_counts.get(ep_name, 0) + 1
                     adapter._404_counts[ep_name] = count
                     if count >= _MAX_404_FAILURES:
@@ -1697,8 +1697,8 @@ class TestAutoDisable404:
         assert "events" not in adapter._disabled_endpoints
 
     @pytest.mark.asyncio
-    async def test_is_404_detection(self) -> None:
-        """_is_404 correctly identifies 404 ClientResponseError."""
+    async def test_is_unsupported_detection(self) -> None:
+        """_is_unsupported correctly identifies 403/404 ClientResponseError."""
         import aiohttp
 
         exc_404 = aiohttp.ClientResponseError(
@@ -1706,6 +1706,12 @@ class TestAutoDisable404:
             history=(),
             status=404,
             message="Not Found",
+        )
+        exc_403 = aiohttp.ClientResponseError(
+            request_info=MagicMock(),
+            history=(),
+            status=403,
+            message="Forbidden",
         )
         exc_500 = aiohttp.ClientResponseError(
             request_info=MagicMock(),
@@ -1715,9 +1721,10 @@ class TestAutoDisable404:
         )
         exc_other = RuntimeError("connection lost")
 
-        assert UnifiAdapter._is_404(exc_404) is True
-        assert UnifiAdapter._is_404(exc_500) is False
-        assert UnifiAdapter._is_404(exc_other) is False
+        assert UnifiAdapter._is_unsupported(exc_404) is True
+        assert UnifiAdapter._is_unsupported(exc_403) is True
+        assert UnifiAdapter._is_unsupported(exc_500) is False
+        assert UnifiAdapter._is_unsupported(exc_other) is False
 
     @pytest.mark.asyncio
     async def test_poll_loop_auto_disables_on_404(self) -> None:
@@ -1764,7 +1771,7 @@ class TestAutoDisable404:
                     adapter._endpoint_health[ep_name] = True
                     adapter._404_counts.pop(ep_name, None)
                 except Exception as exc:
-                    if adapter._is_404(exc):
+                    if adapter._is_unsupported(exc):
                         count = adapter._404_counts.get(ep_name, 0) + 1
                         adapter._404_counts[ep_name] = count
                         if count >= 3:
@@ -1788,7 +1795,7 @@ class TestAutoDisable404:
             message="Server Error",
         )
 
-        assert not adapter._is_404(exc_500)
+        assert not adapter._is_unsupported(exc_500)
         assert adapter._404_counts.get("anomalies", 0) == 0
 
     @pytest.mark.asyncio
