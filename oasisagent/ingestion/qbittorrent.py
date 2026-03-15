@@ -80,7 +80,8 @@ class QBittorrentAdapter(IngestAdapter):
         """Return an authenticated session, creating/refreshing as needed."""
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=self._config.timeout)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            jar = aiohttp.CookieJar(unsafe=True)  # allow cookies for IP URLs
+            self._session = aiohttp.ClientSession(timeout=timeout, cookie_jar=jar)
 
         await self._login()
         return self._session
