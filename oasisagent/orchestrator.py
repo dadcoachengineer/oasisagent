@@ -469,13 +469,6 @@ class Orchestrator:
             connector_id, db_type, row["name"],
         )
 
-        # Reload full config from database to get validated settings
-        try:
-            new_config = await store.load_config()
-        except Exception:
-            logger.exception("Failed to reload config for connector restart")
-            return False
-
         # Find and stop the old adapter
         old_adapter: IngestAdapter | None = None
         old_idx: int | None = None
@@ -509,16 +502,17 @@ class Orchestrator:
             logger.info("Connector %d disabled, removed adapter", connector_id)
             return True
 
-        # Build a new adapter from the refreshed config
-        new_adapter = self._build_adapter(db_type, new_config)
+        # Build a new adapter directly from the database row config
+        new_adapter = self._build_adapter_from_row(db_type, row["config"])
         if new_adapter is None:
-            # Config doesn't enable this type — remove old if exists
             if old_idx is not None:
                 self._adapters.pop(old_idx)
                 if old_idx < len(self._adapter_tasks):
                     self._adapter_tasks.pop(old_idx)
-            logger.info("Connector %d not enabled in config after reload", connector_id)
-            return True
+            logger.warning(
+                "Connector %d: unknown adapter type %r", connector_id, db_type,
+            )
+            return False
 
         # Replace or append
         if old_idx is not None:
@@ -697,6 +691,54 @@ class Orchestrator:
         except Exception:
             logger.exception("Failed to start channel %s during restart", channel_name)
             return False
+
+    def _build_adapter_from_row(
+        self, db_type: str, row_config: dict[str, Any],
+    ) -> IngestAdapter | None:
+        """Build an adapter directly from a database row's config dict.
+
+        This is used by restart_connector to construct adapters from
+        UI-created connectors that aren't in the YAML config file.
+        """
+        assert self._queue is not None
+        from oasisagent.db.registry import get_type_meta
+
+        try:
+            meta = get_type_meta("connectors", db_type)
+        except ValueError:
+            return None
+
+        # Validate the config through the Pydantic model
+        adapter_config = meta.model(**{**row_config, "enabled": True})
+
+        # Map db_type → adapter class
+        adapter_map: dict[str, tuple[str, str]] = {
+            "mqtt": ("oasisagent.ingestion.mqtt", "MqttAdapter"),
+            "ha_websocket": ("oasisagent.ingestion.ha_websocket", "HaWebSocketAdapter"),
+            "ha_log_poller": ("oasisagent.ingestion.ha_log_poller", "HaLogPollerAdapter"),
+            "uptime_kuma": ("oasisagent.ingestion.uptime_kuma", "UptimeKumaAdapter"),
+            "unifi": ("oasisagent.ingestion.unifi", "UnifiAdapter"),
+            "cloudflare": ("oasisagent.ingestion.cloudflare", "CloudflareAdapter"),
+            "npm": ("oasisagent.ingestion.npm", "NpmAdapter"),
+            "frigate": ("oasisagent.ingestion.frigate", "FrigateAdapter"),
+            "n8n": ("oasisagent.ingestion.n8n", "N8nAdapter"),
+            "vaultwarden": ("oasisagent.ingestion.vaultwarden", "VaultwardenAdapter"),
+            "overseerr": ("oasisagent.ingestion.overseerr", "OverseerrAdapter"),
+            "qbittorrent": ("oasisagent.ingestion.qbittorrent", "QBittorrentAdapter"),
+            "plex": ("oasisagent.ingestion.plex", "PlexAdapter"),
+            "tautulli": ("oasisagent.ingestion.tautulli", "TautulliAdapter"),
+            "tdarr": ("oasisagent.ingestion.tdarr", "TdarrAdapter"),
+            "servarr": ("oasisagent.ingestion.servarr", "ServarrAdapter"),
+        }
+
+        entry = adapter_map.get(db_type)
+        if entry is None:
+            return None
+
+        import importlib
+        module = importlib.import_module(entry[0])
+        cls = getattr(module, entry[1])
+        return cls(adapter_config, self._queue)
 
     def _build_adapter(
         self, db_type: str, config: OasisAgentConfig,
