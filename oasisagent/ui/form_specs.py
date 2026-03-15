@@ -875,12 +875,18 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     "vaultwarden": [
         FieldSpec(
             "url", "Server URL", "text",
-            help_text="e.g. http://localhost:8000",
+            help_text="e.g. https://192.168.2.100:8000",
             required=True,
         ),
         FieldSpec(
             "poll_interval", "Poll Interval (seconds)",
             "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL Certificate",
+            "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
         ),
         FieldSpec(
             "timeout", "Request Timeout (seconds)",

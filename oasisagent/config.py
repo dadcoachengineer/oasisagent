@@ -602,6 +602,7 @@ class VaultwardenAdapterConfig(BaseModel):
     enabled: bool = False
     url: str = ""
     poll_interval: int = 60
+    verify_ssl: bool = False
     timeout: int = 10
 
 
