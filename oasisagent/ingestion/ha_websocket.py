@@ -16,7 +16,7 @@ import aiohttp
 
 from oasisagent.backoff import ExponentialBackoff
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     from oasisagent.config import HaWebSocketConfig
@@ -302,3 +302,31 @@ class HaWebSocketAdapter(IngestAdapter):
             logger.warning(
                 "HA WebSocket: failed to enqueue service_call_failure for %s", entity_id
             )
+
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover HA instance as a topology node."""
+        from urllib.parse import urlparse
+
+        source = f"auto:{self.name}"
+        now = datetime.now(UTC)
+        parsed = urlparse(self._config.url)
+        host = parsed.hostname or ""
+
+        nodes = [
+            TopologyNode(
+                entity_id="ha:homeassistant",
+                entity_type="service",
+                display_name="Home Assistant",
+                host_ip=host,
+                source=source,
+                last_seen=now,
+                metadata={"url": self._config.url},
+            ),
+        ]
+        return nodes, []

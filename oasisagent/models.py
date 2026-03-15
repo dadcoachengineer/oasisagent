@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, TypedDict
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -192,6 +192,123 @@ class VerifyResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Notification (§10)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Decision details contract (§ issue #218)
+# ---------------------------------------------------------------------------
+
+
+class DecisionDetails(TypedDict, total=False):
+    """Explicit contract for DecisionResult.details dict.
+
+    All fields optional. Downstream consumers (timeline UI, correlation
+    engine, audit reader) can rely on these keys existing when the
+    corresponding tier produced the decision.
+
+    T0 fields:
+        matched_fix_id: The known fix ID that matched.
+
+    T1 fields:
+        classification: Event category from T1 triage.
+        confidence: T1 confidence score (0.0–1.0).
+        reasoning: T1 model reasoning text.
+        suggested_fix: T1 suggested fix (if disposition=KNOWN_PATTERN).
+
+    T2 fields:
+        t2_root_cause: Root cause analysis from T2 reasoning.
+        t2_confidence: T2 confidence score (0.0–1.0).
+        risk_assessment: T2 risk assessment text.
+        total_actions: Total actions recommended by T2.
+        approved_actions: Actions that passed guardrails.
+        blocked_count: Actions blocked by guardrails.
+
+    Guardrail fields:
+        guardrail_rule: The specific rule/pattern name that triggered.
+
+    Correlation fields:
+        leader_event_id: Leader event ID for correlated events.
+        escalate_to: Escalation target ("human", "t2").
+
+    Suppression fields:
+        suppressed_count: Number of consecutive events suppressed.
+    """
+
+    # T1
+    classification: str
+    confidence: float
+    reasoning: str
+    suggested_fix: str | None
+
+    # T2
+    t2_root_cause: str
+    t2_confidence: float
+    risk_assessment: str
+    total_actions: int
+    approved_actions: int
+    blocked_count: int
+
+    # Guardrails
+    guardrail_rule: str
+
+    # Correlation
+    leader_event_id: str
+    escalate_to: str
+
+    # Suppression
+    suppressed_count: int
+
+
+# ---------------------------------------------------------------------------
+# Service topology (§ issue #218 M2a)
+# ---------------------------------------------------------------------------
+
+
+class TopologyNode(BaseModel):
+    """A node in the service topology graph.
+
+    Represents a service, host, or network device discovered by an adapter
+    or manually added by the operator.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    entity_type: str  # e.g. "service", "host", "network_device", "proxy"
+    display_name: str = ""
+    host_ip: str | None = None
+    source: str = "manual"  # "manual" or "auto:<adapter_name>"
+    manually_edited: bool = False
+    last_seen: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TopologyEdge(BaseModel):
+    """A directed edge between two topology nodes.
+
+    Represents a dependency or relationship (e.g. "proxies_to",
+    "runs_on", "depends_on", "connects_via").
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_entity: str
+    to_entity: str
+    edge_type: str  # e.g. "proxies_to", "runs_on", "depends_on", "connects_via"
+    source: str = "manual"
+    manually_edited: bool = False
+    last_seen: datetime | None = None
+
+
+class TopologyDiff(BaseModel):
+    """A single change detected during topology discovery merge."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str  # "added", "updated", "stale"
+    entity_type: str  # "node" or "edge"
+    entity_id: str  # node entity_id or "from->to" for edges
+    details: str = ""
 
 
 class Notification(BaseModel):

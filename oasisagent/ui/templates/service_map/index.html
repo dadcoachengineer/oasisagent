@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Service Map — OasisAgent{% endblock %}
+{% block layout %}
+<div class="flex h-full">
+    <!-- Sidebar (same as base) -->
+    <aside class="w-64 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0" x-show="sidebarOpen">
+        <div class="p-4 border-b border-gray-700">
+            <h1 class="text-lg font-bold text-white tracking-wide">OasisAgent</h1>
+            <p class="text-xs text-gray-500 mt-1">v{{ version }}</p>
+        </div>
+        <nav class="flex-1 p-3 space-y-1">
+            {% set nav_items = [
+                ("/ui/dashboard", "Dashboard", "viewer"),
+                ("/ui/connectors", "Connectors", "viewer"),
+                ("/ui/services", "Services", "viewer"),
+                ("/ui/channels", "Channels", "operator"),
+                ("/ui/notifications", "Notifications", "viewer"),
+                ("/ui/approvals", "Approvals", "operator"),
+                ("/ui/events", "Events", "viewer"),
+                ("/ui/known-fixes", "Known Fixes", "viewer"),
+                ("/ui/service-map", "Service Map", "viewer"),
+                ("/ui/users", "Users", "admin"),
+            ] %}
+            {% for href, label, min_role in nav_items %}
+            {% if (min_role == "viewer") or
+                  (min_role == "operator" and current_user.role in ("admin", "operator")) or
+                  (min_role == "admin" and current_user.role == "admin") %}
+            <a href="{{ href }}"
+               class="block px-3 py-2 rounded text-sm {% if request.url.path.startswith(href) %}bg-gray-800 text-white{% else %}hover:bg-gray-800 hover:text-white{% endif %}">
+                {{ label }}{% if label == "Notifications" %}<span
+                    hx-get="/ui/notifications/unread-count"
+                    hx-trigger="load, every 30s [document.visibilityState === 'visible']"
+                    hx-swap="innerHTML"></span>{% endif %}
+            </a>
+            {% endif %}
+            {% endfor %}
+        </nav>
+        <div class="p-3 border-t border-gray-700 text-xs">
+            <div class="flex items-center justify-between">
+                <span>{{ current_user.username }}</span>
+                <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">{{ current_user.role }}</span>
+            </div>
+            <form method="post" action="/ui/logout" class="mt-2">
+                <button type="submit" class="text-gray-500 hover:text-gray-300 text-xs">Sign out</button>
+            </form>
+        </div>
+    </aside>
+
+    <!-- Main content — full width for graph -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+        <!-- Toolbar -->
+        <div class="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 flex-shrink-0">
+            <div>
+                <h1 class="text-lg font-bold text-gray-900">Service Map</h1>
+                <p class="text-xs text-gray-500">Interactive topology of monitored infrastructure</p>
+            </div>
+            <div class="flex items-center gap-2">
+                {% if current_user.role in ("admin", "operator") %}
+                <button id="btn-add-node"
+                        class="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+                    Add Node
+                </button>
+                <button id="btn-discover"
+                        class="bg-gray-600 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-700">
+                    Re-discover
+                </button>
+                {% endif %}
+                <button id="btn-fit"
+                        class="bg-gray-100 text-gray-600 px-3 py-1.5 rounded text-sm hover:bg-gray-200">
+                    Fit View
+                </button>
+            </div>
+        </div>
+
+        <div class="flex flex-1 overflow-hidden relative">
+            <!-- Graph container -->
+            <div id="graph-container" class="flex-1 bg-gray-50">
+                <svg id="service-map-svg" class="w-full h-full"></svg>
+            </div>
+
+            <!-- Side panel (hidden by default) -->
+            <div id="side-panel" class="w-80 bg-white border-l border-gray-200 overflow-y-auto hidden flex-shrink-0">
+                <div id="side-panel-content" class="p-4">
+                    <!-- Filled by JS on node click -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="flex items-center gap-4 px-4 py-2 bg-white border-t border-gray-200 text-xs text-gray-500 flex-shrink-0">
+            <span class="font-medium text-gray-700">Legend:</span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #3b82f6;"></span>
+                Network Device
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #22c55e;"></span>
+                Service
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #6b7280;"></span>
+                Host
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #f97316;"></span>
+                Proxy
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #a855f7;"></span>
+                Monitor
+            </span>
+            <span class="ml-4 flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block border-2 border-dashed border-gray-400 bg-transparent"></span>
+                Manual
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block border-2 border-solid border-gray-400 bg-transparent"></span>
+                Auto-discovered
+            </span>
+        </div>
+    </main>
+</div>
+
+<!-- Add Node Modal -->
+<div id="add-node-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center"
+     x-data="{ show: false }" x-show="show" x-transition x-cloak
+     @open-add-node.window="show = true" @click.self="show = false" @keydown.escape.window="show = false">
+    <div class="bg-white rounded-lg shadow-xl p-6 w-96" @click.stop>
+        <h2 class="text-lg font-bold text-gray-900 mb-4">Add Node</h2>
+        <form id="add-node-form" class="space-y-3">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Entity ID</label>
+                <input name="entity_id" type="text" required placeholder="e.g. service:my-app"
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Display Name</label>
+                <input name="display_name" type="text" placeholder="My Application"
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Type</label>
+                <select name="entity_type" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                    <option value="service">Service</option>
+                    <option value="host">Host</option>
+                    <option value="network_device">Network Device</option>
+                    <option value="proxy">Proxy</option>
+                    <option value="monitor">Monitor</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Host IP (optional)</label>
+                <input name="host_ip" type="text" placeholder="192.168.1.100"
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" @click="show = false"
+                        class="bg-gray-100 text-gray-600 px-4 py-1.5 rounded text-sm hover:bg-gray-200">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">
+                    Create
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Topology data (injected server-side for initial render) -->
+<script>
+    window.__TOPOLOGY_DATA__ = {{ topology_json|safe }};
+</script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="/ui/static/service_map.js"></script>
+{% endblock %}

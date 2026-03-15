@@ -22,8 +22,11 @@ from oasisagent.approval.listener import ApprovalListener
 from oasisagent.approval.pending import ApprovalDecision, PendingAction, PendingQueue
 from oasisagent.audit.influxdb import AuditWriter
 from oasisagent.db.stats_store import StatsStore
+from oasisagent.db.topology_store import TopologyStore
 from oasisagent.engine.circuit_breaker import CircuitBreaker
 from oasisagent.engine.correlator import EventCorrelator
+from oasisagent.engine.cross_correlator import CrossDomainCorrelator
+from oasisagent.engine.service_graph import ServiceGraph
 from oasisagent.engine.decision import (
     DecisionDisposition,
     DecisionEngine,
@@ -97,8 +100,11 @@ class EventSuppressionTracker:
 
     # -----------------------------------------------------------------
 
-    def check(self, event: Event) -> bool:
-        """Return True if the event should be suppressed (dropped).
+    def check(self, event: Event) -> int:
+        """Return the suppressed count if event should be suppressed, else 0.
+
+        A return value > 0 means the event was suppressed and the value
+        indicates the consecutive count (useful for audit recording).
 
         Side-effects:
         * Increments the counter for (entity_id, event_type).
@@ -112,7 +118,7 @@ class EventSuppressionTracker:
         # Recovery events reset suppression for the whole entity.
         if any(event_type.endswith(s) for s in _RECOVERY_SUFFIXES):
             self._reset_entity(entity_id)
-            return False
+            return 0
 
         # Different event_type for the same entity resets previous key.
         self._reset_entity(entity_id, keep=key)
@@ -128,7 +134,9 @@ class EventSuppressionTracker:
                 count,
             )
 
-        return count > self._threshold
+        if count > self._threshold:
+            return count
+        return 0
 
     def reset(self) -> None:
         """Clear all tracking state."""
@@ -191,6 +199,9 @@ class Orchestrator:
         self._stats_store: StatsStore | None = None
         self._notification_store: NotificationStore | None = None
         self._web_channel: WebNotificationChannel | None = None
+        self._topology_store: TopologyStore | None = None
+        self._service_graph: ServiceGraph | None = None
+        self._cross_correlator: CrossDomainCorrelator | None = None
 
         # Repeated-event suppression (§ issue #168)
         self._suppression = EventSuppressionTracker(
@@ -1445,6 +1456,21 @@ class Orchestrator:
             except Exception:
                 logger.exception("Failed to start metrics server")
 
+        # Service topology — load graph from DB
+        if self._db is not None:
+            try:
+                self._topology_store = TopologyStore(self._db)
+                self._service_graph = ServiceGraph()
+                await self._service_graph.load_from_db(self._topology_store)
+                self._cross_correlator = CrossDomainCorrelator(
+                    graph=self._service_graph,
+                    db=self._db,
+                    window_seconds=self._config.agent.correlation_window,
+                )
+                logger.info("Service graph and cross-correlator loaded")
+            except Exception:
+                logger.exception("Failed to load service graph")
+
         # Ingestion adapters — launched as background tasks
         for adapter in self._adapters:
             task = asyncio.create_task(
@@ -1452,6 +1478,15 @@ class Orchestrator:
             )
             self._adapter_tasks.append(task)
             logger.info("Ingestion adapter started: %s", adapter.name)
+
+        # Topology discovery — runs after adapters are launched
+        if self._topology_store is not None and self._service_graph is not None:
+            task = asyncio.create_task(
+                self._run_topology_discovery(),
+                name="topology-discovery",
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     async def _run_adapter(self, adapter: IngestAdapter) -> None:
         """Run an ingestion adapter. Logs exceptions but never propagates."""
@@ -1473,6 +1508,56 @@ class Orchestrator:
             pass
         except Exception:
             logger.exception("Approval listener crashed")
+
+    async def _run_topology_discovery(self) -> None:
+        """Periodically discover topology from all adapters.
+
+        Runs on startup (after a short delay for adapters to connect)
+        and then every 5 minutes. Merges discovered nodes/edges into
+        the service graph and persists to SQLite.
+        """
+        assert self._service_graph is not None
+        assert self._topology_store is not None
+
+        # Wait for adapters to establish connections
+        await asyncio.sleep(30)
+
+        while not self._shutting_down:
+            try:
+                all_nodes = []
+                all_edges = []
+                for adapter in self._adapters:
+                    try:
+                        nodes, edges = await adapter.discover_topology()
+                        all_nodes.extend(nodes)
+                        all_edges.extend(edges)
+                    except Exception:
+                        logger.debug(
+                            "Topology discovery failed for %s", adapter.name
+                        )
+
+                if all_nodes or all_edges:
+                    diffs = await self._service_graph.merge_discovered(
+                        all_nodes, all_edges, self._topology_store,
+                    )
+                    if diffs:
+                        logger.info(
+                            "Topology discovery: %d changes (%d nodes, %d edges)",
+                            len(diffs),
+                            len(all_nodes),
+                            len(all_edges),
+                        )
+
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception("Topology discovery cycle failed")
+
+            # Re-discover every 5 minutes
+            try:
+                await asyncio.sleep(300)
+            except asyncio.CancelledError:
+                return
 
     async def _shutdown(self) -> None:
         """Tear down components in reverse dependency order."""
@@ -1618,13 +1703,17 @@ class Orchestrator:
                 return
 
             # 1b. Repeated-event suppression — drop before any processing
-            if self._suppression.check(event):
+            suppressed_count = self._suppression.check(event)
+            if suppressed_count:
                 logger.debug(
-                    "Event %s suppressed (repeated %s for %s)",
+                    "Event %s suppressed (repeated %s for %s, count=%d)",
                     event.id,
                     event.event_type,
                     event.entity_id,
+                    suppressed_count,
                 )
+                if self._audit is not None:
+                    await self._audit.write_suppression(event, suppressed_count)
                 return
 
             # 1c. Metrics: count ingested event
@@ -1687,6 +1776,16 @@ class Orchestrator:
 
             self._events_processed += 1
             _observe_processing_time(result.tier.value, time.monotonic() - start)
+
+            # 6. Cross-domain correlation (async, best-effort)
+            if self._cross_correlator is not None:
+                try:
+                    await self._cross_correlator.correlate(event, result)
+                except Exception:
+                    logger.debug(
+                        "Cross-domain correlation failed for event %s",
+                        event.id,
+                    )
 
         except Exception:
             logger.exception("Unhandled error processing event %s", event.id)

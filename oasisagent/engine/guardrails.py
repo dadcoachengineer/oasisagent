@@ -32,6 +32,7 @@ class GuardrailResult(BaseModel):
     reason: str
     dry_run: bool = False
     risk_tier: RiskTier
+    rule_name: str = ""
 
 
 # Risk tiers that are allowed through guardrails in Phase 1.
@@ -70,6 +71,7 @@ class GuardrailsEngine:
                 allowed=False,
                 reason="Kill switch is active — all automated actions disabled",
                 risk_tier=risk_tier,
+                rule_name="kill_switch",
             )
 
         # 2. Risk tier policy
@@ -82,6 +84,7 @@ class GuardrailsEngine:
                 allowed=False,
                 reason=f"Risk tier '{risk_tier}' requires human review",
                 risk_tier=risk_tier,
+                rule_name="risk_tier_policy",
             )
 
         # 3. Blocked domains (glob match)
@@ -96,6 +99,7 @@ class GuardrailsEngine:
                     allowed=False,
                     reason=f"Entity '{entity_id}' matches blocked domain '{pattern}'",
                     risk_tier=risk_tier,
+                    rule_name=f"blocked_domain:{pattern}",
                 )
 
         # 4. Blocked entities (exact match)
@@ -108,6 +112,7 @@ class GuardrailsEngine:
                 allowed=False,
                 reason=f"Entity '{entity_id}' is explicitly blocked",
                 risk_tier=risk_tier,
+                rule_name=f"blocked_entity:{entity_id}",
             )
 
         # 5. Dry run — allow but flag
@@ -122,6 +127,7 @@ class GuardrailsEngine:
                 reason="Dry run mode — action logged but not executed",
                 dry_run=True,
                 risk_tier=risk_tier,
+                rule_name="dry_run",
             )
 
         # All checks passed
@@ -129,4 +135,5 @@ class GuardrailsEngine:
             allowed=True,
             reason="All guardrail checks passed",
             risk_tier=risk_tier,
+            rule_name="passed",
         )

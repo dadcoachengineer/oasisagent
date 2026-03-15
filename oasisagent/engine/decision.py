@@ -143,6 +143,10 @@ class DecisionEngine:
             risk_tier=fix.risk_tier,
         )
 
+        details: dict[str, Any] = {
+            "guardrail_rule": guardrail_result.rule_name,
+        }
+
         if not guardrail_result.allowed:
             logger.info(
                 "Decision BLOCKED for event %s: %s",
@@ -156,6 +160,7 @@ class DecisionEngine:
                 matched_fix_id=fix.id,
                 diagnosis=fix.diagnosis,
                 guardrail_result=guardrail_result,
+                details=details,
             )
 
         if guardrail_result.dry_run:
@@ -171,6 +176,7 @@ class DecisionEngine:
                 matched_fix_id=fix.id,
                 diagnosis=fix.diagnosis,
                 guardrail_result=guardrail_result,
+                details=details,
             )
 
         logger.info(
@@ -187,6 +193,7 @@ class DecisionEngine:
             matched_fix_id=fix.id,
             diagnosis=fix.diagnosis,
             guardrail_result=guardrail_result,
+            details=details,
         )
 
     async def _apply_t1_triage(self, event: Event) -> DecisionResult:
@@ -301,14 +308,17 @@ class DecisionEngine:
                 diagnosis=diagnosis.root_cause,
                 details={
                     "escalate_to": "human",
-                    "confidence": diagnosis.confidence,
+                    "t2_root_cause": diagnosis.root_cause,
+                    "t2_confidence": diagnosis.confidence,
                     "risk_assessment": diagnosis.risk_assessment,
+                    "confidence": diagnosis.confidence,
                 },
             )
 
         # Apply guardrails to each action independently
         approved_actions: list[RecommendedAction] = []
         blocked_count = 0
+        guardrail_rules: list[str] = []
 
         for action in diagnosis.recommended_actions:
             check_entity = action.target_entity_id or event.entity_id
@@ -321,6 +331,7 @@ class DecisionEngine:
                 approved_actions.append(action)
             else:
                 blocked_count += 1
+                guardrail_rules.append(guardrail_result.rule_name)
                 logger.info(
                     "T2 action blocked by guardrails for event %s: "
                     "handler=%s, op=%s, reason=%s",
@@ -344,9 +355,12 @@ class DecisionEngine:
                 diagnosis=diagnosis.root_cause,
                 recommended_actions=diagnosis.recommended_actions,
                 details={
+                    "t2_root_cause": diagnosis.root_cause,
+                    "t2_confidence": diagnosis.confidence,
                     "confidence": diagnosis.confidence,
                     "risk_assessment": diagnosis.risk_assessment,
                     "blocked_count": blocked_count,
+                    "guardrail_rule": ", ".join(guardrail_rules),
                 },
             )
 
@@ -364,6 +378,8 @@ class DecisionEngine:
             diagnosis=diagnosis.root_cause,
             recommended_actions=approved_actions,
             details={
+                "t2_root_cause": diagnosis.root_cause,
+                "t2_confidence": diagnosis.confidence,
                 "confidence": diagnosis.confidence,
                 "risk_assessment": diagnosis.risk_assessment,
                 "total_actions": len(diagnosis.recommended_actions),

@@ -11,6 +11,7 @@ from oasisagent.ui.routes.dashboard import router as dashboard_router
 from oasisagent.ui.routes.events import router as events_router
 from oasisagent.ui.routes.known_fixes import router as known_fixes_router
 from oasisagent.ui.routes.notifications import router as notifications_router
+from oasisagent.ui.routes.service_map import router as service_map_router
 from oasisagent.ui.routes.setup_routes import router as setup_router
 from oasisagent.ui.routes.users import router as users_router
 
@@ -39,6 +40,9 @@ ui_router.include_router(events_router)
 
 # Known fixes — /ui/known-fixes
 ui_router.include_router(known_fixes_router)
+
+# Service map — /ui/service-map
+ui_router.include_router(service_map_router)
 
 # Users — /ui/users
 ui_router.include_router(users_router)

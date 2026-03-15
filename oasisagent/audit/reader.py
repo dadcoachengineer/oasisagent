@@ -74,6 +74,7 @@ class DecisionRecord(BaseModel):
     diagnosis: str
     matched_fix_id: str
     timestamp: datetime
+    details: dict[str, Any] = {}
 
 
 class ActionRecord(BaseModel):
@@ -222,6 +223,7 @@ class AuditReader:
         source: str | None = None,
         system: str | None = None,
         event_type: str | None = None,
+        disposition: str | None = None,
     ) -> EventPage:
         """Query paginated event list with optional filters.
 
@@ -268,12 +270,16 @@ from(bucket: "{self._bucket}")
         # Batch-fetch decisions for disposition column
         if rows:
             event_ids = [r.event_id for r in rows]
-            dispositions = await self._batch_decisions(event_ids, duration)
+            dispositions_map = await self._batch_decisions(event_ids, duration)
             for row in rows:
-                info = dispositions.get(row.event_id)
+                info = dispositions_map.get(row.event_id)
                 if info:
                     row.disposition = info["disposition"]
                     row.tier = info["tier"]
+
+        # Post-filter by disposition (comes from decision, not event measurement)
+        if disposition and _validate_tag(disposition):
+            rows = [r for r in rows if r.disposition == disposition]
 
         return EventPage(
             rows=rows,
@@ -370,6 +376,94 @@ schema.tagValues(
         self._filter_cache_ts = now
         return FilterOptions(**results)
 
+    async def get_event_density(
+        self,
+        *,
+        duration: str = "24h",
+        window: str = "15m",
+    ) -> list[dict[str, Any]]:
+        """Get event counts per time bucket for the density chart.
+
+        Returns a list of {"time": datetime, "count": int} dicts.
+        Uses aggregateWindow for efficient server-side bucketing.
+        """
+        if not _validate_duration(duration):
+            duration = "24h"
+        if not _validate_duration(window):
+            window = "15m"
+
+        flux = f"""\
+from(bucket: "{self._bucket}")
+  |> range(start: -{duration})
+  |> filter(fn: (r) => r["_measurement"] == "oasis_event")
+  |> group()
+  |> aggregateWindow(every: {window}, fn: count, column: "_value", createEmpty: true)
+  |> yield(name: "density")"""
+
+        try:
+            tables = await self._query(flux)
+        except Exception:
+            return []
+
+        result: list[dict[str, Any]] = []
+        for table in tables:
+            for rec in table.records:
+                ts = rec.get_time()
+                count = rec.get_value()
+                if ts is not None:
+                    result.append({
+                        "time": ts.isoformat(),
+                        "count": int(count) if count else 0,
+                    })
+        return result
+
+    async def get_suppressions(
+        self,
+        *,
+        duration: str = "24h",
+        entity_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get suppression records for the timeline.
+
+        Returns a list of suppression events with counts.
+        """
+        if not _validate_duration(duration):
+            duration = "24h"
+
+        filters = ""
+        if entity_id and _validate_tag(entity_id):
+            filters = f'\n  |> filter(fn: (r) => r["entity_id"] == "{entity_id}")'
+
+        flux = f"""\
+from(bucket: "{self._bucket}")
+  |> range(start: -{duration})
+  |> filter(fn: (r) => r["_measurement"] == "oasis_suppression")
+{filters}
+  |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+  |> sort(columns: ["_time"], desc: true)
+  |> limit(n: 100)"""
+
+        try:
+            tables = await self._query(flux)
+        except Exception:
+            return []
+
+        result: list[dict[str, Any]] = []
+        for table in tables:
+            for rec in table.records:
+                v = rec.values
+                ts = rec.get_time()
+                result.append({
+                    "timestamp": ts.isoformat() if ts else "",
+                    "source": v.get("source", ""),
+                    "system": v.get("system", ""),
+                    "event_type": v.get("event_type", ""),
+                    "entity_id": v.get("entity_id", ""),
+                    "severity": v.get("severity", ""),
+                    "suppressed_count": int(v.get("suppressed_count", 0)),
+                })
+        return result
+
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
@@ -447,6 +541,13 @@ from(bucket: "{self._bucket}")
         if ts is None:
             ts = datetime.now(UTC)
 
+        # Parse the JSON details blob (DecisionDetails TypedDict)
+        details_raw = v.get("details", "{}")
+        try:
+            details = json.loads(details_raw) if isinstance(details_raw, str) else {}
+        except (json.JSONDecodeError, TypeError):
+            details = {}
+
         return DecisionRecord(
             tier=v.get("tier", ""),
             disposition=v.get("disposition", ""),
@@ -454,6 +555,7 @@ from(bucket: "{self._bucket}")
             diagnosis=v.get("diagnosis", ""),
             matched_fix_id=v.get("matched_fix_id", ""),
             timestamp=ts,
+            details=details,
         )
 
     async def _fetch_actions(self, event_id: str) -> list[ActionRecord]:
