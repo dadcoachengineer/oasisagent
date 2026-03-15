@@ -213,7 +213,7 @@ class TestRestartService:
         orch._handlers["homeassistant"] = old_handler
 
         new_handler = _mock_handler("homeassistant")
-        with patch.object(orch, "_build_handler", return_value=new_handler):
+        with patch.object(orch, "_build_handler_from_row", return_value=new_handler):
             result = await orch.restart_service(1)
 
         assert result is True
