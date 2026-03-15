@@ -105,7 +105,7 @@ class UnifiAdapter(IngestAdapter):
         if config.poll_dpi:
             self._endpoint_health["dpi"] = False
 
-        # Auto-disable endpoints that persistently return 404
+        # Auto-disable endpoints that persistently return 403/404
         self._404_counts: dict[str, int] = {}
         self._disabled_endpoints: set[str] = set()
 
@@ -209,7 +209,7 @@ class UnifiAdapter(IngestAdapter):
                 except asyncio.CancelledError:
                     return
                 except Exception as exc:
-                    if self._is_404(exc):
+                    if self._is_unsupported(exc):
                         count = self._404_counts.get(ep_name, 0) + 1
                         self._404_counts[ep_name] = count
                         if count >= _MAX_404_FAILURES:
@@ -762,7 +762,17 @@ class UnifiAdapter(IngestAdapter):
     # -----------------------------------------------------------------
 
     @staticmethod
-    def _is_404(exc: Exception) -> bool:
-        """Return True if the exception represents an HTTP 404 response."""
-        return isinstance(exc, aiohttp.ClientResponseError) and exc.status == 404
+    def _is_unsupported(exc: Exception) -> bool:
+        """Return True if the exception indicates an unsupported endpoint.
+
+        Matches 404 (not found) and 403 (forbidden) — both indicate the
+        endpoint is unavailable on this firmware or for this API user.
+        Transient 403s from session expiry are handled by the client's
+        automatic re-auth, so a 403 reaching here means the endpoint
+        itself is inaccessible.
+        """
+        return (
+            isinstance(exc, aiohttp.ClientResponseError)
+            and exc.status in (403, 404)
+        )
 
