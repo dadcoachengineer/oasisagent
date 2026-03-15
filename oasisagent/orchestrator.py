@@ -719,6 +719,45 @@ class Orchestrator:
         if db_type == "uptime_kuma" and cfg.ingestion.uptime_kuma.enabled:
             from oasisagent.ingestion.uptime_kuma import UptimeKumaAdapter
             return UptimeKumaAdapter(cfg.ingestion.uptime_kuma, self._queue)
+        if db_type == "unifi" and cfg.ingestion.unifi.enabled:
+            from oasisagent.ingestion.unifi import UnifiAdapter
+            return UnifiAdapter(cfg.ingestion.unifi, self._queue)
+        if db_type == "cloudflare" and cfg.ingestion.cloudflare.enabled:
+            from oasisagent.ingestion.cloudflare import CloudflareAdapter
+            return CloudflareAdapter(cfg.ingestion.cloudflare, self._queue)
+        if db_type == "npm" and cfg.ingestion.npm.enabled:
+            from oasisagent.ingestion.npm import NpmAdapter
+            return NpmAdapter(cfg.ingestion.npm, self._queue)
+        if db_type == "frigate" and cfg.ingestion.frigate.enabled:
+            from oasisagent.ingestion.frigate import FrigateAdapter
+            return FrigateAdapter(cfg.ingestion.frigate, self._queue)
+        if db_type == "n8n" and cfg.ingestion.n8n.enabled:
+            from oasisagent.ingestion.n8n import N8nAdapter
+            return N8nAdapter(cfg.ingestion.n8n, self._queue)
+        if db_type == "vaultwarden" and cfg.ingestion.vaultwarden.enabled:
+            from oasisagent.ingestion.vaultwarden import VaultwardenAdapter
+            return VaultwardenAdapter(cfg.ingestion.vaultwarden, self._queue)
+        if db_type == "overseerr" and cfg.ingestion.overseerr.enabled:
+            from oasisagent.ingestion.overseerr import OverseerrAdapter
+            return OverseerrAdapter(cfg.ingestion.overseerr, self._queue)
+        if db_type == "qbittorrent" and cfg.ingestion.qbittorrent.enabled:
+            from oasisagent.ingestion.qbittorrent import QBittorrentAdapter
+            return QBittorrentAdapter(cfg.ingestion.qbittorrent, self._queue)
+        if db_type == "plex" and cfg.ingestion.plex.enabled:
+            from oasisagent.ingestion.plex import PlexAdapter
+            return PlexAdapter(cfg.ingestion.plex, self._queue)
+        if db_type == "tautulli" and cfg.ingestion.tautulli.enabled:
+            from oasisagent.ingestion.tautulli import TautulliAdapter
+            return TautulliAdapter(cfg.ingestion.tautulli, self._queue)
+        if db_type == "tdarr" and cfg.ingestion.tdarr.enabled:
+            from oasisagent.ingestion.tdarr import TdarrAdapter
+            return TdarrAdapter(cfg.ingestion.tdarr, self._queue)
+        if db_type == "servarr":
+            # Servarr uses a list config — find the enabled entry
+            for servarr_cfg in cfg.ingestion.servarr:
+                if servarr_cfg.enabled:
+                    from oasisagent.ingestion.servarr import ServarrAdapter
+                    return ServarrAdapter(servarr_cfg, self._queue)
 
         return None
 
