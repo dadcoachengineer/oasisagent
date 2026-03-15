@@ -43,6 +43,7 @@ class FrigateAdapter(IngestAdapter):
         self._client = FrigateClient(
             url=config.url,
             timeout=config.timeout,
+            verify_ssl=config.verify_ssl,
         )
         self._stopping = False
         self._task: asyncio.Task[None] | None = None

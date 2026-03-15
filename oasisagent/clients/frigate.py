@@ -21,14 +21,20 @@ logger = logging.getLogger(__name__)
 class FrigateClient:
     """Async HTTP client for Frigate NVR API."""
 
-    def __init__(self, url: str, timeout: int = 10) -> None:
+    def __init__(
+        self, url: str, timeout: int = 10, *, verify_ssl: bool = True,
+    ) -> None:
         self._base_url = url.rstrip("/")
         self._timeout = aiohttp.ClientTimeout(total=timeout)
+        self._verify_ssl = verify_ssl
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
         """Create the HTTP session and verify connectivity."""
-        self._session = aiohttp.ClientSession(timeout=self._timeout)
+        connector = aiohttp.TCPConnector(ssl=self._verify_ssl)
+        self._session = aiohttp.ClientSession(
+            timeout=self._timeout, connector=connector,
+        )
         # Verify connectivity with a stats call
         async with self._session.get(f"{self._base_url}/api/stats") as resp:
             resp.raise_for_status()

@@ -605,7 +605,7 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     "frigate": [
         FieldSpec(
             "url", "Frigate URL", "text",
-            help_text="e.g. http://192.168.1.130:8971",
+            help_text="e.g. https://192.168.1.130:8971",
             required=True,
         ),
         FieldSpec(
@@ -640,6 +640,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             ),
             default=20, min_val=1,
             group="Thresholds",
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL Certificate",
+            "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
         ),
         FieldSpec(
             "timeout", "Request Timeout (seconds)",
