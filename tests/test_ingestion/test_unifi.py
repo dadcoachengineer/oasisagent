@@ -1721,8 +1721,16 @@ class TestAutoDisable404:
         )
         exc_other = RuntimeError("connection lost")
 
+        # ConnectionError from cascading re-auth failure
+        exc_login_403 = ConnectionError(
+            'UniFi login failed (HTTP 403): {"error":{"code":403,"message":"Forbidden"}}',
+        )
+        exc_login_other = ConnectionError("UniFi login failed (HTTP 401): unauthorized")
+
         assert UnifiAdapter._is_unsupported(exc_404) is True
         assert UnifiAdapter._is_unsupported(exc_403) is True
+        assert UnifiAdapter._is_unsupported(exc_login_403) is True
+        assert UnifiAdapter._is_unsupported(exc_login_other) is False
         assert UnifiAdapter._is_unsupported(exc_500) is False
         assert UnifiAdapter._is_unsupported(exc_other) is False
 

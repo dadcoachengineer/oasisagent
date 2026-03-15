@@ -765,14 +765,15 @@ class UnifiAdapter(IngestAdapter):
     def _is_unsupported(exc: Exception) -> bool:
         """Return True if the exception indicates an unsupported endpoint.
 
-        Matches 404 (not found) and 403 (forbidden) — both indicate the
-        endpoint is unavailable on this firmware or for this API user.
-        Transient 403s from session expiry are handled by the client's
-        automatic re-auth, so a 403 reaching here means the endpoint
-        itself is inaccessible.
+        Matches three cases:
+        1. ``aiohttp.ClientResponseError`` with status 403 or 404 — the
+           endpoint returned an error directly.
+        2. ``ConnectionError`` from re-auth failure — the endpoint returned
+           403, the client tried to re-authenticate, and re-auth also failed.
+           This cascading failure indicates the endpoint itself is forbidden,
+           not that credentials are wrong (other endpoints work fine).
         """
-        return (
-            isinstance(exc, aiohttp.ClientResponseError)
-            and exc.status in (403, 404)
-        )
+        if isinstance(exc, aiohttp.ClientResponseError) and exc.status in (403, 404):
+            return True
+        return isinstance(exc, ConnectionError) and "login failed (HTTP 403)" in str(exc)
 
