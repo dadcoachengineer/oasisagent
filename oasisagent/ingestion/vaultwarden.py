@@ -71,12 +71,16 @@ class VaultwardenAdapter(IngestAdapter):
 
     async def _poll_loop(self) -> None:
         timeout = aiohttp.ClientTimeout(total=self._config.timeout)
+        connector = aiohttp.TCPConnector(ssl=self._config.verify_ssl)
         backoff = self._config.poll_interval
         max_backoff = 300
 
         while not self._stopping:
             try:
-                async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with aiohttp.ClientSession(
+                    timeout=timeout, connector=connector,
+                    connector_owner=False,
+                ) as session:
                     await self._poll_health(session)
                     self._connected = True
                     backoff = self._config.poll_interval  # reset on success
