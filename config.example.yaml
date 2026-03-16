@@ -23,6 +23,7 @@ agent:
   correlation_window: 30        # Group related events within this window (seconds); 0 to disable
   metrics_port: 0               # Prometheus /metrics port; 0 to disable
   max_consecutive_identical: 3   # Suppress after N consecutive identical events per entity+type
+  dependency_context_depth: 2    # BFS depth for T2 dependency context (1-5, default 2)
 
 # -----------------------------------------------------------------------------
 # Ingestion — Event sources

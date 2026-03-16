@@ -965,6 +965,7 @@ class Orchestrator:
             guardrails=self._guardrails,
             triage_service=self._triage_service,
             reasoning_service=self._reasoning_service,
+            dependency_context_depth=cfg.agent.dependency_context_depth,
         )
 
         # 10. Audit writer
@@ -1462,6 +1463,7 @@ class Orchestrator:
                 self._topology_store = TopologyStore(self._db)
                 self._service_graph = ServiceGraph()
                 await self._service_graph.load_from_db(self._topology_store)
+                self._decision_engine.set_service_graph(self._service_graph)
                 self._cross_correlator = CrossDomainCorrelator(
                     graph=self._service_graph,
                     db=self._db,

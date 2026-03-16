@@ -13,7 +13,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from oasisagent.models import Event, TriageResult
+    from oasisagent.models import DependencyContext, Event, TriageResult
 
 SYSTEM_PROMPT = """\
 You are OasisAgent's deep reasoning engine analyzing a home lab infrastructure \
@@ -67,11 +67,72 @@ extra text.\
 """
 
 
+def _format_dependency_section(dep_ctx: DependencyContext) -> str | None:
+    """Format a DependencyContext into a prompt section.
+
+    Returns None if the context has no upstream, downstream, or same_host
+    entries (i.e., entity is isolated or not in the graph).
+    """
+    if not dep_ctx.upstream and not dep_ctx.downstream and not dep_ctx.same_host:
+        return None
+
+    lines = [
+        "## Service Dependencies\n",
+        "The affected entity has the following relationships "
+        "in the infrastructure topology:\n",
+    ]
+
+    if dep_ctx.upstream:
+        lines.append("### Upstream (this entity depends on):")
+        for node in dep_ctx.upstream:
+            lines.append(
+                f"- {node.entity_id} ({node.entity_type}) "
+                f"via {node.edge_type} [depth {node.depth}]"
+            )
+        lines.append("")
+
+    if dep_ctx.downstream:
+        lines.append("### Downstream (depends on this entity):")
+        for node in dep_ctx.downstream:
+            lines.append(
+                f"- {node.entity_id} ({node.entity_type}) "
+                f"via {node.edge_type} [depth {node.depth}]"
+            )
+        lines.append("")
+
+    if dep_ctx.same_host:
+        host_label = dep_ctx.host_ip or "same host"
+        lines.append(f"### Same Host (other entities at {host_label}):")
+        for node in dep_ctx.same_host:
+            lines.append(f"- {node.entity_id} ({node.entity_type})")
+        lines.append("")
+
+    if dep_ctx.edges:
+        lines.append("### Topology Edges:")
+        for edge in dep_ctx.edges:
+            lines.append(
+                f"- {edge.from_entity} --{edge.edge_type}--> {edge.to_entity}"
+            )
+        lines.append("")
+
+    lines.append(
+        "Use these relationships to:\n"
+        "1. Identify whether this failure could be caused by an upstream "
+        "dependency issue\n"
+        "2. Assess the blast radius — which downstream services are affected\n"
+        "3. Recommend remediation in dependency order "
+        "(fix upstream before downstream)\n"
+    )
+
+    return "\n".join(lines)
+
+
 def build_diagnose_messages(
     event: Event,
     triage_result: TriageResult,
     entity_context: dict[str, Any] | None = None,
     known_fixes: list[dict[str, Any]] | None = None,
+    dependency_context: DependencyContext | None = None,
 ) -> list[dict[str, Any]]:
     """Build chat messages for T2 deep diagnosis.
 
@@ -82,6 +143,8 @@ def build_diagnose_messages(
             if available. May contain user-controlled strings.
         known_fixes: Relevant known fixes so T2 doesn't re-derive
             known solutions.
+        dependency_context: Structured dependency subgraph from the
+            service topology, if available.
 
     Returns:
         Messages in OpenAI chat format.
@@ -99,6 +162,11 @@ def build_diagnose_messages(
         sections.append(
             f"Entity Context:\n{json.dumps(entity_context, indent=2, default=str)}\n"
         )
+
+    if dependency_context is not None:
+        dep_section = _format_dependency_section(dependency_context)
+        if dep_section:
+            sections.append(dep_section)
 
     if known_fixes:
         sections.append(

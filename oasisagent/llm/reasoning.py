@@ -19,7 +19,7 @@ from oasisagent.models import DiagnosisResult, RecommendedAction, RiskTier
 
 if TYPE_CHECKING:
     from oasisagent.llm.client import LLMClient
-    from oasisagent.models import Event, TriageResult
+    from oasisagent.models import DependencyContext, Event, TriageResult
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,7 @@ class ReasoningService:
         triage_result: TriageResult,
         entity_context: dict[str, Any] | None = None,
         known_fixes: list[dict[str, Any]] | None = None,
+        dependency_context: DependencyContext | None = None,
     ) -> DiagnosisResult:
         """Diagnose an event and return a DiagnosisResult.
 
@@ -114,7 +115,8 @@ class ReasoningService:
         returns a safe result recommending human escalation.
         """
         messages = build_diagnose_messages(
-            event, triage_result, entity_context, known_fixes
+            event, triage_result, entity_context, known_fixes,
+            dependency_context=dependency_context,
         )
 
         try:
