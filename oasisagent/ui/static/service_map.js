@@ -24,6 +24,7 @@
     host: "#6b7280",
     proxy: "#f97316",
     monitor: "#a855f7",
+    container: "#06b6d4",
   };
 
   var DEFAULT_COLOR = "#94a3b8";
@@ -452,6 +453,7 @@
       '    <select name="entity_type" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">' +
       '      <option value="service"' + (d.type === "service" ? " selected" : "") + ">Service</option>" +
       '      <option value="host"' + (d.type === "host" ? " selected" : "") + ">Host</option>" +
+      '      <option value="container"' + (d.type === "container" ? " selected" : "") + ">Container</option>" +
       '      <option value="network_device"' + (d.type === "network_device" ? " selected" : "") + ">Network Device</option>" +
       '      <option value="proxy"' + (d.type === "proxy" ? " selected" : "") + ">Proxy</option>" +
       '      <option value="monitor"' + (d.type === "monitor" ? " selected" : "") + ">Monitor</option>" +
