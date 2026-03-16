@@ -628,6 +628,30 @@ class ProxmoxAdapterConfig(BaseModel):
     memory_threshold: float = 90.0
 
 
+class PortainerAdapterConfig(BaseModel):
+    """Portainer ingestion adapter configuration.
+
+    Polls the Portainer API for Docker endpoint status, container states,
+    stack health, and (optionally) per-container resource usage.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://localhost:9443"
+    api_key: str = ""
+    verify_ssl: bool = False
+    poll_interval: int = 30
+    timeout: int = 10
+    poll_endpoints: bool = True
+    poll_containers: bool = True
+    poll_stacks: bool = True
+    poll_container_resources: bool = False
+    cpu_threshold: float = 90.0
+    memory_threshold: float = 90.0
+    ignore_containers: list[str] = Field(default_factory=list)
+
+
 # -- Scanner ----------------------------------------------------------------
 
 
@@ -761,6 +785,9 @@ class IngestionConfig(BaseModel):
     )
     proxmox: ProxmoxAdapterConfig = Field(
         default_factory=ProxmoxAdapterConfig,
+    )
+    portainer: PortainerAdapterConfig = Field(
+        default_factory=PortainerAdapterConfig,
     )
 
 

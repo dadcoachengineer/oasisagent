@@ -56,6 +56,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "overseerr": "Overseerr",
     "vaultwarden": "Vaultwarden",
     "proxmox": "Proxmox VE",
+    "portainer": "Portainer",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -144,6 +145,10 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "proxmox": (
         "Poll Proxmox VE for node status, VM states,"
         " tasks, and replication"
+    ),
+    "portainer": (
+        "Monitor Docker containers, stacks, and"
+        " endpoints via Portainer API"
     ),
     # Services
     "llm_triage": (
@@ -963,6 +968,70 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             "memory_threshold", "Memory Alert Threshold (%)",
             "number", default=90.0, min_val=0, max_val=100,
             group="Thresholds",
+        ),
+    ],
+    "portainer": [
+        FieldSpec(
+            "url", "Portainer URL", "text",
+            help_text="e.g. https://192.168.1.120:9443",
+            required=True,
+            default="https://localhost:9443",
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text="Portainer → Settings → Access control → API keys",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL", "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=30,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "poll_endpoints", "Poll Endpoints", "checkbox",
+            help_text="Monitor Docker host endpoint online/offline status",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_containers", "Poll Containers", "checkbox",
+            help_text="Monitor container state transitions across all endpoints",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_stacks", "Poll Stacks", "checkbox",
+            help_text="Derive stack health from container states",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_container_resources", "Poll Container Resources",
+            "checkbox",
+            help_text=(
+                "Monitor CPU/memory per container"
+                " (expensive — 1 API call per container)"
+            ),
+            default=False, group="Polling",
+        ),
+        FieldSpec(
+            "cpu_threshold", "CPU Alert Threshold (%)",
+            "float", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "memory_threshold", "Memory Alert Threshold (%)",
+            "float", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "ignore_containers", "Ignore Containers", "list_str",
+            help_text="Container names to skip (one per line)",
         ),
     ],
 
