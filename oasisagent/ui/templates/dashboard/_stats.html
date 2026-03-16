@@ -1,45 +1,58 @@
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-sm text-gray-500">Events Processed</p>
-        <p class="text-2xl font-bold text-gray-900">{{ stats.events_processed | default(0) }}</p>
+    <div class="bg-white dark:bg-surface-800 rounded-xl ring-1 ring-gray-200 dark:ring-gray-700/50 p-5 transition-colors">
+        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Events Processed</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{{ stats.events_processed | default(0) }}</p>
     </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-sm text-gray-500">Actions Taken</p>
-        <p class="text-2xl font-bold text-gray-900">{{ stats.actions_taken | default(0) }}</p>
+    <div class="bg-white dark:bg-surface-800 rounded-xl ring-1 ring-gray-200 dark:ring-gray-700/50 p-5 transition-colors">
+        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions Taken</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{{ stats.actions_taken | default(0) }}</p>
     </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-sm text-gray-500">Errors</p>
-        <p class="text-2xl font-bold {{ 'text-red-600' if stats.errors else 'text-gray-900' }}">
+    <div class="bg-white dark:bg-surface-800 rounded-xl ring-1 ring-gray-200 dark:ring-gray-700/50 p-5 transition-colors">
+        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Errors</p>
+        <p class="text-2xl font-bold mt-1 {{ 'text-red-500 dark:text-red-400' if stats.errors else 'text-gray-900 dark:text-white' }}">
             {{ stats.errors | default(0) }}
         </p>
     </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-sm text-gray-500">Queue Depth</p>
-        <p class="text-2xl font-bold text-gray-900">{{ stats.queue_depth | default(0) }}</p>
+    <div class="bg-white dark:bg-surface-800 rounded-xl ring-1 ring-gray-200 dark:ring-gray-700/50 p-5 transition-colors">
+        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Queue Depth</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-white mt-1">{{ stats.queue_depth | default(0) }}</p>
     </div>
 </div>
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-sm text-gray-500 mb-2">Pending Approvals</p>
-        <p class="text-2xl font-bold {{ 'text-amber-600' if stats.pending_approvals else 'text-gray-900' }}">
+    <div class="bg-white dark:bg-surface-800 rounded-xl ring-1 ring-gray-200 dark:ring-gray-700/50 p-5 transition-colors">
+        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Pending Approvals</p>
+        <p class="text-2xl font-bold mt-1 {{ 'text-amber-500 dark:text-amber-400' if stats.pending_approvals else 'text-gray-900 dark:text-white' }}">
             {{ stats.pending_approvals | default(0) }}
         </p>
         {% if stats.pending_approvals %}
-        <a href="/ui/approvals" class="text-xs text-blue-600 hover:underline mt-1 inline-block">View queue</a>
+        <a href="/ui/approvals" class="text-xs text-accent-600 dark:text-accent-400 hover:underline mt-2 inline-block">View queue &rarr;</a>
         {% endif %}
     </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-sm text-gray-500 mb-2">Circuit Breaker</p>
-        <p class="text-sm font-medium
-            {% if stats.circuit_breaker_state == 'open' %}text-red-600
-            {% elif stats.circuit_breaker_state == 'half_open' %}text-amber-600
-            {% else %}text-green-600{% endif %}">
-            {{ stats.circuit_breaker_state | default("closed") | upper }}
-        </p>
+    <div class="bg-white dark:bg-surface-800 rounded-xl ring-1 ring-gray-200 dark:ring-gray-700/50 p-5 transition-colors">
+        <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Circuit Breaker</p>
+        <div class="flex items-center gap-2 mt-1">
+            <span class="relative flex h-2.5 w-2.5">
+                {% if stats.circuit_breaker_state == 'open' %}
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                {% elif stats.circuit_breaker_state == 'half_open' %}
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                {% else %}
+                <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                {% endif %}
+            </span>
+            <span class="text-sm font-semibold
+                {% if stats.circuit_breaker_state == 'open' %}text-red-600 dark:text-red-400
+                {% elif stats.circuit_breaker_state == 'half_open' %}text-amber-600 dark:text-amber-400
+                {% else %}text-green-600 dark:text-green-400{% endif %}">
+                {{ stats.circuit_breaker_state | default("closed") | upper }}
+            </span>
+        </div>
     </div>
 </div>
 
 <div class="mt-4 text-right">
-    <p class="text-xs text-gray-400">Uptime: {{ stats.uptime | default("—") }}</p>
+    <p class="text-xs text-gray-400 dark:text-gray-500">Uptime: {{ stats.uptime | default("—") }}</p>
 </div>
