@@ -33,9 +33,11 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    OllamaAdapterConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
     ScannerConfig,
+    StalwartAdapterConfig,
     TelegramNotificationConfig,
     UnifiAdapterConfig,
     UnifiHandlerConfig,
@@ -89,6 +91,13 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "uptime_kuma": TypeMeta(
         model=UptimeKumaAdapterConfig,
         secret_fields=frozenset({"api_key"}),
+    ),
+    "stalwart": TypeMeta(
+        model=StalwartAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+    ),
+    "ollama": TypeMeta(
+        model=OllamaAdapterConfig,
     ),
 }
 

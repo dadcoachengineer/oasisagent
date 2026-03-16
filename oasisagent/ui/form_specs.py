@@ -45,6 +45,8 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "unifi": "UniFi Network",
     "cloudflare": "Cloudflare",
     "uptime_kuma": "Uptime Kuma",
+    "stalwart": "Stalwart Mail",
+    "ollama": "Ollama",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -89,6 +91,14 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "uptime_kuma": (
         "Pull monitor status from Uptime Kuma's"
         " Prometheus endpoint"
+    ),
+    "stalwart": (
+        "Monitor Stalwart Mail Server health"
+        " and mail queue depth"
+    ),
+    "ollama": (
+        "Monitor Ollama LLM server health"
+        " and loaded model status"
     ),
     # Services
     "llm_triage": (
@@ -466,6 +476,54 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
                 " within N days"
             ),
             default=7, min_val=1,
+        ),
+    ],
+
+    "stalwart": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. https://mail.example.com:443",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text="Optional — enables mail queue monitoring",
+            group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL Certificate",
+            "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "queue_threshold", "Queue Alert Threshold",
+            "number", default=100, min_val=1,
+            help_text="Alert when queued messages exceed this count",
+        ),
+    ],
+    "ollama": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:11434",
+            required=True,
+            default="http://localhost:11434",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
         ),
     ],
 
