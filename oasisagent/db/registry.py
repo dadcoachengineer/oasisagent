@@ -33,9 +33,11 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    OllamaAdapterConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
     ScannerConfig,
+    StalwartAdapterConfig,
     TelegramNotificationConfig,
     UnifiAdapterConfig,
     UnifiHandlerConfig,
@@ -94,6 +96,13 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "vaultwarden": TypeMeta(
         model=VaultwardenAdapterConfig,
         secret_fields=frozenset({"admin_token"}),
+    ),
+    "stalwart": TypeMeta(
+        model=StalwartAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+    ),
+    "ollama": TypeMeta(
+        model=OllamaAdapterConfig,
     ),
 }
 

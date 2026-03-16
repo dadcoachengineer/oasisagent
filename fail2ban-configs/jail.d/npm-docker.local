@@ -1,0 +1,128 @@
+# Fail2Ban jail configuration for Oasis home lab
+# Last updated: 2026-03-15
+#
+# Active jails:
+#   - npm-docker: Protects all NPM-proxied services via Cloudflare edge banning
+#
+# Disabled jails (TODO — need logging fixes first):
+#   - bitwarden: Vaultwarden auth log format doesn't match old Bitwarden filter
+#   - homeassistant: Log file missing / path broken
+
+[DEFAULT]
+# Ban escalation: starts at 10min, multiplies up on repeat offenders
+# 10m → 50m → 5h → 10h → 2d → 5d → 10d → 20d
+bantime.increment = true
+bantime.multipliers = 1 5 30 60 300 720 1440 2880
+
+# Cloudflare tunnel IPs + local ranges — never ban these
+ignoreip = 127.0.0.1/8
+            192.168.0.0/16
+            172.16.0.0/12
+            10.0.0.0/8
+
+# Email notification defaults
+destemail = jason@shearer.live
+sender    = fail2ban@shearer.live
+
+# ─── NPM Jail ─────────────────────────────────────────────────────────────────
+
+[npm-docker]
+enabled  = true
+filter   = npm-docker
+action   = cloudflare-apiv4
+           sendmail-whois[sender="%(sender)s", dest="%(destemail)s"]
+
+# 15 hits in 60 seconds → 10 minute initial ban (then escalates)
+maxretry  = 15
+findtime  = 60
+bantime   = 600
+
+# NPM access logs — all proxy hosts
+# Original hosts (1-19)
+logpath  = /log/npm/default-host_access.log
+           /log/npm/proxy-host-1_access.log
+           /log/npm/proxy-host-2_access.log
+           /log/npm/proxy-host-3_access.log
+           /log/npm/proxy-host-4_access.log
+           /log/npm/proxy-host-5_access.log
+           /log/npm/proxy-host-6_access.log
+           /log/npm/proxy-host-7_access.log
+           /log/npm/proxy-host-8_access.log
+           /log/npm/proxy-host-9_access.log
+           /log/npm/proxy-host-10_access.log
+           /log/npm/proxy-host-11_access.log
+           /log/npm/proxy-host-12_access.log
+           /log/npm/proxy-host-13_access.log
+           /log/npm/proxy-host-14_access.log
+           /log/npm/proxy-host-15_access.log
+           /log/npm/proxy-host-16_access.log
+           /log/npm/proxy-host-17_access.log
+           /log/npm/proxy-host-18_access.log
+           /log/npm/proxy-host-19_access.log
+           /log/npm/proxy-host-20_access.log
+           /log/npm/proxy-host-21_access.log
+           /log/npm/proxy-host-22_access.log
+           /log/npm/proxy-host-23_access.log
+           /log/npm/proxy-host-24_access.log
+           /log/npm/proxy-host-25_access.log
+           /log/npm/proxy-host-26_access.log
+           /log/npm/proxy-host-27_access.log
+           /log/npm/proxy-host-28_access.log
+           /log/npm/proxy-host-29_access.log
+           /log/npm/proxy-host-30_access.log
+           /log/npm/proxy-host-31_access.log
+           /log/npm/proxy-host-32_access.log
+           /log/npm/proxy-host-33_access.log
+           /log/npm/proxy-host-34_access.log
+           /log/npm/proxy-host-35_access.log
+           /log/npm/proxy-host-36_access.log
+           /log/npm/proxy-host-37_access.log
+           /log/npm/proxy-host-38_access.log
+           /log/npm/proxy-host-39_access.log
+           /log/npm/proxy-host-40_access.log
+           /log/npm/proxy-host-41_access.log
+           /log/npm/proxy-host-42_access.log
+           /log/npm/proxy-host-43_access.log
+           /log/npm/proxy-host-44_access.log
+           /log/npm/proxy-host-45_access.log
+           /log/npm/proxy-host-46_access.log
+           /log/npm/proxy-host-47_access.log
+           /log/npm/proxy-host-48_access.log
+           /log/npm/proxy-host-49_access.log
+           /log/npm/proxy-host-50_access.log
+           /log/npm/proxy-host-51_access.log
+           /log/npm/proxy-host-52_access.log
+           /log/npm/proxy-host-53_access.log
+           /log/npm/proxy-host-54_access.log
+           /log/npm/proxy-host-55_access.log
+           /log/npm/proxy-host-56_access.log
+           /log/npm/proxy-host-57_access.log
+           /log/npm/proxy-host-58_access.log
+           /log/npm/proxy-host-59_access.log
+           /log/npm/proxy-host-60_access.log
+
+# ─── Vaultwarden ─────────────────────────────────────────────────────────────
+# Auth failures from Vaultwarden LXC (CT 108) via NFS pipeline
+
+[vaultwarden]
+enabled   = true
+filter    = vaultwarden
+action    = cloudflare-apiv4
+            sendmail-whois[sender="%(sender)s", dest="%(destemail)s"]
+maxretry  = 3
+findtime  = 900
+bantime   = 3600
+logpath   = /log/bitwarden/vaultwarden.log
+
+# ─── Home Assistant ──────────────────────────────────────────────────────────
+# Auth failures from HAOS via CIFS Samba share
+
+[homeassistant]
+enabled   = true
+filter    = homeassistant
+action    = cloudflare-apiv4
+            sendmail-whois[sender="%(sender)s", dest="%(destemail)s"]
+maxretry  = 5
+findtime  = 300
+bantime   = 3600
+logpath   = /log/homeassistant/home-assistant.log

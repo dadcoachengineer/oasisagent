@@ -449,6 +449,37 @@ class VaultwardenAdapterConfig(BaseModel):
     slow_threshold_ms: int = 2000
 
 
+# -- Stalwart Mail ----------------------------------------------------------
+
+
+class StalwartAdapterConfig(BaseModel):
+    """Stalwart Mail Server health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    verify_ssl: bool = False
+    queue_threshold: int = 100
+
+
+# -- Ollama -----------------------------------------------------------------
+
+
+class OllamaAdapterConfig(BaseModel):
+    """Ollama LLM server health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "http://localhost:11434"
+    poll_interval: int = 60
+    timeout: int = 10
+
+
 # -- Scanner ----------------------------------------------------------------
 
 
