@@ -48,6 +48,8 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "vaultwarden": "Vaultwarden",
     "stalwart": "Stalwart Mail",
     "ollama": "Ollama",
+    "emqx": "EMQX",
+    "nextcloud": "Nextcloud",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -104,6 +106,14 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "ollama": (
         "Monitor Ollama LLM server health"
         " and loaded model status"
+    ),
+    "emqx": (
+        "Monitor EMQX MQTT broker health,"
+        " alarms, and listener status"
+    ),
+    "nextcloud": (
+        "Monitor Nextcloud health, cron freshness,"
+        " and maintenance mode"
     ),
     # Services
     "llm_triage": (
@@ -525,6 +535,62 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         FieldSpec(
             "poll_interval", "Poll Interval (seconds)",
             "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "emqx": [
+        FieldSpec(
+            "url", "Dashboard URL", "text",
+            help_text="e.g. http://emqx.local:18083",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "api_secret", "API Secret", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL Certificate",
+            "checkbox", default=False,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "nextcloud": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. https://nextcloud.example.com",
+            required=True,
+        ),
+        FieldSpec(
+            "username", "Username", "text",
+            required=True, group="Authentication",
+            help_text="Admin user or app password user",
+        ),
+        FieldSpec(
+            "password", "Password", "password",
+            required=True, group="Authentication",
+            help_text="App password recommended",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL Certificate",
+            "checkbox", default=False,
         ),
         FieldSpec(
             "timeout", "Request Timeout (seconds)",

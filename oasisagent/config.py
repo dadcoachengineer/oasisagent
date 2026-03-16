@@ -480,6 +480,40 @@ class OllamaAdapterConfig(BaseModel):
     timeout: int = 10
 
 
+# -- EMQX -------------------------------------------------------------------
+
+
+class EmqxAdapterConfig(BaseModel):
+    """EMQX MQTT broker monitoring adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    api_secret: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    verify_ssl: bool = False
+
+
+# -- Nextcloud --------------------------------------------------------------
+
+
+class NextcloudAdapterConfig(BaseModel):
+    """Nextcloud server health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    username: str = ""
+    password: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    verify_ssl: bool = False
+
+
 # -- Scanner ----------------------------------------------------------------
 
 

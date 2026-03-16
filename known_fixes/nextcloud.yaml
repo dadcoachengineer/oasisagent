@@ -1,0 +1,56 @@
+fixes:
+  - id: nextcloud-unreachable
+    match:
+      system: nextcloud
+      event_type: nextcloud_unreachable
+    diagnosis: "Nextcloud server is unreachable — file sync and collaboration down"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Nextcloud is unreachable. Checklist:
+          1. Check if the Nextcloud container/service is running
+          2. Verify the host is reachable on the network
+          3. Check for database connectivity issues
+          4. Review Nextcloud container/application logs
+          5. Verify reverse proxy configuration
+    risk_tier: escalate
+
+  - id: nextcloud-cron-stale
+    match:
+      system: nextcloud
+      event_type: nextcloud_cron_stale
+    diagnosis: "Nextcloud cron has not run recently — background tasks stalled"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Nextcloud cron is stale. Checklist:
+          1. Check if the cron container/job is running
+          2. Verify cron.php is being called (system cron or webcron)
+          3. Look for PHP errors in the cron log
+          4. Check for database locks preventing cron execution
+          5. Run occ maintenance:repair if needed
+    risk_tier: recommend
+
+  - id: nextcloud-maintenance-mode
+    match:
+      system: nextcloud
+      event_type: nextcloud_maintenance_mode
+    diagnosis: "Nextcloud is in maintenance mode — service unavailable to users"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Nextcloud maintenance mode is active. Checklist:
+          1. Check if an upgrade is in progress
+          2. Verify maintenance mode was intentionally enabled
+          3. Run occ maintenance:mode --off to disable if stuck
+          4. Check for failed database migrations
+    risk_tier: recommend

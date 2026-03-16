@@ -23,6 +23,7 @@ from oasisagent.config import (
     CloudflareHandlerConfig,
     DockerHandlerConfig,
     EmailNotificationConfig,
+    EmqxAdapterConfig,
     GuardrailsConfig,
     HaHandlerConfig,
     HaLogPollerConfig,
@@ -33,6 +34,7 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    NextcloudAdapterConfig,
     OllamaAdapterConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
@@ -103,6 +105,14 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     ),
     "ollama": TypeMeta(
         model=OllamaAdapterConfig,
+    ),
+    "emqx": TypeMeta(
+        model=EmqxAdapterConfig,
+        secret_fields=frozenset({"api_key", "api_secret"}),
+    ),
+    "nextcloud": TypeMeta(
+        model=NextcloudAdapterConfig,
+        secret_fields=frozenset({"password"}),
     ),
 }
 
