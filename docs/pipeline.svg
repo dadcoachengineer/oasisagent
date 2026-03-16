@@ -269,11 +269,11 @@
   </g>
 
   <!-- Learning Loop feedback arrow: Learning → T0 (curved up-left) -->
-  <path d="M 702 310 C 720 220, 500 60, 370 68"
+  <path d="M 702 310 C 620 250, 420 40, 340 68"
         fill="none" stroke="#34d399" stroke-width="1.2" stroke-dasharray="5,3"
         marker-end="url(#arr-green)" opacity="0.7"/>
-  <text x="640" y="180" font-family="ui-monospace, monospace" font-size="8"
-        fill="#34d399" opacity="0.7" transform="rotate(-55, 640, 180)">promote</text>
+  <text x="545" y="158" font-family="ui-monospace, monospace" font-size="8"
+        fill="#34d399" opacity="0.8">promote</text>
 
   <!-- Arrow: Audit → Observability (down) -->
   <line x1="309" y1="276" x2="340" y2="306" stroke="#475569" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arr)"/>
