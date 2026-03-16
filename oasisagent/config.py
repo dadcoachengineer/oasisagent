@@ -431,6 +431,24 @@ class UptimeKumaAdapterConfig(BaseModel):
     cert_critical_days: int = 7
 
 
+# -- Vaultwarden ------------------------------------------------------------
+
+
+class VaultwardenAdapterConfig(BaseModel):
+    """Vaultwarden (Bitwarden) health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    poll_interval: int = 60
+    verify_ssl: bool = False
+    timeout: int = 10
+    deep_health: bool = False
+    admin_token: str = ""
+    slow_threshold_ms: int = 2000
+
+
 # -- Scanner ----------------------------------------------------------------
 
 
