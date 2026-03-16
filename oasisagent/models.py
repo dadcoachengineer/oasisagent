@@ -203,6 +203,70 @@ class VerifyResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Remediation plan execution (P2 plan-aware dispatch)
+# ---------------------------------------------------------------------------
+
+
+class PlanStatus(StrEnum):
+    """Lifecycle states of a remediation plan."""
+
+    PENDING_APPROVAL = "pending_approval"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class StepStatus(StrEnum):
+    """Lifecycle states of a single remediation step."""
+
+    PENDING = "pending"
+    READY = "ready"
+    EXECUTING = "executing"
+    VERIFYING = "verifying"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    BLOCKED = "blocked"
+
+
+class StepState(BaseModel):
+    """Runtime state of a remediation step within an executing plan."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order: int
+    status: StepStatus = StepStatus.PENDING
+    action_result: ActionResult | None = None
+    verify_result: VerifyResult | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
+
+
+class RemediationPlan(BaseModel):
+    """A tracked remediation plan with step-level state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    event_id: str
+    status: PlanStatus = PlanStatus.PENDING_APPROVAL
+    steps: list[RemediationStep]
+    step_states: list[StepState] = Field(default_factory=list)
+    diagnosis: str = ""
+    effective_risk_tier: RiskTier
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    entity_id: str = ""
+    severity: str = ""
+    source: str = ""
+    system: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Notification (§10)
 # ---------------------------------------------------------------------------
 

@@ -104,7 +104,7 @@ def _validate_plan_steps(raw_plan: list[Any]) -> list[RemediationStep] | None:
     existing_orders = {s.order for s in valid_steps}
     final_steps: list[RemediationStep] = []
     for step in valid_steps:
-        invalid_deps = [d for d in step.depends_on if d not in existing_orders]
+        invalid_deps = [d for d in step.depends_on if d not in existing_orders or d >= step.order]
         if invalid_deps:
             logger.warning(
                 "T2 plan step order=%d has invalid depends_on %s, stripping step",

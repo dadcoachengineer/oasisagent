@@ -269,6 +269,40 @@ class TestValidatePlanSteps:
         assert result is not None
         assert result[0].action.risk_tier == RiskTier.ESCALATE
 
+    def test_forward_reference_stripped(self) -> None:
+        """depends_on=[2] on step order=1 (forward ref) -> step stripped."""
+        raw = [
+            {
+                "order": 1,
+                "action": _make_action_dict(),
+                "success_criteria": "OK",
+                "depends_on": [2],  # Forward reference
+            },
+            {
+                "order": 2,
+                "action": _make_action_dict(operation="notify"),
+                "success_criteria": "Notified",
+            },
+        ]
+        result = _validate_plan_steps(raw)
+        assert result is not None
+        # Step 1 stripped due to forward ref, step 2 remains
+        assert len(result) == 1
+        assert result[0].order == 2
+
+    def test_self_reference_stripped(self) -> None:
+        """depends_on=[1] on step order=1 (self ref) -> step stripped."""
+        raw = [
+            {
+                "order": 1,
+                "action": _make_action_dict(),
+                "success_criteria": "OK",
+                "depends_on": [1],  # Self reference
+            },
+        ]
+        result = _validate_plan_steps(raw)
+        assert result is None  # Only step was stripped
+
 
 # ---------------------------------------------------------------------------
 # _parse_diagnosis with plans
