@@ -39,6 +39,7 @@ from oasisagent.config import (
     NpmAdapterConfig,
     OverseerrAdapterConfig,
     PlexAdapterConfig,
+    PortainerAdapterConfig,
     PortainerHandlerConfig,
     ProxmoxAdapterConfig,
     ProxmoxHandlerConfig,
@@ -188,6 +189,12 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
         secret_fields=frozenset({"token_value"}),
         module_path="oasisagent.ingestion.proxmox",
         class_name="ProxmoxAdapter",
+    ),
+    "portainer": TypeMeta(
+        model=PortainerAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+        module_path="oasisagent.ingestion.portainer",
+        class_name="PortainerAdapter",
     ),
 }
 

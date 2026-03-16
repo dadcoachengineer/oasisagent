@@ -669,6 +669,49 @@ class TestVerify:
 # ---------------------------------------------------------------------------
 
 
+class TestDockerPrefixRouting:
+    """Test multi-endpoint routing via _docker_prefix_for()."""
+
+    def test_endpoint_id_from_event_payload_overrides_config(self) -> None:
+        handler = PortainerHandler(_make_config(endpoint_id=1))
+        event = _make_event(payload={"endpoint_id": 2})
+        prefix = handler._docker_prefix_for(event)
+        assert prefix == "/api/endpoints/2/docker"
+
+    def test_endpoint_id_from_action_params_wins(self) -> None:
+        handler = PortainerHandler(_make_config(endpoint_id=1))
+        event = _make_event(payload={"endpoint_id": 2})
+        action = _make_action(params={"endpoint_id": 3, "container_id": "x"})
+        prefix = handler._docker_prefix_for(event, action)
+        assert prefix == "/api/endpoints/3/docker"
+
+    def test_fallback_to_config_when_no_endpoint_id(self) -> None:
+        handler = PortainerHandler(_make_config(endpoint_id=5))
+        event = _make_event(payload={})
+        prefix = handler._docker_prefix_for(event)
+        assert prefix == "/api/endpoints/5/docker"
+
+    async def test_restart_uses_event_endpoint_id(self) -> None:
+        handler = _started_handler(endpoint_id=1)
+        _patch_session(handler, {
+            "post:/api/endpoints/2/docker/containers/my_container/restart": _mock_response(
+                status=204,
+            ),
+        })
+        action = _make_action(
+            operation="restart_container",
+            params={"container_id": "my_container"},
+        )
+        event = _make_event(payload={"endpoint_id": 2})
+
+        result = await handler.execute(event, action)
+
+        assert result.status == ActionStatus.SUCCESS
+        handler._session.post.assert_called()
+        call_path = handler._session.post.call_args[0][0]
+        assert call_path == "/api/endpoints/2/docker/containers/my_container/restart"
+
+
 class TestGetContext:
     async def test_gathers_inspect_and_logs(self) -> None:
         handler = _started_handler()

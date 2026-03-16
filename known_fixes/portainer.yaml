@@ -1,0 +1,194 @@
+# Known fixes for Portainer-managed Docker containers and endpoints.
+# Evaluated by the T0 match engine — first match wins.
+# See ARCHITECTURE.md §5 for match semantics.
+#
+# Pattern: escalation ladder per fault type
+#   1. Endpoint/infrastructure-level (highest urgency — escalate)
+#   2. Stack-level (degraded service — escalate/recommend)
+#   3. Container-level (individual container — auto_fix/recommend)
+#   4. Resource-level (threshold crossings — recommend)
+#
+# All fixes use handler: portainer and system: portainer.
+# The adapter includes endpoint_id in every event payload so the handler
+# routes operations to the correct Docker host via _docker_prefix_for().
+
+fixes:
+
+  # =========================================================================
+  # Endpoint / infrastructure — highest urgency
+  # =========================================================================
+
+  - id: ptr-endpoint-unreachable
+    match:
+      system: portainer
+      event_type: ptr_endpoint_unreachable
+    diagnosis: "Docker host endpoint is unreachable via Portainer — possible VM crash, network partition, or Docker daemon failure"
+    action:
+      type: escalate
+      handler: portainer
+      operation: notify
+      details:
+        message: |
+          Portainer endpoint unreachable. Escalation steps:
+          1. Check if the host VM is running (Proxmox dashboard or qm status)
+          2. Verify Docker daemon is responsive: ssh to host, run 'docker ps'
+          3. Check Portainer agent status on the remote host
+          4. Verify network connectivity between Portainer server and agent
+          5. Review Docker daemon logs: journalctl -u docker.service
+          6. If VM is down, check Proxmox HA status for automatic recovery
+    risk_tier: escalate
+
+  # =========================================================================
+  # Stack — service-level degradation
+  # =========================================================================
+
+  - id: ptr-stack-down
+    match:
+      system: portainer
+      event_type: ptr_stack_down
+    diagnosis: "All containers in the Compose stack are down — complete service outage"
+    action:
+      type: escalate
+      handler: portainer
+      operation: notify
+      details:
+        message: |
+          Entire stack is down. Escalation steps:
+          1. Check the endpoint health — host may be unreachable
+          2. Review Docker Compose file for dependency issues
+          3. Check shared volumes and networks the stack depends on
+          4. Review recent docker-compose pull/up commands for errors
+          5. Check disk space on the Docker host (docker system df)
+          6. Consider 'docker compose up -d' to restart the full stack
+    risk_tier: escalate
+
+  - id: ptr-stack-degraded
+    match:
+      system: portainer
+      event_type: ptr_stack_degraded
+    diagnosis: "Some containers in the stack are down — partial service degradation"
+    action:
+      type: recommend
+      handler: portainer
+      operation: notify
+      details:
+        message: |
+          Stack partially degraded. Diagnostic checklist:
+          1. Identify which containers in the stack are down
+          2. Check logs for the failed containers
+          3. Look for dependency failures (database down → app down)
+          4. Review container restart policies (unless-stopped vs always)
+          5. Check for resource exhaustion (OOM, disk full)
+          6. Restart individual failed containers before restarting the full stack
+    risk_tier: recommend
+
+  # =========================================================================
+  # Container — auto-fixable or recommend
+  # =========================================================================
+
+  - id: ptr-container-exited
+    match:
+      system: portainer
+      event_type: ptr_container_exited
+    diagnosis: "Container has exited — may be a crash, OOM kill, or clean shutdown"
+    action:
+      type: auto_fix
+      handler: portainer
+      operation: restart_container
+      details:
+        message: "Restarting exited container via Portainer API"
+    risk_tier: auto_fix
+
+  - id: ptr-container-dead
+    match:
+      system: portainer
+      event_type: ptr_container_dead
+    diagnosis: "Container is in dead state — Docker daemon could not cleanly remove it"
+    action:
+      type: recommend
+      handler: portainer
+      operation: notify
+      details:
+        message: |
+          Container in dead state. Diagnostic checklist:
+          1. Check for filesystem or volume mount issues preventing cleanup
+          2. Review container logs for the failure cause
+          3. Try 'docker rm -f <container>' to force removal
+          4. Check disk space — dead containers often result from full disks
+          5. Recreate the container via docker-compose up -d
+    risk_tier: recommend
+
+  - id: ptr-container-unhealthy
+    match:
+      system: portainer
+      event_type: ptr_container_unhealthy
+    diagnosis: "Container health check is failing — service is running but not responding correctly"
+    action:
+      type: auto_fix
+      handler: portainer
+      operation: restart_container
+      details:
+        message: "Restarting unhealthy container via Portainer API"
+    risk_tier: auto_fix
+
+  - id: ptr-container-restarting
+    match:
+      system: portainer
+      event_type: ptr_container_restarting
+    diagnosis: "Container is in a restart loop — likely crashing on startup"
+    action:
+      type: recommend
+      handler: portainer
+      operation: get_container_logs
+      details:
+        message: |
+          Container in restart loop. Diagnostic checklist:
+          1. Check container logs for the crash reason
+          2. Look for missing environment variables or config files
+          3. Check if dependent services (database, cache) are reachable
+          4. Verify the container image is valid and not corrupted
+          5. Check for port conflicts with other containers
+          6. Review recent image updates that may have introduced bugs
+    risk_tier: recommend
+
+  # =========================================================================
+  # Resource — threshold alerts (opt-in)
+  # =========================================================================
+
+  - id: ptr-container-high-cpu
+    match:
+      system: portainer
+      event_type: ptr_container_high_cpu
+    diagnosis: "Container CPU usage exceeds threshold — possible runaway process or increased load"
+    action:
+      type: recommend
+      handler: portainer
+      operation: notify
+      details:
+        message: |
+          High CPU usage detected. Diagnostic checklist:
+          1. Check if the spike is transient (build, transcoding, backup)
+          2. Review container resource limits (--cpus, cpu_shares)
+          3. Check for runaway processes inside the container
+          4. Monitor if high CPU correlates with increased request volume
+          5. Consider adding CPU limits in the Compose file
+    risk_tier: recommend
+
+  - id: ptr-container-high-memory
+    match:
+      system: portainer
+      event_type: ptr_container_high_memory
+    diagnosis: "Container memory usage exceeds threshold — risk of OOM kill"
+    action:
+      type: recommend
+      handler: portainer
+      operation: notify
+      details:
+        message: |
+          High memory usage detected. Diagnostic checklist:
+          1. Check if this is normal for the workload (database cache, media transcode)
+          2. Review container memory limits (--memory, mem_limit)
+          3. Look for memory leaks — compare usage over time
+          4. Check if the container has been OOM-killed recently
+          5. Consider increasing the memory limit or adding swap
+    risk_tier: recommend
