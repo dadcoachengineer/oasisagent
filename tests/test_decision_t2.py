@@ -14,6 +14,7 @@ from oasisagent.engine.decision import (
 )
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
+from oasisagent.engine.service_graph import ServiceGraph
 from oasisagent.models import (
     DiagnosisResult,
     Disposition,
@@ -22,6 +23,8 @@ from oasisagent.models import (
     RecommendedAction,
     RiskTier,
     Severity,
+    TopologyEdge,
+    TopologyNode,
     TriageResult,
 )
 
@@ -100,6 +103,7 @@ def _make_engine(
     guardrails_config: GuardrailsConfig | None = None,
     triage_service: AsyncMock | None = None,
     reasoning_service: AsyncMock | None = None,
+    service_graph: ServiceGraph | None = None,
 ) -> DecisionEngine:
     registry = KnownFixRegistry()
     guardrails = GuardrailsEngine(guardrails_config or _make_guardrails())
@@ -108,7 +112,39 @@ def _make_engine(
         guardrails=guardrails,
         triage_service=triage_service,
         reasoning_service=reasoning_service,
+        service_graph=service_graph,
     )
+
+
+def _make_service_graph() -> ServiceGraph:
+    """Build a small graph: svc:zigbee --runs_on--> host:rpi4."""
+    graph = ServiceGraph()
+    graph._nodes = {
+        "sensor.temperature": TopologyNode(
+            entity_id="sensor.temperature",
+            entity_type="service",
+            display_name="Temperature Sensor",
+            host_ip="192.168.1.100",
+            source="test",
+        ),
+        "host:rpi4": TopologyNode(
+            entity_id="host:rpi4",
+            entity_type="host",
+            display_name="rpi4",
+            host_ip="192.168.1.100",
+            source="test",
+        ),
+    }
+    graph._edges = [
+        TopologyEdge(
+            from_entity="sensor.temperature",
+            to_entity="host:rpi4",
+            edge_type="runs_on",
+            source="test",
+        ),
+    ]
+    graph._rebuild_indexes()
+    return graph
 
 
 # ---------------------------------------------------------------------------
@@ -407,3 +443,84 @@ class TestT2ResultDetails:
         result = await engine.process_event(_make_event())
 
         assert "risk_assessment" in result.details
+
+
+# ---------------------------------------------------------------------------
+# T2 with dependency context
+# ---------------------------------------------------------------------------
+
+
+class TestT2DependencyContext:
+    """T2 passes dependency context when service graph is available."""
+
+    async def test_t2_passes_dependency_context(self) -> None:
+        """With a service graph, diagnose() receives dependency_context."""
+        reasoning = _make_reasoning_service()
+        graph = _make_service_graph()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+            service_graph=graph,
+        )
+
+        await engine.process_event(_make_event())
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        dep_ctx = call_kwargs.get("dependency_context")
+        assert dep_ctx is not None
+        assert dep_ctx.entity_id == "sensor.temperature"
+        assert len(dep_ctx.upstream) == 1
+        assert dep_ctx.upstream[0].entity_id == "host:rpi4"
+
+    async def test_t2_without_graph(self) -> None:
+        """Without a service graph, diagnose() gets dependency_context=None."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+            service_graph=None,
+        )
+
+        await engine.process_event(_make_event())
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs.get("dependency_context") is None
+
+    async def test_t2_details_include_dependency_fields(self) -> None:
+        """DecisionResult.details contains dependency_* fields."""
+        reasoning = _make_reasoning_service()
+        graph = _make_service_graph()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+            service_graph=graph,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert "dependency_upstream" in result.details
+        assert "host:rpi4" in result.details["dependency_upstream"]
+        assert "dependency_downstream" in result.details
+        assert "dependency_same_host" in result.details
+        assert "dependency_depth" in result.details
+
+    async def test_set_service_graph_deferred(self) -> None:
+        """set_service_graph() wires graph after construction."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        # Initially no graph
+        await engine.process_event(_make_event())
+        assert reasoning.diagnose.call_args.kwargs.get("dependency_context") is None
+
+        # Wire graph after the fact
+        reasoning.reset_mock()
+        engine.set_service_graph(_make_service_graph())
+        await engine.process_event(_make_event())
+
+        dep_ctx = reasoning.diagnose.call_args.kwargs.get("dependency_context")
+        assert dep_ctx is not None
+        assert len(dep_ctx.upstream) == 1

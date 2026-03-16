@@ -12,7 +12,14 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from oasisagent.models import TopologyDiff, TopologyEdge, TopologyNode
+from oasisagent.models import (
+    DependencyContext,
+    DependencyEdgeInfo,
+    DependencyNode,
+    TopologyDiff,
+    TopologyEdge,
+    TopologyNode,
+)
 
 if TYPE_CHECKING:
     from oasisagent.db.topology_store import TopologyStore
@@ -249,7 +256,10 @@ class ServiceGraph:
                 self._ip_to_entities.setdefault(node.host_ip, []).append(entity_id)
 
         for edge in self._edges:
-            if edge.edge_type in ("depends_on", "proxies_to", "runs_on", "connects_via"):
+            if edge.edge_type in (
+                "depends_on", "proxies_to", "runs_on", "connects_via",
+                "forwards_to", "resolves_via",
+            ):
                 self._entity_to_deps.setdefault(edge.from_entity, []).append(
                     edge.to_entity
                 )
@@ -269,3 +279,130 @@ class ServiceGraph:
             ):
                 return edge
         return None
+
+
+def gather_dependency_context(
+    event_entity_id: str,
+    graph: ServiceGraph,
+    depth: int = 2,
+) -> DependencyContext:
+    """Extract a dependency subgraph around an entity for T2 context.
+
+    Performs BFS in both directions (upstream and downstream) from the
+    root entity, plus same-host co-location. Returns a structured
+    DependencyContext suitable for prompt injection.
+
+    Args:
+        event_entity_id: The entity_id from the event being processed.
+        graph: The in-memory ServiceGraph.
+        depth: Maximum BFS depth (clamped to 1-5).
+
+    Returns:
+        DependencyContext with upstream, downstream, same_host, and edges.
+        Empty lists if the entity is not in the graph.
+    """
+    depth = max(1, min(depth, 5))
+    root = graph.get_node(event_entity_id)
+
+    if root is None:
+        return DependencyContext(entity_id=event_entity_id)
+
+    ctx = DependencyContext(
+        entity_id=event_entity_id,
+        entity_type=root.entity_type,
+        host_ip=root.host_ip,
+    )
+
+    edges = graph._edges
+
+    # Upstream BFS: follow from_entity → to_entity (entities the root depends on)
+    upstream_nodes: list[DependencyNode] = []
+    visited_up: set[str] = {event_entity_id}
+    frontier: list[tuple[str, int]] = [(event_entity_id, 0)]
+
+    while frontier:
+        current_id, current_depth = frontier.pop(0)
+        if current_depth >= depth:
+            continue
+        for edge in edges:
+            if edge.from_entity == current_id and edge.to_entity not in visited_up:
+                target = graph.get_node(edge.to_entity)
+                if target is None:
+                    continue
+                visited_up.add(edge.to_entity)
+                upstream_nodes.append(DependencyNode(
+                    entity_id=target.entity_id,
+                    entity_type=target.entity_type,
+                    display_name=target.display_name,
+                    host_ip=target.host_ip,
+                    edge_type=edge.edge_type,
+                    depth=current_depth + 1,
+                ))
+                frontier.append((edge.to_entity, current_depth + 1))
+
+    # Downstream BFS: follow to_entity → from_entity (entities that depend on root)
+    downstream_nodes: list[DependencyNode] = []
+    visited_down: set[str] = {event_entity_id}
+    frontier = [(event_entity_id, 0)]
+
+    while frontier:
+        current_id, current_depth = frontier.pop(0)
+        if current_depth >= depth:
+            continue
+        for edge in edges:
+            if edge.to_entity == current_id and edge.from_entity not in visited_down:
+                source = graph.get_node(edge.from_entity)
+                if source is None:
+                    continue
+                visited_down.add(edge.from_entity)
+                downstream_nodes.append(DependencyNode(
+                    entity_id=source.entity_id,
+                    entity_type=source.entity_type,
+                    display_name=source.display_name,
+                    host_ip=source.host_ip,
+                    edge_type=edge.edge_type,
+                    depth=current_depth + 1,
+                ))
+                frontier.append((edge.from_entity, current_depth + 1))
+
+    # Same host: other entities at the same IP
+    same_host_nodes: list[DependencyNode] = []
+    if root.host_ip:
+        for eid in graph.services_on_host(root.host_ip):
+            if eid == event_entity_id:
+                continue
+            node = graph.get_node(eid)
+            if node is None:
+                continue
+            same_host_nodes.append(DependencyNode(
+                entity_id=node.entity_id,
+                entity_type=node.entity_type,
+                display_name=node.display_name,
+                host_ip=node.host_ip,
+                edge_type="same_host",
+                depth=0,
+            ))
+
+    # Collect all edges connecting any two nodes in the subgraph
+    subgraph_ids = (
+        {event_entity_id}
+        | {n.entity_id for n in upstream_nodes}
+        | {n.entity_id for n in downstream_nodes}
+        | {n.entity_id for n in same_host_nodes}
+    )
+    subgraph_edges: list[DependencyEdgeInfo] = []
+    for edge in edges:
+        if edge.from_entity in subgraph_ids and edge.to_entity in subgraph_ids:
+            subgraph_edges.append(DependencyEdgeInfo(
+                from_entity=edge.from_entity,
+                to_entity=edge.to_entity,
+                edge_type=edge.edge_type,
+                manually_edited=edge.manually_edited,
+            ))
+
+    ctx.upstream = upstream_nodes
+    ctx.downstream = downstream_nodes
+    ctx.same_host = same_host_nodes
+    ctx.edges = subgraph_edges
+
+    return ctx

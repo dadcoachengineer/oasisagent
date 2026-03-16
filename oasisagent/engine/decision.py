@@ -21,6 +21,7 @@ from oasisagent.models import RecommendedAction  # noqa: TC001 — Pydantic fiel
 if TYPE_CHECKING:
     from oasisagent.engine.guardrails import GuardrailsEngine
     from oasisagent.engine.known_fixes import KnownFix, KnownFixRegistry
+    from oasisagent.engine.service_graph import ServiceGraph
     from oasisagent.llm.reasoning import ReasoningService
     from oasisagent.llm.triage import TriageService
     from oasisagent.models import Event, TriageResult
@@ -95,11 +96,19 @@ class DecisionEngine:
         guardrails: GuardrailsEngine,
         triage_service: TriageService | None = None,
         reasoning_service: ReasoningService | None = None,
+        service_graph: ServiceGraph | None = None,
+        dependency_context_depth: int = 2,
     ) -> None:
         self._registry = registry
         self._guardrails = guardrails
         self._triage = triage_service
         self._reasoning = reasoning_service
+        self._service_graph = service_graph
+        self._dependency_depth = max(1, min(dependency_context_depth, 5))
+
+    def set_service_graph(self, graph: ServiceGraph) -> None:
+        """Set or update the service graph (deferred wiring)."""
+        self._service_graph = graph
 
     async def process_event(self, event: Event) -> DecisionResult:
         """Process a single event through the decision pipeline.
@@ -290,29 +299,53 @@ class DecisionEngine:
         that pass are included in the result; blocked actions are filtered
         out. If no actions pass, the event is escalated to a human.
         """
+        from oasisagent.engine.service_graph import gather_dependency_context
+
         assert self._reasoning is not None
 
+        dependency_ctx = None
+        if self._service_graph is not None:
+            dependency_ctx = gather_dependency_context(
+                event.entity_id, self._service_graph, self._dependency_depth,
+            )
+
         diagnosis = await self._reasoning.diagnose(
-            event, triage_result, entity_context={}, known_fixes=[]
+            event, triage_result, entity_context={}, known_fixes=[],
+            dependency_context=dependency_ctx,
         )
+
+        def _add_dependency_fields(details: dict[str, Any]) -> None:
+            if dependency_ctx is not None:
+                details["dependency_upstream"] = [
+                    n.entity_id for n in dependency_ctx.upstream
+                ]
+                details["dependency_downstream"] = [
+                    n.entity_id for n in dependency_ctx.downstream
+                ]
+                details["dependency_same_host"] = [
+                    n.entity_id for n in dependency_ctx.same_host
+                ]
+                details["dependency_depth"] = self._dependency_depth
 
         if not diagnosis.recommended_actions:
             logger.info(
                 "T2 returned no actions for event %s, escalating to human",
                 event.id,
             )
+            details: dict[str, Any] = {
+                "escalate_to": "human",
+                "t2_root_cause": diagnosis.root_cause,
+                "t2_confidence": diagnosis.confidence,
+                "risk_assessment": diagnosis.risk_assessment,
+                "confidence": diagnosis.confidence,
+            }
+            _add_dependency_fields(details)
             return DecisionResult(
                 event_id=event.id,
                 tier=DecisionTier.T2,
                 disposition=DecisionDisposition.ESCALATED,
                 diagnosis=diagnosis.root_cause,
-                details={
-                    "escalate_to": "human",
-                    "t2_root_cause": diagnosis.root_cause,
-                    "t2_confidence": diagnosis.confidence,
-                    "risk_assessment": diagnosis.risk_assessment,
-                    "confidence": diagnosis.confidence,
-                },
+                details=details,
             )
 
         # Apply guardrails to each action independently
@@ -348,20 +381,22 @@ class DecisionEngine:
                 blocked_count,
                 event.id,
             )
+            details = {
+                "t2_root_cause": diagnosis.root_cause,
+                "t2_confidence": diagnosis.confidence,
+                "confidence": diagnosis.confidence,
+                "risk_assessment": diagnosis.risk_assessment,
+                "blocked_count": blocked_count,
+                "guardrail_rule": ", ".join(guardrail_rules),
+            }
+            _add_dependency_fields(details)
             return DecisionResult(
                 event_id=event.id,
                 tier=DecisionTier.T2,
                 disposition=DecisionDisposition.BLOCKED,
                 diagnosis=diagnosis.root_cause,
                 recommended_actions=diagnosis.recommended_actions,
-                details={
-                    "t2_root_cause": diagnosis.root_cause,
-                    "t2_confidence": diagnosis.confidence,
-                    "confidence": diagnosis.confidence,
-                    "risk_assessment": diagnosis.risk_assessment,
-                    "blocked_count": blocked_count,
-                    "guardrail_rule": ", ".join(guardrail_rules),
-                },
+                details=details,
             )
 
         logger.info(
@@ -371,19 +406,22 @@ class DecisionEngine:
             blocked_count,
         )
 
+        details = {
+            "t2_root_cause": diagnosis.root_cause,
+            "t2_confidence": diagnosis.confidence,
+            "confidence": diagnosis.confidence,
+            "risk_assessment": diagnosis.risk_assessment,
+            "total_actions": len(diagnosis.recommended_actions),
+            "approved_actions": len(approved_actions),
+            "blocked_count": blocked_count,
+        }
+        _add_dependency_fields(details)
+
         return DecisionResult(
             event_id=event.id,
             tier=DecisionTier.T2,
             disposition=DecisionDisposition.MATCHED,
             diagnosis=diagnosis.root_cause,
             recommended_actions=approved_actions,
-            details={
-                "t2_root_cause": diagnosis.root_cause,
-                "t2_confidence": diagnosis.confidence,
-                "confidence": diagnosis.confidence,
-                "risk_assessment": diagnosis.risk_assessment,
-                "total_actions": len(diagnosis.recommended_actions),
-                "approved_actions": len(approved_actions),
-                "blocked_count": blocked_count,
-            },
+            details=details,
         )

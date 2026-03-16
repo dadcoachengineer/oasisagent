@@ -258,6 +258,12 @@ class DecisionDetails(TypedDict, total=False):
     # Suppression
     suppressed_count: int
 
+    # Dependency context (T2)
+    dependency_upstream: list[str]
+    dependency_downstream: list[str]
+    dependency_same_host: list[str]
+    dependency_depth: int
+
 
 # ---------------------------------------------------------------------------
 # Service topology (§ issue #218 M2a)
@@ -309,6 +315,44 @@ class TopologyDiff(BaseModel):
     entity_type: Literal["node", "edge"]
     entity_id: str  # node entity_id or "from->to" for edges
     details: str = ""
+
+
+class DependencyNode(BaseModel):
+    """A node in a dependency subgraph extracted for T2 context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    entity_type: str
+    display_name: str
+    host_ip: str | None = None
+    edge_type: str
+    depth: int
+
+
+class DependencyEdgeInfo(BaseModel):
+    """An edge in the dependency subgraph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_entity: str
+    to_entity: str
+    edge_type: str
+    manually_edited: bool = False
+
+
+class DependencyContext(BaseModel):
+    """Structured dependency subgraph for T2 prompt injection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    entity_type: str | None = None
+    host_ip: str | None = None
+    upstream: list[DependencyNode] = Field(default_factory=list)
+    downstream: list[DependencyNode] = Field(default_factory=list)
+    same_host: list[DependencyNode] = Field(default_factory=list)
+    edges: list[DependencyEdgeInfo] = Field(default_factory=list)
 
 
 class Notification(BaseModel):
