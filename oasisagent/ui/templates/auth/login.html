@@ -1,32 +1,37 @@
 {% extends "base_minimal.html" %}
 {% block title %}Sign In — OasisAgent{% endblock %}
 {% block content %}
-<div class="bg-white rounded-lg shadow-md p-8">
+<div class="bg-white dark:bg-surface-800 rounded-2xl ring-1 ring-gray-200 dark:ring-gray-700/50 shadow-xl dark:shadow-2xl p-8">
     <div class="text-center mb-6">
-        <h1 class="text-2xl font-bold text-gray-900">OasisAgent</h1>
-        <p class="text-sm text-gray-500 mt-1">Sign in to continue</p>
+        <div class="w-12 h-12 rounded-xl bg-accent-600 flex items-center justify-center mx-auto mb-3">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+        </div>
+        <h1 class="text-xl font-bold text-gray-900 dark:text-white">OasisAgent</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Sign in to continue</p>
     </div>
 
     {% if error %}
-    <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+    <div class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 rounded-lg text-sm text-red-700 dark:text-red-400">
         {{ error }}
     </div>
     {% endif %}
 
     <form method="post" action="/ui/login" class="space-y-4">
         <div>
-            <label for="username" class="block text-sm font-medium text-gray-700">Username</label>
+            <label for="username" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Username</label>
             <input type="text" id="username" name="username" required autocomplete="username"
                    value="{{ username | default('') }}"
-                   class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                   class="mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-surface-700 dark:text-white shadow-sm px-3 py-2.5 border focus:ring-2 focus:ring-accent-500 focus:border-accent-500 transition-colors">
         </div>
         <div>
-            <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+            <label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
             <input type="password" id="password" name="password" required autocomplete="current-password"
-                   class="mt-1 block w-full rounded border-gray-300 shadow-sm px-3 py-2 border focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                   class="mt-1 block w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-surface-700 dark:text-white shadow-sm px-3 py-2.5 border focus:ring-2 focus:ring-accent-500 focus:border-accent-500 transition-colors">
         </div>
         <button type="submit"
-                class="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 font-medium">
+                class="w-full bg-accent-600 text-white py-2.5 px-4 rounded-lg hover:bg-accent-700 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 dark:focus:ring-offset-surface-800 font-medium transition-colors">
             Sign in
         </button>
     </form>

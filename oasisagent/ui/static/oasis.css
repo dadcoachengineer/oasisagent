@@ -1,4 +1,4 @@
-/* OasisAgent — minimal custom styles beyond Tailwind */
+/* OasisAgent — custom styles beyond Tailwind */
 
 /* Alpine.js x-cloak: hide elements until Alpine initializes */
 [x-cloak] {
@@ -28,7 +28,95 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Enhanced Timeline UI (#218 M4)
+   Dark mode card base — used by templates that haven't been individually
+   updated yet. Tailwind's dark: variants handle most cases; these cover
+   generic .bg-white cards across all pages.
+   --------------------------------------------------------------------------- */
+
+.dark .bg-white {
+    background-color: #0f172a;  /* surface-800 */
+}
+
+.dark .text-gray-900 {
+    color: #f1f5f9;
+}
+
+.dark .border-gray-200 {
+    border-color: rgba(51, 65, 85, 0.5);
+}
+
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+    border-color: rgba(51, 65, 85, 0.5);
+}
+
+.dark .shadow {
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3);
+}
+
+.dark .hover\:bg-gray-50:hover {
+    background-color: rgba(30, 41, 59, 0.5);
+}
+
+.dark .bg-gray-50 {
+    background-color: #020617;
+}
+
+.dark .bg-gray-100 {
+    background-color: #1e293b;
+}
+
+.dark .text-gray-500 {
+    color: #94a3b8;
+}
+
+.dark .text-gray-600 {
+    color: #94a3b8;
+}
+
+.dark .text-gray-700 {
+    color: #cbd5e1;
+}
+
+.dark .ring-gray-200 {
+    --tw-ring-color: rgba(51, 65, 85, 0.5);
+}
+
+/* Links in dark mode — blue → accent green */
+.dark .text-blue-600 {
+    color: #34d399;
+}
+
+.dark .hover\:text-blue-700:hover {
+    color: #6ee7b7;
+}
+
+/* Buttons in dark mode */
+.dark .bg-blue-600 {
+    background-color: #059669;
+}
+
+.dark .hover\:bg-blue-700:hover {
+    background-color: #047857;
+}
+
+/* Form elements in dark mode */
+.dark input:not([type="checkbox"]),
+.dark select,
+.dark textarea {
+    background-color: #1e293b;
+    border-color: rgba(51, 65, 85, 0.8);
+    color: #f1f5f9;
+}
+
+.dark input:not([type="checkbox"]):focus,
+.dark select:focus,
+.dark textarea:focus {
+    border-color: #059669;
+    box-shadow: 0 0 0 1px #059669;
+}
+
+/* ---------------------------------------------------------------------------
+   Enhanced Timeline UI
    --------------------------------------------------------------------------- */
 
 /* Severity dot indicators for table rows */
@@ -49,10 +137,17 @@
 /* Timeline section cards */
 .timeline-card {
     background: white;
-    border-radius: 0.5rem;
+    border-radius: 0.75rem;
     box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
     padding: 1.25rem;
     margin-bottom: 1.5rem;
+    border: 1px solid #e2e8f0;
+}
+
+.dark .timeline-card {
+    background: #0f172a;
+    border-color: rgba(51, 65, 85, 0.5);
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3);
 }
 
 .timeline-card__header {
@@ -63,6 +158,10 @@
     font-weight: 600;
     font-size: 0.875rem;
     color: #1f2937;
+}
+
+.dark .timeline-card__header {
+    color: #f1f5f9;
 }
 
 /* Tier chain visualization */
@@ -76,20 +175,34 @@
 
 .tier-chain__step {
     padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
+    border-radius: 0.375rem;
     background: #f3f4f6;
     color: #6b7280;
 }
 
+.dark .tier-chain__step {
+    background: #1e293b;
+    color: #94a3b8;
+}
+
 .tier-chain__step--active {
-    background: #dbeafe;
-    color: #1d4ed8;
+    background: #ecfdf5;
+    color: #059669;
     font-weight: 600;
+}
+
+.dark .tier-chain__step--active {
+    background: rgba(5, 150, 105, 0.15);
+    color: #34d399;
 }
 
 .tier-chain__arrow {
     color: #d1d5db;
     font-size: 0.75rem;
+}
+
+.dark .tier-chain__arrow {
+    color: #475569;
 }
 
 /* Collapsible cluster events */
@@ -115,6 +228,10 @@ details[open] > .cluster-events-toggle .chevron {
     border-left: 3px solid #f59e0b;
 }
 
+.dark .suppression-row {
+    background: rgba(245, 158, 11, 0.08);
+}
+
 .suppression-row td {
     padding-top: 0.375rem !important;
     padding-bottom: 0.375rem !important;
@@ -122,11 +239,19 @@ details[open] > .cluster-events-toggle .chevron {
     color: #92400e;
 }
 
+.dark .suppression-row td {
+    color: #fbbf24;
+}
+
 /* Formatted duration */
 .duration-badge {
     font-family: ui-monospace, SFMono-Regular, monospace;
     font-size: 0.75rem;
     color: #6b7280;
+}
+
+.dark .duration-badge {
+    color: #94a3b8;
 }
 
 /* ---------------------------------------------------------------------------
@@ -148,10 +273,22 @@ details[open] > .cluster-events-toggle .chevron {
     transition: opacity 150ms ease, background 150ms ease;
 }
 
+.dark .filter-pill {
+    border-color: #475569;
+    background: #1e293b;
+    color: #94a3b8;
+}
+
 .filter-pill.active {
     background: #f3f4f6;
     color: #1f2937;
     border-color: #9ca3af;
+}
+
+.dark .filter-pill.active {
+    background: #334155;
+    color: #f1f5f9;
+    border-color: #64748b;
 }
 
 .filter-pill:not(.active) {
@@ -171,4 +308,26 @@ details[open] > .cluster-events-toggle .chevron {
 #service-map-svg .links text,
 #service-map-svg .labels text {
     transition: opacity 200ms ease;
+}
+
+/* ---------------------------------------------------------------------------
+   Scrollbar styling for dark mode
+   --------------------------------------------------------------------------- */
+
+.dark ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.dark ::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+    background: #475569;
 }
