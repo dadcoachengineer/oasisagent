@@ -150,6 +150,18 @@ class RecommendedAction(BaseModel):
     target_entity_id: str | None = None
 
 
+class RemediationStep(BaseModel):
+    """A single step in a multi-system remediation plan from T2."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order: Annotated[int, Field(ge=1)]
+    action: RecommendedAction
+    success_criteria: str
+    depends_on: list[int] = Field(default_factory=list)
+    conditional: bool = False
+
+
 class DiagnosisResult(BaseModel):
     """Structured output from T2 deep reasoning diagnosis."""
 
@@ -158,6 +170,7 @@ class DiagnosisResult(BaseModel):
     root_cause: str
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     recommended_actions: list[RecommendedAction] = Field(default_factory=list)
+    remediation_plan: list[RemediationStep] | None = None
     risk_assessment: str = ""
     additional_context: str = ""
     suggested_known_fix: dict[str, Any] | None = None
@@ -266,6 +279,9 @@ class DecisionDetails(TypedDict, total=False):
 
     # Multi-handler context (T2)
     multi_handler_context_systems: list[str]
+
+    # Remediation plan (T2)
+    remediation_plan_steps: int
 
 
 # ---------------------------------------------------------------------------
