@@ -35,13 +35,16 @@ from oasisagent.config import (
     MqttIngestionConfig,
     MqttNotificationConfig,
     NextcloudAdapterConfig,
+    OllamaAdapterConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
     ScannerConfig,
+    StalwartAdapterConfig,
     TelegramNotificationConfig,
     UnifiAdapterConfig,
     UnifiHandlerConfig,
     UptimeKumaAdapterConfig,
+    VaultwardenAdapterConfig,
     WebhookNotificationConfig,
     WebhookSourceConfig,
 )
@@ -91,6 +94,17 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "uptime_kuma": TypeMeta(
         model=UptimeKumaAdapterConfig,
         secret_fields=frozenset({"api_key"}),
+    ),
+    "vaultwarden": TypeMeta(
+        model=VaultwardenAdapterConfig,
+        secret_fields=frozenset({"admin_token"}),
+    ),
+    "stalwart": TypeMeta(
+        model=StalwartAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+    ),
+    "ollama": TypeMeta(
+        model=OllamaAdapterConfig,
     ),
     "emqx": TypeMeta(
         model=EmqxAdapterConfig,

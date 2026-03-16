@@ -1,0 +1,233 @@
+# Media Stack — pvedocker02
+#
+# Changes from previous version:
+#   - Host NFS bind mounts (/nfs/docker, /nfs/data) replace Docker NFS volumes
+#   - All ports bound to VIP 192.168.1.120 (NPM in LXC reaches via VIP)
+#   - Health checks on all services with HTTP APIs
+#   - Removed HTTP_PROXY/NO_PROXY from Tautulli (no reason to tunnel metadata)
+#   - Removed PGID/PUID from Seerr (upstream image ignores them)
+#   - Removed deprecated `version` key
+#   - Removed orphan volume definitions (homarr, readarr)
+#   - Tdarr: kept PUID=0/PGID=0 (required for /dev/dri hw transcode access)
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Indexers & Search
+  # ---------------------------------------------------------------------------
+
+  flaresolverr1:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    environment:
+      - PROXY=http://192.168.1.103:8118
+      - TZ=America/Chicago
+    ports:
+      - "192.168.1.120:8191:8191"
+    restart: unless-stopped
+
+  prowlarr1:
+    image: lscr.io/linuxserver/prowlarr:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/docker/prowlarr:/config
+    ports:
+      - "192.168.1.120:9696:9696"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9696/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # PVR (Sonarr / Radarr / Bazarr)
+  # ---------------------------------------------------------------------------
+
+  sonarr1:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/docker/sonarr:/config
+      - /nfs/data/media/tv:/data/media/tv
+      - /nfs/data/media/anime:/data/media/anime
+      - /nfs/data/torrents:/data/torrents
+    ports:
+      - "192.168.1.120:8989:8989"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  radarr1:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/docker/radarr:/config
+      - /nfs/data/media/movies:/data/media/movies
+      - /nfs/data/torrents:/data/torrents
+    ports:
+      - "192.168.1.120:7878:7878"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7878/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  bazarr1:
+    image: lscr.io/linuxserver/bazarr:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/docker/bazarr:/config
+      - /nfs/data/media/tv:/data/media/tv
+      - /nfs/data/media/anime:/data/media/anime
+      - /nfs/data/media/movies:/data/media/movies
+    ports:
+      - "192.168.1.120:6767:6767"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6767"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Media Requests
+  # ---------------------------------------------------------------------------
+
+  overseerr1:
+    image: ghcr.io/seerr-team/seerr:latest
+    init: true
+    user: "0:0"
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/docker/overseerr:/app/config
+    ports:
+      - "192.168.1.120:25055:5055"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5055/api/v1/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Monitoring & Analytics
+  # ---------------------------------------------------------------------------
+
+  tautulli1:
+    image: lscr.io/linuxserver/tautulli:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/docker/tautulli:/config
+    ports:
+      - "192.168.1.120:28181:8181"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Transcoding
+  # ---------------------------------------------------------------------------
+
+  tdarr-server:
+    image: ghcr.io/haveagitgat/tdarr:latest
+    environment:
+      - WEB_UI_PORT=8265
+      - SERVER_PORT=8266
+      - NODE_PORT=8267
+      - PGID=0
+      - PUID=0
+      - TZ=America/Chicago
+      - internalNode=true
+      - inContainer=true
+      - ffmpegVersion=6
+      - nodeName=MyInternalNode
+    volumes:
+      - /nfs/data/media:/media
+      - /nfs/docker/tdarr-server/temp:/temp
+      - /nfs/docker/tdarr-server/config:/app/configs
+      - /nfs/docker/tdarr-server/logs:/app/logs
+      - /nfs/docker/tdarr-server/server:/app/server
+    ports:
+      - "192.168.1.120:8265:8265"
+      - "192.168.1.120:8266:8266"
+      - "192.168.1.120:8267:8267"
+    devices:
+      - /dev/dri:/dev/dri
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Books & Audiobooks
+  # ---------------------------------------------------------------------------
+
+  calibre:
+    image: ghcr.io/linuxserver/calibre:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/data/media/books:/Calibre_Library
+      - /nfs/docker/calibre/config:/config
+      - /nfs/docker/calibre/uploads:/uploads
+      - /nfs/docker/calibre/plugins:/plugins
+    ports:
+      - "192.168.1.120:28080:8080"
+      - "192.168.1.120:28081:8081"
+    restart: unless-stopped
+
+  calibre-web:
+    image: ghcr.io/linuxserver/calibre-web:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/docker/calibre-web/config:/config
+      - /nfs/data/media/books:/books
+    ports:
+      - "192.168.1.120:28083:8083"
+    depends_on:
+      - calibre
+    restart: unless-stopped
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    environment:
+      - PGID=1029
+      - PUID=65536
+      - TZ=America/Chicago
+    volumes:
+      - /nfs/data/media/audiobooks/books:/audiobooks
+      - /nfs/docker/audiobookshelf:/config
+      - /nfs/data/media/audiobooks/art:/metadata
+    ports:
+      - "192.168.1.120:13378:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped

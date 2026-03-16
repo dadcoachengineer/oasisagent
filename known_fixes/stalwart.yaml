@@ -1,0 +1,38 @@
+fixes:
+  - id: stalwart-unreachable
+    match:
+      system: stalwart
+      event_type: stalwart_unreachable
+    diagnosis: "Stalwart Mail Server is unreachable — email service down"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Stalwart Mail Server is unreachable. Checklist:
+          1. Check if the Stalwart container/service is running
+          2. Verify the host is reachable on the network
+          3. Check for resource exhaustion (disk full, memory)
+          4. Review Stalwart container logs for errors
+          5. Verify TLS certificate and reverse proxy configuration
+    risk_tier: escalate
+
+  - id: stalwart-queue-high
+    match:
+      system: stalwart
+      event_type: stalwart_queue_high
+    diagnosis: "Stalwart mail queue exceeds threshold — delivery backlog"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Stalwart mail queue is above threshold. Checklist:
+          1. Check for upstream delivery failures (DNS, relay host)
+          2. Review Stalwart logs for rejected/bounced messages
+          3. Verify outbound SMTP connectivity (port 25/587)
+          4. Check if a spam wave is flooding the queue
+          5. Consider flushing stale messages if queue is stuck
+    risk_tier: recommend

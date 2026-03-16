@@ -1,0 +1,37 @@
+fixes:
+  - id: ollama-unreachable
+    match:
+      system: ollama
+      event_type: ollama_unreachable
+    diagnosis: "Ollama LLM server is unreachable — local model inference unavailable"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Ollama is unreachable — local LLM inference is down. Checklist:
+          1. Check if the Ollama service/container is running
+          2. Verify the host is reachable on the network
+          3. Check for GPU driver issues or CUDA errors
+          4. Review Ollama logs for out-of-memory errors
+          5. Verify port 11434 is not blocked by firewall
+    risk_tier: escalate
+
+  - id: ollama-no-models
+    match:
+      system: ollama
+      event_type: ollama_no_models
+    diagnosis: "Ollama is running but no models are loaded — inference will fail"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Ollama has no models loaded. Checklist:
+          1. Verify models are pulled (ollama list)
+          2. Check if models were evicted due to memory pressure
+          3. Send a test inference request to trigger model loading
+          4. Review Ollama logs for model load failures
+    risk_tier: recommend

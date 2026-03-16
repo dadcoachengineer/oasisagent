@@ -369,6 +369,17 @@ audit:
   retention_days: 90             # How long to keep audit records
 
 # -----------------------------------------------------------------------------
+# Learning loop — T2 to T0 promotion
+# When T2 suggests a known fix with high confidence, the learning loop
+# writes a candidate YAML file and tracks occurrences in SQLite.
+# After min_verified_count occurrences, the operator is notified.
+# -----------------------------------------------------------------------------
+learning:
+  enabled: false
+  min_confidence: 0.8             # Minimum T2 confidence to accept a candidate
+  min_verified_count: 3           # Occurrences before notifying operator
+
+# -----------------------------------------------------------------------------
 # Notifications — Alert channels
 # Messages are sent for: RECOMMEND/ESCALATE decisions, AUTO_FIX results,
 # circuit breaker trips, and agent lifecycle events (start/stop/error).

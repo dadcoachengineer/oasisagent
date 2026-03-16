@@ -45,7 +45,16 @@ Respond with a JSON object matching this exact schema:
     }
   ],
   "risk_assessment": "Overall risk analysis of the situation",
-  "additional_context": "Any other relevant observations"
+  "additional_context": "Any other relevant observations",
+  "suggested_known_fix": {
+    "match": {"system": "homeassistant", "event_type": "integration_failure"},
+    "diagnosis": "ZWave integration crash after firmware update",
+    "action": {
+      "handler": "homeassistant",
+      "operation": "restart_integration",
+      "params": {"integration": "zwave_js"}
+    }
+  }
 }
 
 Valid risk_tier values (choose carefully):
@@ -53,6 +62,12 @@ Valid risk_tier values (choose carefully):
 - "recommend" — Suggest to operator for approval (e.g., restart a service with dependencies)
 - "escalate" — Requires human judgment (e.g., data loss risk, unclear root cause)
 - "block" — Should NOT be executed (e.g., affects security systems)
+
+If this failure could be handled automatically in the future, include a \
+"suggested_known_fix" object. This should specify the match criteria \
+(system and event_type), a short diagnosis string, and the action to take. \
+Only include this if your confidence is 0.7 or higher and the fix is \
+generalizable. Omit it or set it to null otherwise.
 
 If you cannot determine the root cause with reasonable confidence, set \
 confidence below 0.5 and recommend escalation to a human operator.

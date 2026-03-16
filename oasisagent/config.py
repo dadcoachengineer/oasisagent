@@ -431,6 +431,55 @@ class UptimeKumaAdapterConfig(BaseModel):
     cert_critical_days: int = 7
 
 
+# -- Vaultwarden ------------------------------------------------------------
+
+
+class VaultwardenAdapterConfig(BaseModel):
+    """Vaultwarden (Bitwarden) health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    poll_interval: int = 60
+    verify_ssl: bool = False
+    timeout: int = 10
+    deep_health: bool = False
+    admin_token: str = ""
+    slow_threshold_ms: int = 2000
+
+
+# -- Stalwart Mail ----------------------------------------------------------
+
+
+class StalwartAdapterConfig(BaseModel):
+    """Stalwart Mail Server health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    verify_ssl: bool = False
+    queue_threshold: int = 100
+
+
+# -- Ollama -----------------------------------------------------------------
+
+
+class OllamaAdapterConfig(BaseModel):
+    """Ollama LLM server health-check adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "http://localhost:11434"
+    poll_interval: int = 60
+    timeout: int = 10
+
+
 # -- EMQX -------------------------------------------------------------------
 
 
@@ -834,6 +883,19 @@ class NotificationsConfig(BaseModel):
     telegram: TelegramNotificationConfig = Field(default_factory=TelegramNotificationConfig)
 
 
+# -- Learning loop ----------------------------------------------------------
+
+
+class LearningConfig(BaseModel):
+    """Learning loop configuration — T2 to T0 promotion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = 0.8
+    min_verified_count: Annotated[int, Field(ge=1)] = 3
+
+
 # -- Top-level config -------------------------------------------------------
 
 
@@ -853,4 +915,5 @@ class OasisAgentConfig(BaseModel):
     handlers: HandlersConfig = Field(default_factory=HandlersConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    learning: LearningConfig = Field(default_factory=LearningConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)

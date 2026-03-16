@@ -45,6 +45,9 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "unifi": "UniFi Network",
     "cloudflare": "Cloudflare",
     "uptime_kuma": "Uptime Kuma",
+    "vaultwarden": "Vaultwarden",
+    "stalwart": "Stalwart Mail",
+    "ollama": "Ollama",
     "emqx": "EMQX",
     "nextcloud": "Nextcloud",
     # Services
@@ -91,6 +94,18 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "uptime_kuma": (
         "Pull monitor status from Uptime Kuma's"
         " Prometheus endpoint"
+    ),
+    "vaultwarden": (
+        "Monitor Vaultwarden (Bitwarden) service health"
+        " with optional deep health checks"
+    ),
+    "stalwart": (
+        "Monitor Stalwart Mail Server health"
+        " and mail queue depth"
+    ),
+    "ollama": (
+        "Monitor Ollama LLM server health"
+        " and loaded model status"
     ),
     "emqx": (
         "Monitor EMQX MQTT broker health,"
@@ -479,6 +494,53 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
     ],
 
+    "stalwart": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. https://mail.example.com:443",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text="Optional — enables mail queue monitoring",
+            group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL Certificate",
+            "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "queue_threshold", "Queue Alert Threshold",
+            "number", default=100, min_val=1,
+            help_text="Alert when queued messages exceed this count",
+        ),
+    ],
+    "ollama": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:11434",
+            required=True,
+            default="http://localhost:11434",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
     "emqx": [
         FieldSpec(
             "url", "Dashboard URL", "text",
@@ -537,6 +599,51 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     ],
 
     # -----------------------------------------------------------------------
+    "vaultwarden": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. https://192.168.2.100:8000",
+            required=True,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL Certificate",
+            "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "deep_health", "Enable Deep Health Checks",
+            "checkbox",
+            help_text=(
+                "Poll /api/config for degraded detection"
+                " and response time tracking"
+            ),
+            default=False, group="Deep Health",
+        ),
+        FieldSpec(
+            "admin_token", "Admin Token", "password",
+            help_text="Optional — enables /admin panel health check",
+            group="Deep Health",
+        ),
+        FieldSpec(
+            "slow_threshold_ms", "Slow Threshold (ms)",
+            "number", default=2000, min_val=100,
+            help_text=(
+                "Response time above this triggers"
+                " a slow warning"
+            ),
+            group="Deep Health",
+        ),
+    ],
+
     # Core services
     # -----------------------------------------------------------------------
     "llm_triage": [
