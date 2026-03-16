@@ -1,0 +1,60 @@
+# EMQX is the agent's own MQTT broker — this is meta-monitoring.
+# All fixes use risk_tier: recommend minimum. Never use auto_fix here:
+# an auto-fix that restarts EMQX via Portainer could kill the agent's
+# own MQTT subscriber mid-reconnect.
+
+fixes:
+  - id: emqx-unreachable
+    match:
+      system: emqx
+      event_type: emqx_unreachable
+    diagnosis: "EMQX MQTT broker is unreachable — broker management API down"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          EMQX MQTT broker API is unreachable. Checklist:
+          1. Check if the EMQX container/service is running
+          2. Verify the dashboard port (18083) is accessible
+          3. Check EMQX container logs for startup errors
+          4. Verify API credentials are correct
+          5. Check for resource exhaustion (disk, memory)
+    risk_tier: escalate
+
+  - id: emqx-alarm-active
+    match:
+      system: emqx
+      event_type: emqx_alarm_active
+    diagnosis: "EMQX has an active alarm — broker may be degraded"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          EMQX alarm is active. Checklist:
+          1. Check the EMQX dashboard for alarm details
+          2. Review system resource usage (CPU, memory, connections)
+          3. Check for excessive client connections or message rates
+          4. Review EMQX logs for error patterns
+    risk_tier: recommend
+
+  - id: emqx-listener-down
+    match:
+      system: emqx
+      event_type: emqx_listener_down
+    diagnosis: "An EMQX listener has stopped — clients cannot connect on that port"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          An EMQX listener is not running. Checklist:
+          1. Check the EMQX dashboard for listener status
+          2. Verify the listener port is not already in use
+          3. Check EMQX configuration for listener settings
+          4. Review logs for TLS certificate issues if SSL listener
+    risk_tier: recommend

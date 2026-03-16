@@ -23,6 +23,7 @@ from oasisagent.config import (
     CloudflareHandlerConfig,
     DockerHandlerConfig,
     EmailNotificationConfig,
+    EmqxAdapterConfig,
     GuardrailsConfig,
     HaHandlerConfig,
     HaLogPollerConfig,
@@ -33,6 +34,7 @@ from oasisagent.config import (
     LlmOptionsConfig,
     MqttIngestionConfig,
     MqttNotificationConfig,
+    NextcloudAdapterConfig,
     PortainerHandlerConfig,
     ProxmoxHandlerConfig,
     ScannerConfig,
@@ -89,6 +91,14 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     "uptime_kuma": TypeMeta(
         model=UptimeKumaAdapterConfig,
         secret_fields=frozenset({"api_key"}),
+    ),
+    "emqx": TypeMeta(
+        model=EmqxAdapterConfig,
+        secret_fields=frozenset({"api_key", "api_secret"}),
+    ),
+    "nextcloud": TypeMeta(
+        model=NextcloudAdapterConfig,
+        secret_fields=frozenset({"password"}),
     ),
 }
 
