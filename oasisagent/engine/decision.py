@@ -370,6 +370,8 @@ class DecisionEngine:
                 details["dependency_depth"] = self._dependency_depth
             if context_systems:
                 details["multi_handler_context_systems"] = context_systems
+            if diagnosis.remediation_plan:
+                details["remediation_plan_steps"] = len(diagnosis.remediation_plan)
 
         if not diagnosis.recommended_actions:
             logger.info(
