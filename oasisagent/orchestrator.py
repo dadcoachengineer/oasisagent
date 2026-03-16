@@ -34,6 +34,7 @@ from oasisagent.engine.decision import (
 )
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
+from oasisagent.engine.plan_executor import PlanExecutor
 from oasisagent.engine.queue import EventQueue
 from oasisagent.engine.service_graph import ServiceGraph
 from oasisagent.handlers.docker import DockerHandler
@@ -190,6 +191,7 @@ class Orchestrator:
         self._audit: AuditWriter | None = None
         self._dispatcher: NotificationDispatcher | None = None
         self._pending_queue: PendingQueue | None = None
+        self._plan_executor: PlanExecutor | None = None
         self._approval_listener: ApprovalListener | None = None
         self._approval_listener_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[None]] = set()
@@ -267,6 +269,12 @@ class Orchestrator:
         # when available. Must happen after components and before start.
         if self._db is not None:
             self._pending_queue = await PendingQueue.from_db(self._db)
+
+            # Resume in-progress plans from prior crash/restart
+            if self._plan_executor is not None:
+                resumed = await self._plan_executor.resume_in_progress()
+                if resumed:
+                    logger.info("Resumed %d in-progress plans", len(resumed))
 
             # Web notification channel — always enabled when db is available
             from oasisagent.db.notification_store import NotificationStore
@@ -1027,6 +1035,14 @@ class Orchestrator:
 
             cf_h = CloudflareHandler(cfg.handlers.cloudflare)
             self._handlers[cf_h.name()] = cf_h
+
+        # --- Plan executor ---
+        if self._circuit_breaker is not None:
+            self._plan_executor = PlanExecutor(
+                db=self._db,
+                handlers=self._handlers,
+                circuit_breaker=self._circuit_breaker,
+            )
 
         # --- Notification channels ---
         channels: list[NotificationChannel] = []
@@ -1789,9 +1805,22 @@ class Orchestrator:
             await self._audit_decision(event, result)
 
             # 4. Handler dispatch
-            # T2 results may carry multiple recommended_actions, each
-            # independently approved by guardrails in the decision engine.
-            if result.recommended_actions and result.disposition == DecisionDisposition.MATCHED:
+            # Plan dispatch takes priority over flat actions. When a plan is
+            # present, its steps contain the authoritative actions in
+            # dependency order. recommended_actions are skipped (T2 may
+            # include both per the prompt).
+            if (
+                result.remediation_plan
+                and result.disposition == DecisionDisposition.MATCHED
+                and self._plan_executor is not None
+            ):
+                if result.recommended_actions:
+                    logger.info(
+                        "Plan present — dispatching plan, skipping %d flat actions",
+                        len(result.recommended_actions),
+                    )
+                await self._dispatch_remediation_plan(event, result)
+            elif result.recommended_actions and result.disposition == DecisionDisposition.MATCHED:
                 await self._dispatch_t2_actions(event, result, duration_ms)
             elif self._should_enqueue(result):
                 await self._enqueue_pending(event, result)
@@ -2053,6 +2082,165 @@ class Orchestrator:
                 )
 
     # -------------------------------------------------------------------
+    # Plan dispatch
+    # -------------------------------------------------------------------
+
+    async def _dispatch_remediation_plan(
+        self, event: Event, result: DecisionResult,
+    ) -> None:
+        """Create and dispatch a remediation plan from T2 steps.
+
+        If the plan requires approval (any step non-AUTO_FIX), it is
+        enqueued for operator review. Otherwise it executes immediately.
+        """
+        assert self._plan_executor is not None
+        assert self._pending_queue is not None
+        assert result.remediation_plan is not None
+
+        plan = await self._plan_executor.create_plan(
+            event, result.remediation_plan, result.diagnosis,
+        )
+
+        if plan.status.value == "pending_approval":
+            # Enqueue for operator approval with plan_id link
+            pending = await self._pending_queue.add(
+                event_id=event.id,
+                action=None,
+                diagnosis=result.diagnosis,
+                timeout_minutes=self._config.guardrails.approval_timeout_minutes,
+                entity_id=event.entity_id,
+                severity=event.severity.value,
+                source=event.source,
+                system=event.system,
+                plan_id=plan.id,
+            )
+            if pending is not None:
+                await self._publish_pending_action(pending)
+                await self._publish_pending_list()
+
+            # Notify operator about the pending plan
+
+            step_count = len(plan.steps)
+            await self._send_notification(
+                event, result,
+                title_override=(
+                    f"[PLAN] {step_count} steps require approval: "
+                    f"{result.diagnosis[:60]}"
+                ),
+            )
+            logger.info(
+                "Plan %s enqueued for approval (%d steps, risk=%s)",
+                plan.id, step_count, plan.effective_risk_tier,
+            )
+            return
+
+        # AUTO_FIX plan — execute immediately
+        completed_plan = await self._plan_executor.execute_plan(plan, event)
+
+        # Audit plan completion
+        if self._audit is not None:
+            try:
+                await self._audit.write_plan_event(
+                    plan=completed_plan,
+                    transition=(
+                        "completed"
+                        if completed_plan.status.value == "completed"
+                        else "failed"
+                    ),
+                )
+            except Exception:
+                logger.warning("Audit plan write failed for plan %s", plan.id)
+
+        self._actions_taken += sum(
+            1 for s in completed_plan.step_states
+            if s.status.value == "succeeded"
+        )
+
+        # Notify on completion
+        if completed_plan.status.value == "completed":
+            await self._send_notification(
+                event, result,
+                title_override=f"[PLAN] Complete: {result.diagnosis[:60]}",
+            )
+        else:
+            failed_step = next(
+                (s for s in completed_plan.step_states if s.status.value == "failed"),
+                None,
+            )
+            step_num = failed_step.order if failed_step else "?"
+            await self._send_notification(
+                event, result,
+                title_override=f"[PLAN] Failed at step {step_num}: {result.diagnosis[:60]}",
+            )
+
+    async def _process_plan_approval(self, plan_id: str) -> None:
+        """Approve and execute a pending remediation plan."""
+        assert self._plan_executor is not None
+
+        plan = await self._plan_executor.approve_plan(plan_id)
+        if plan is None:
+            logger.warning("Plan %s not found or already resolved", plan_id)
+            return
+
+        # Build a minimal event for execution context
+        from oasisagent.models import Event as EventModel
+        from oasisagent.models import Severity as SevEnum
+
+        event = EventModel(
+            id=plan.event_id,
+            source=plan.source or "plan_executor",
+            system=plan.system or "oasisagent",
+            event_type="plan_execution",
+            entity_id=plan.entity_id or f"plan:{plan_id}",
+            severity=SevEnum(plan.severity) if plan.severity else SevEnum.INFO,
+            timestamp=plan.created_at,
+        )
+
+        completed_plan = await self._plan_executor.execute_plan(plan, event)
+
+        # Audit
+        if self._audit is not None:
+            try:
+                await self._audit.write_plan_event(
+                    plan=completed_plan,
+                    transition=(
+                        "completed"
+                        if completed_plan.status.value == "completed"
+                        else "failed"
+                    ),
+                )
+            except Exception:
+                logger.warning("Audit plan write failed for plan %s", plan_id)
+
+        self._actions_taken += sum(
+            1 for s in completed_plan.step_states
+            if s.status.value == "succeeded"
+        )
+
+        logger.info(
+            "Plan %s approved and executed: status=%s",
+            plan_id, completed_plan.status,
+        )
+
+    async def _process_plan_rejection(self, plan_id: str) -> None:
+        """Reject a pending remediation plan."""
+        assert self._plan_executor is not None
+
+        plan = await self._plan_executor.reject_plan(plan_id)
+        if plan is None:
+            logger.warning("Plan %s not found or already resolved", plan_id)
+            return
+
+        # Audit
+        if self._audit is not None:
+            try:
+                await self._audit.write_plan_event(plan=plan, transition="rejected")
+            except Exception:
+                logger.warning("Audit plan write failed for plan %s", plan_id)
+
+        logger.info("Plan %s rejected by operator", plan_id)
+
+    # -------------------------------------------------------------------
     # Notify auto-execution
     # -------------------------------------------------------------------
 
@@ -2154,6 +2342,9 @@ class Orchestrator:
         Routes the decision to the appropriate handler based on the
         operator's choice. Unlike the MQTT callback, this is already
         async so we can call the processors directly.
+
+        Checks plan_id first: if the pending action links to a plan,
+        approval/rejection routes through the plan executor.
         """
         if decision == ApprovalDecision.APPROVED:
             await self._process_approval(action_id)
@@ -2176,9 +2367,24 @@ class Orchestrator:
         self._schedule_task(self._process_rejection(action_id))
 
     async def _process_approval(self, action_id: str) -> None:
-        """Dispatch an approved pending action through the handler pipeline."""
+        """Dispatch an approved pending action through the handler pipeline.
+
+        If the pending action links to a plan (plan_id set), routes
+        through the plan executor instead of single-action dispatch.
+        """
         assert self._pending_queue is not None
         assert self._circuit_breaker is not None
+
+        # Peek first to check for plan_id before CAS transition
+        peeked = self._pending_queue.get(action_id)
+        if peeked is not None and peeked.plan_id is not None:
+            pending = await self._pending_queue.approve(action_id)
+            if pending is None:
+                return
+            await self._clear_pending_mqtt(action_id)
+            await self._publish_pending_list()
+            await self._process_plan_approval(pending.plan_id)
+            return
 
         pending = await self._pending_queue.approve(action_id)
         if pending is None:
@@ -2239,8 +2445,22 @@ class Orchestrator:
             )
 
     async def _process_rejection(self, action_id: str) -> None:
-        """Record a rejected pending action."""
+        """Record a rejected pending action.
+
+        If the pending action links to a plan, rejects the plan.
+        """
         assert self._pending_queue is not None
+
+        # Check for plan_id before CAS transition
+        peeked = self._pending_queue.get(action_id)
+        if peeked is not None and peeked.plan_id is not None:
+            pending = await self._pending_queue.reject(action_id)
+            if pending is None:
+                return
+            await self._clear_pending_mqtt(action_id)
+            await self._publish_pending_list()
+            await self._process_plan_rejection(pending.plan_id)
+            return
 
         pending = await self._pending_queue.reject(action_id)
         if pending is None:
@@ -2535,7 +2755,11 @@ class Orchestrator:
             )
 
     async def _send_notification(
-        self, event: Event, result: DecisionResult
+        self,
+        event: Event,
+        result: DecisionResult,
+        *,
+        title_override: str | None = None,
     ) -> None:
         """Send a notification for the event. Best-effort."""
         if self._dispatcher is None:
@@ -2544,7 +2768,7 @@ class Orchestrator:
         notification = Notification(
             event_id=event.id,
             severity=event.severity,
-            title=self._notification_title(result),
+            title=title_override or self._notification_title(result),
             message=self._notification_message(event, result),
         )
 

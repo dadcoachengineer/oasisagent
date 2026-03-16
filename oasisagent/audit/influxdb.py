@@ -41,7 +41,13 @@ if TYPE_CHECKING:
     from oasisagent.config import AuditConfig
     from oasisagent.engine.circuit_breaker import CircuitBreakerResult
     from oasisagent.engine.decision import DecisionResult
-    from oasisagent.models import ActionResult, Event, RecommendedAction, VerifyResult
+    from oasisagent.models import (
+        ActionResult,
+        Event,
+        RecommendedAction,
+        RemediationPlan,
+        VerifyResult,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +302,46 @@ class AuditWriter:
         )
 
         await self._write(point, measurement="oasis_notification_archive")
+
+    async def write_plan_event(
+        self, *, plan: RemediationPlan, transition: str,
+    ) -> None:
+        """Record a plan state transition (oasis_plan measurement).
+
+        Transitions: created, approved, rejected, expired,
+        step_executing, step_succeeded, step_failed, step_skipped,
+        completed, failed.
+        """
+        if not self._enabled:
+            return
+        self._ensure_started()
+
+        succeeded = sum(
+            1 for s in plan.step_states if s.status.value == "succeeded"
+        )
+        failed = sum(
+            1 for s in plan.step_states if s.status.value == "failed"
+        )
+
+        point = (
+            Point("oasis_plan")
+            .tag("plan_id", plan.id)
+            .tag("event_id", plan.event_id)
+            .tag("status", plan.status.value)
+            .tag("transition", transition)
+            .tag("effective_risk_tier", plan.effective_risk_tier.value)
+            .field("diagnosis", plan.diagnosis)
+            .field("total_steps", len(plan.steps))
+            .field("succeeded_steps", succeeded)
+            .field("failed_steps", failed)
+            .field("entity_id", plan.entity_id)
+            .field("severity", plan.severity)
+            .field("source", plan.source)
+            .field("system", plan.system)
+            .time(datetime.now(UTC))
+        )
+
+        await self._write(point, measurement="oasis_plan")
 
     # -------------------------------------------------------------------
     # Internal helpers
