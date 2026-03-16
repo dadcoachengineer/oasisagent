@@ -53,13 +53,19 @@ class PendingStatus(StrEnum):
 
 
 class PendingAction(BaseModel):
-    """A RECOMMEND-tier action awaiting operator approval."""
+    """A RECOMMEND-tier action awaiting operator approval.
+
+    When ``plan_id`` is set, this entry represents a whole-plan approval
+    rather than a single action. In that case ``action`` is None — the
+    plan's steps carry the individual actions.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=lambda: str(uuid4()))
     event_id: str
-    action: RecommendedAction
+    action: RecommendedAction | None = None
+    plan_id: str | None = None
     diagnosis: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime
@@ -133,7 +139,8 @@ class PendingQueue:
         # Load remaining pending rows into the in-memory cache
         cursor = await db.execute(
             "SELECT id, event_id, action_json, diagnosis, status, "
-            "created_at, expires_at, entity_id, severity, source, system "
+            "created_at, expires_at, entity_id, severity, source, system, "
+            "plan_id "
             "FROM pending_actions WHERE status = 'pending'"
         )
         rows = await cursor.fetchall()
@@ -145,17 +152,19 @@ class PendingQueue:
             logger.info("Loaded %d pending action(s) from database", len(rows))
 
         # Rebuild dedup keys from loaded pending actions
-        queue._pending_keys = {
-            PendingQueue._make_key(p.action)
-            for p in queue._actions.values()
-        }
+        queue._pending_keys = set()
+        for p in queue._actions.values():
+            if p.plan_id is not None:
+                queue._pending_keys.add(f"plan:{p.plan_id}")
+            elif p.action is not None:
+                queue._pending_keys.add(PendingQueue._make_key(p.action))
 
         return queue
 
     async def add(
         self,
         event_id: str,
-        action: RecommendedAction,
+        action: RecommendedAction | None,
         diagnosis: str,
         timeout_minutes: int,
         *,
@@ -163,24 +172,36 @@ class PendingQueue:
         severity: str = "",
         source: str = "",
         system: str = "",
+        plan_id: str | None = None,
     ) -> PendingAction | None:
         """Create a pending action and add it to the queue.
 
         Args:
             event_id: Source event that produced this action.
-            action: The RecommendedAction to hold for approval.
+            action: The RecommendedAction to hold for approval. None when
+                plan_id is set (plan steps carry the individual actions).
             diagnosis: Human-readable summary for the operator.
             timeout_minutes: Minutes until the action expires.
             entity_id: Entity affected (e.g. ``sensor.temperature``).
             severity: Event severity as string (e.g. ``warning``).
             source: Ingestion source (e.g. ``mqtt``).
             system: Target system (e.g. ``homeassistant``).
+            plan_id: Links to a RemediationPlan. When set, approval
+                routes through the plan executor.
 
         Returns:
             The created PendingAction with a unique ID, or None if a
             duplicate pending action already exists.
         """
-        key = self._make_key(action)
+        # Dedup: plan entries use plan_id as key, actions use handler:op:entity
+        if plan_id is not None:
+            key = f"plan:{plan_id}"
+        elif action is not None:
+            key = self._make_key(action)
+        else:
+            logger.warning("add() called with no action and no plan_id")
+            return None
+
         if key in self._pending_keys:
             logger.debug(
                 "Duplicate pending action suppressed: %s", key
@@ -191,6 +212,7 @@ class PendingQueue:
         pending = PendingAction(
             event_id=event_id,
             action=action,
+            plan_id=plan_id,
             diagnosis=diagnosis,
             created_at=now,
             expires_at=now + timedelta(minutes=timeout_minutes),
@@ -202,15 +224,17 @@ class PendingQueue:
 
         # SQLite first, then in-memory cache (D2)
         if self._db is not None:
+            action_json = action.model_dump_json() if action is not None else ""
             await self._db.execute(
                 "INSERT INTO pending_actions "
                 "(id, event_id, action_json, diagnosis, status, "
-                "created_at, expires_at, entity_id, severity, source, system) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "created_at, expires_at, entity_id, severity, source, system, "
+                "plan_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     pending.id,
                     pending.event_id,
-                    pending.action.model_dump_json(),
+                    action_json,
                     pending.diagnosis,
                     pending.status.value,
                     pending.created_at.isoformat(),
@@ -219,16 +243,19 @@ class PendingQueue:
                     pending.severity,
                     pending.source,
                     pending.system,
+                    pending.plan_id,
                 ),
             )
             await self._db.commit()
 
         self._actions[pending.id] = pending
         self._pending_keys.add(key)
+
+        desc = action.description[:80] if action else f"plan:{plan_id}"
         logger.info(
             "Pending action %s enqueued: %s (expires %s)",
             pending.id,
-            action.description[:80],
+            desc,
             pending.expires_at.isoformat(),
         )
         return pending
@@ -268,7 +295,10 @@ class PendingQueue:
             await self._db.commit()
 
         pending.status = PendingStatus.APPROVED
-        self._pending_keys.discard(self._make_key(pending.action))
+        if pending.plan_id is not None:
+            self._pending_keys.discard(f"plan:{pending.plan_id}")
+        elif pending.action is not None:
+            self._pending_keys.discard(self._make_key(pending.action))
         logger.info("Pending action %s approved", action_id)
         return pending
 
@@ -307,7 +337,10 @@ class PendingQueue:
             await self._db.commit()
 
         pending.status = PendingStatus.REJECTED
-        self._pending_keys.discard(self._make_key(pending.action))
+        if pending.plan_id is not None:
+            self._pending_keys.discard(f"plan:{pending.plan_id}")
+        elif pending.action is not None:
+            self._pending_keys.discard(self._make_key(pending.action))
         logger.info("Pending action %s rejected", action_id)
         return pending
 
@@ -343,11 +376,14 @@ class PendingQueue:
             # Rebuild keys from remaining PENDING actions. Handles the
             # edge case where _actions was out of sync with the DB —
             # prevents stale keys from blocking future additions.
-            self._pending_keys = {
-                self._make_key(a.action)
-                for a in self._actions.values()
-                if a.status == PendingStatus.PENDING
-            }
+            self._pending_keys = set()
+            for a in self._actions.values():
+                if a.status != PendingStatus.PENDING:
+                    continue
+                if a.plan_id is not None:
+                    self._pending_keys.add(f"plan:{a.plan_id}")
+                elif a.action is not None:
+                    self._pending_keys.add(self._make_key(a.action))
             return expired
 
         # In-memory-only path (tests)
@@ -355,7 +391,10 @@ class PendingQueue:
         for pending in self._actions.values():
             if pending.status == PendingStatus.PENDING and now >= pending.expires_at:
                 pending.status = PendingStatus.EXPIRED
-                self._pending_keys.discard(self._make_key(pending.action))
+                if pending.plan_id is not None:
+                    self._pending_keys.discard(f"plan:{pending.plan_id}")
+                elif pending.action is not None:
+                    self._pending_keys.discard(self._make_key(pending.action))
                 expired.append(pending)
                 logger.info("Pending action %s expired", pending.id)
         return expired
@@ -401,11 +440,17 @@ class PendingQueue:
 
 def _row_to_pending_action(row: Row) -> PendingAction:
     """Convert a SQLite row to a PendingAction."""
-    action = RecommendedAction.model_validate_json(row["action_json"])
+    action_json = row["action_json"]
+    action = RecommendedAction.model_validate_json(action_json) if action_json else None
+    try:
+        plan_id = row["plan_id"]
+    except (IndexError, KeyError):
+        plan_id = None
     return PendingAction(
         id=row["id"],
         event_id=row["event_id"],
         action=action,
+        plan_id=plan_id,
         diagnosis=row["diagnosis"],
         status=PendingStatus(row["status"]),
         created_at=datetime.fromisoformat(row["created_at"]),

@@ -1,5 +1,5 @@
-{# Single pending action card — used in list.html and as HTMX swap target #}
-<div id="action-{{ action.id }}" class="bg-white rounded-lg shadow p-5">
+{# Plan approval card — shows all steps in order with risk tier badges #}
+<div id="action-{{ action.id }}" class="bg-white rounded-lg shadow p-5 border-l-4 border-indigo-400">
     {% if error is defined and error %}
     <div class="mb-3 bg-red-50 border border-red-200 rounded p-3">
         <p class="text-sm text-red-700">{{ error }}</p>
@@ -7,10 +7,12 @@
     {% endif %}
     <div class="flex items-start justify-between">
         <div class="flex-1 min-w-0">
-            {# Entity + severity context #}
-            {% if action.entity_id %}
+            {# Plan header #}
             <div class="flex items-center gap-2 mb-2">
+                <span class="px-2 py-0.5 rounded bg-indigo-100 text-xs font-medium text-indigo-700">PLAN</span>
+                {% if action.entity_id %}
                 <span class="text-sm font-semibold text-gray-800 font-mono">{{ action.entity_id }}</span>
+                {% endif %}
                 {% if action.severity %}
                 <span class="px-2 py-0.5 rounded-full text-xs font-medium
                     {% if action.severity == 'critical' %}bg-red-100 text-red-700
@@ -20,21 +22,6 @@
                     {{ action.severity }}
                 </span>
                 {% endif %}
-            </div>
-            {% endif %}
-
-            {# Handler + operation badge #}
-            {% if action.action %}
-            <div class="flex items-center gap-2 mb-2">
-                <span class="px-2 py-0.5 rounded bg-gray-100 text-xs font-mono text-gray-600">
-                    {{ action.action.handler }}.{{ action.action.operation }}
-                </span>
-                <span class="px-2 py-0.5 rounded text-xs font-medium
-                    {% if action.action.risk_tier.value == 'auto' %}bg-green-100 text-green-700
-                    {% elif action.action.risk_tier.value == 'recommend' %}bg-amber-100 text-amber-700
-                    {% else %}bg-red-100 text-red-700{% endif %}">
-                    {{ action.action.risk_tier.value | upper }}
-                </span>
                 {% if action.status.value != 'pending' %}
                 <span class="px-2 py-0.5 rounded-full text-xs font-medium
                     {% if action.status.value == 'approved' %}bg-green-100 text-green-700
@@ -45,39 +32,53 @@
                 {% endif %}
             </div>
 
-            {% endif %}
-
-            {# Description #}
-            {% if action.action %}
-            <p class="text-sm font-medium text-gray-900">{{ action.action.description }}</p>
-            {% endif %}
-
             {# Diagnosis #}
             {% if action.diagnosis %}
-            <p class="mt-1 text-sm text-gray-600">{{ action.diagnosis }}</p>
+            <p class="text-sm font-medium text-gray-900">{{ action.diagnosis }}</p>
             {% endif %}
 
-            {# Parameters #}
-            {% if action.action and action.action.params %}
-            <div class="mt-2">
-                <details class="text-xs">
-                    <summary class="text-gray-400 cursor-pointer hover:text-gray-600">Parameters</summary>
-                    <pre class="mt-1 p-2 bg-gray-50 rounded text-xs font-mono text-gray-600 overflow-x-auto">{{ action.action.params | tojson(indent=2) }}</pre>
-                </details>
+            {# Steps list #}
+            {% if plan and plan.steps %}
+            <div class="mt-3 space-y-2">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    {{ plan.steps | length }} Steps
+                </p>
+                {% for step in plan.steps %}
+                <div class="flex items-start gap-2 pl-2 border-l-2
+                    {% if step.action.risk_tier.value == 'auto_fix' %}border-green-300
+                    {% elif step.action.risk_tier.value == 'recommend' %}border-amber-300
+                    {% else %}border-red-300{% endif %}">
+                    <span class="text-xs text-gray-400 font-mono w-4 shrink-0">{{ step.order }}</span>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                            <span class="px-1.5 py-0.5 rounded bg-gray-100 text-xs font-mono text-gray-600">
+                                {{ step.action.handler }}.{{ step.action.operation }}
+                            </span>
+                            <span class="px-1.5 py-0.5 rounded text-xs font-medium
+                                {% if step.action.risk_tier.value == 'auto_fix' %}bg-green-100 text-green-700
+                                {% elif step.action.risk_tier.value == 'recommend' %}bg-amber-100 text-amber-700
+                                {% else %}bg-red-100 text-red-700{% endif %}">
+                                {{ step.action.risk_tier.value | upper }}
+                            </span>
+                        </div>
+                        <p class="text-xs text-gray-700 mt-0.5">{{ step.action.description }}</p>
+                        {% if step.depends_on %}
+                        <p class="text-xs text-gray-400 mt-0.5">
+                            Depends on: step{{ 's' if step.depends_on | length > 1 else '' }}
+                            {{ step.depends_on | join(', ') }}
+                            {% if step.conditional %}<span class="text-amber-500">(conditional)</span>{% endif %}
+                        </p>
+                        {% endif %}
+                        {% if step.success_criteria %}
+                        <p class="text-xs text-gray-400">Verify: {{ step.success_criteria }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
             </div>
             {% endif %}
 
-            {# Reasoning #}
-            {% if action.action and action.action.reasoning %}
-            <div class="mt-2">
-                <details class="text-xs">
-                    <summary class="text-gray-400 cursor-pointer hover:text-gray-600">Reasoning</summary>
-                    <p class="mt-1 text-xs text-gray-500">{{ action.action.reasoning }}</p>
-                </details>
-            </div>
-            {% endif %}
-
-            {# Metadata: source, system, event ID, timestamps #}
+            {# Metadata #}
             <div class="mt-3 flex items-center gap-4 text-xs text-gray-400">
                 {% if action.source %}
                 <span>Source: {{ action.source }}</span>
@@ -110,16 +111,16 @@
             <button hx-post="/ui/approvals/{{ action.id }}/approve"
                     hx-target="#action-{{ action.id }}"
                     hx-swap="outerHTML"
-                    hx-confirm="Approve this action? It will be executed immediately."
+                    hx-confirm="Approve this plan? All steps will be executed in order."
                     class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700">
-                Approve
+                Approve Plan
             </button>
             <button hx-post="/ui/approvals/{{ action.id }}/reject"
                     hx-target="#action-{{ action.id }}"
                     hx-swap="outerHTML"
-                    hx-confirm="Reject this action?"
+                    hx-confirm="Reject this plan?"
                     class="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700">
-                Reject
+                Reject Plan
             </button>
         </div>
         {% endif %}

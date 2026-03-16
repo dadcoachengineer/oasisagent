@@ -16,7 +16,10 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from oasisagent.engine.guardrails import GuardrailResult  # noqa: TC001 — Pydantic field type
-from oasisagent.models import RecommendedAction  # noqa: TC001 — Pydantic field type
+from oasisagent.models import (  # noqa: TC001 — Pydantic field type
+    RecommendedAction,
+    RemediationStep,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -68,6 +71,7 @@ class DecisionResult(BaseModel):
     diagnosis: str = ""
     guardrail_result: GuardrailResult | None = None
     recommended_actions: list[RecommendedAction] = Field(default_factory=list)
+    remediation_plan: list[RemediationStep] | None = None
     details: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -391,6 +395,7 @@ class DecisionEngine:
                 tier=DecisionTier.T2,
                 disposition=DecisionDisposition.ESCALATED,
                 diagnosis=diagnosis.root_cause,
+                remediation_plan=diagnosis.remediation_plan,
                 details=details,
             )
 
@@ -442,6 +447,7 @@ class DecisionEngine:
                 disposition=DecisionDisposition.BLOCKED,
                 diagnosis=diagnosis.root_cause,
                 recommended_actions=diagnosis.recommended_actions,
+                remediation_plan=diagnosis.remediation_plan,
                 details=details,
             )
 
@@ -469,5 +475,6 @@ class DecisionEngine:
             disposition=DecisionDisposition.MATCHED,
             diagnosis=diagnosis.root_cause,
             recommended_actions=approved_actions,
+            remediation_plan=diagnosis.remediation_plan,
             details=details,
         )

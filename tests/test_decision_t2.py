@@ -21,6 +21,7 @@ from oasisagent.models import (
     Event,
     EventMetadata,
     RecommendedAction,
+    RemediationStep,
     RiskTier,
     Severity,
     TopologyEdge,
@@ -668,3 +669,147 @@ class TestEntityContextFn:
         assert result.details["multi_handler_context_systems"] == [
             "homeassistant", "portainer",
         ]
+
+
+# ---------------------------------------------------------------------------
+# T2 remediation plan threading
+# ---------------------------------------------------------------------------
+
+
+class TestT2PlanThreading:
+    """DecisionResult carries remediation_plan from T2 DiagnosisResult."""
+
+    async def test_plan_threaded_to_matched_result(self) -> None:
+        """MATCHED result includes remediation_plan from diagnosis."""
+        plan_steps = [
+            RemediationStep(
+                order=1,
+                action=RecommendedAction(
+                    description="Restart upstream",
+                    handler="portainer",
+                    operation="restart_container",
+                    risk_tier=RiskTier.AUTO_FIX,
+                ),
+                success_criteria="Container running",
+            ),
+            RemediationStep(
+                order=2,
+                action=RecommendedAction(
+                    description="Restart downstream",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                ),
+                success_criteria="Integration available",
+                depends_on=[1],
+            ),
+        ]
+        diagnosis = DiagnosisResult(
+            root_cause="Multi-system failure",
+            confidence=0.85,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Restart ZWave",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                ),
+            ],
+            remediation_plan=plan_steps,
+            risk_assessment="Low risk",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.disposition == DecisionDisposition.MATCHED
+        assert result.remediation_plan is not None
+        assert len(result.remediation_plan) == 2
+        assert result.remediation_plan[0].order == 1
+        assert result.remediation_plan[1].depends_on == [1]
+
+    async def test_plan_threaded_to_blocked_result(self) -> None:
+        """BLOCKED result also carries remediation_plan."""
+        diagnosis = DiagnosisResult(
+            root_cause="Lock firmware issue",
+            confidence=0.9,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Update lock firmware",
+                    handler="homeassistant",
+                    operation="firmware_update",
+                    risk_tier=RiskTier.ESCALATE,
+                ),
+            ],
+            remediation_plan=[
+                RemediationStep(
+                    order=1,
+                    action=RecommendedAction(
+                        description="Update firmware",
+                        handler="homeassistant",
+                        operation="firmware_update",
+                        risk_tier=RiskTier.ESCALATE,
+                    ),
+                    success_criteria="Firmware updated",
+                ),
+            ],
+            risk_assessment="High risk",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.disposition == DecisionDisposition.BLOCKED
+        assert result.remediation_plan is not None
+        assert len(result.remediation_plan) == 1
+
+    async def test_plan_threaded_to_escalated_result(self) -> None:
+        """ESCALATED (no actions) result carries plan if present."""
+        diagnosis = DiagnosisResult(
+            root_cause="Unknown failure",
+            confidence=0.3,
+            recommended_actions=[],
+            remediation_plan=[
+                RemediationStep(
+                    order=1,
+                    action=RecommendedAction(
+                        description="Investigate",
+                        handler="homeassistant",
+                        operation="notify",
+                        risk_tier=RiskTier.RECOMMEND,
+                    ),
+                    success_criteria="Operator notified",
+                ),
+            ],
+            risk_assessment="Unknown",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.disposition == DecisionDisposition.ESCALATED
+        assert result.remediation_plan is not None
+
+    async def test_no_plan_backward_compat(self) -> None:
+        """Default: remediation_plan=None when T2 returns no plan."""
+        reasoning = _make_reasoning_service()  # Default diagnosis has no plan
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.remediation_plan is None

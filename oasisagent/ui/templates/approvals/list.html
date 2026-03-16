@@ -9,7 +9,12 @@
 {% if pending %}
 <div class="space-y-4" id="approval-list">
     {% for action in pending %}
+    {% if action.plan_id %}
+    {% set plan = plans.get(action.plan_id) if plans is defined else None %}
+    {% include "approvals/_plan_card.html" %}
+    {% else %}
     {% include "approvals/_action_card.html" %}
+    {% endif %}
     {% endfor %}
 </div>
 {% else %}
