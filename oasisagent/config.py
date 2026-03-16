@@ -607,6 +607,27 @@ class VaultwardenAdapterConfig(BaseModel):
     timeout: int = 10
 
 
+class ProxmoxAdapterConfig(BaseModel):
+    """Proxmox VE ingestion adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://localhost:8006"
+    user: str = ""
+    token_name: str = ""
+    token_value: str = ""
+    verify_ssl: bool = False
+    poll_interval: int = 30
+    timeout: int = 10
+    poll_nodes: bool = True
+    poll_vms: bool = True
+    poll_tasks: bool = True
+    poll_replication: bool = True
+    cpu_threshold: float = 90.0
+    memory_threshold: float = 90.0
+
+
 # -- Scanner ----------------------------------------------------------------
 
 
@@ -737,6 +758,9 @@ class IngestionConfig(BaseModel):
     )
     vaultwarden: VaultwardenAdapterConfig = Field(
         default_factory=VaultwardenAdapterConfig,
+    )
+    proxmox: ProxmoxAdapterConfig = Field(
+        default_factory=ProxmoxAdapterConfig,
     )
 
 

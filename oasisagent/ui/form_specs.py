@@ -55,6 +55,7 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "n8n": "N8N",
     "overseerr": "Overseerr",
     "vaultwarden": "Vaultwarden",
+    "proxmox": "Proxmox VE",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -139,6 +140,10 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     ),
     "vaultwarden": (
         "Monitor Vaultwarden (Bitwarden) service health"
+    ),
+    "proxmox": (
+        "Poll Proxmox VE for node status, VM states,"
+        " tasks, and replication"
     ),
     # Services
     "llm_triage": (
@@ -891,6 +896,73 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         FieldSpec(
             "timeout", "Request Timeout (seconds)",
             "number", default=10, min_val=1,
+        ),
+    ],
+
+    "proxmox": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. https://192.168.1.106:8006",
+            required=True,
+            default="https://localhost:8006",
+        ),
+        FieldSpec(
+            "user", "API User", "text",
+            help_text="e.g. root@pam",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "token_name", "Token Name", "text",
+            help_text="API token name (Datacenter → Permissions → API Tokens)",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "token_value", "Token Value", "password",
+            help_text="API token secret value",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL", "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=30,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "poll_nodes", "Poll Nodes", "checkbox",
+            help_text="Monitor node online/offline status and resources",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_vms", "Poll VMs/CTs", "checkbox",
+            help_text="Monitor VM and container state transitions",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_tasks", "Poll Tasks", "checkbox",
+            help_text="Detect failed backups and other task errors",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_replication", "Poll Replication", "checkbox",
+            help_text="Monitor replication job failures",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "cpu_threshold", "CPU Alert Threshold (%)",
+            "number", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "memory_threshold", "Memory Alert Threshold (%)",
+            "number", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
         ),
     ],
 
