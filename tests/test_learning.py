@@ -171,8 +171,8 @@ class TestCandidateFixWriter:
 
     @pytest.mark.asyncio
     async def test_existing_higher_confidence_updates(self, tmp_path: Path) -> None:
-        # Existing row with confidence 0.7
-        db = _mock_db(existing_row=("hash123", 0.7))
+        # Existing row with confidence 0.7 and a candidate_path
+        db = _mock_db(existing_row=("hash123", 0.7, ""))
         writer = CandidateFixWriter(db, tmp_path / "candidates", min_confidence=0.5)
 
         result = await writer.write_candidate(_valid_candidate(), confidence=0.9)
@@ -185,8 +185,8 @@ class TestCandidateFixWriter:
 
     @pytest.mark.asyncio
     async def test_existing_lower_confidence_bumps_count(self, tmp_path: Path) -> None:
-        # Existing row with confidence 0.9
-        db = _mock_db(existing_row=("hash123", 0.9))
+        # Existing row with confidence 0.9 and a candidate_path
+        db = _mock_db(existing_row=("hash123", 0.9, ""))
         writer = CandidateFixWriter(db, tmp_path / "candidates", min_confidence=0.5)
 
         result = await writer.write_candidate(_valid_candidate(), confidence=0.7)
@@ -299,16 +299,16 @@ class TestMigration:
         async with aiosqlite.connect(":memory:") as db:
             await m005.migrate(db)
 
-            # Verify tables exist
+            # Verify table exists
             cursor = await db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )
             tables = {row[0] for row in await cursor.fetchall()}
-            assert "learning_config" in tables
             assert "candidate_fixes" in tables
 
-            # Verify learning_config seeds
-            cursor = await db.execute("SELECT key, value FROM learning_config")
-            rows = {row[0]: row[1] for row in await cursor.fetchall()}
-            assert rows["min_confidence"] == "0.8"
-            assert rows["min_verified_count"] == "3"
+            # Verify index exists
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+            indexes = {row[0] for row in await cursor.fetchall()}
+            assert "idx_candidate_fixes_notify" in indexes

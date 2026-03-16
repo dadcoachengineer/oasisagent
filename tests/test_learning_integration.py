@@ -217,3 +217,45 @@ class TestEndToEnd:
             # Should no longer be ready
             ready2 = await writer.get_ready_candidates(min_verified_count=3)
             assert len(ready2) == 0
+
+    @pytest.mark.asyncio
+    async def test_higher_confidence_rewrites_yaml_file(self, tmp_path: Path) -> None:
+        """S1 regression: YAML file on disk must be rewritten on confidence update."""
+        async with aiosqlite.connect(":memory:") as db:
+            await db.execute("""
+                CREATE TABLE candidate_fixes (
+                    match_hash TEXT PRIMARY KEY,
+                    system TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    entity_pattern TEXT NOT NULL DEFAULT '',
+                    candidate_yaml TEXT NOT NULL,
+                    candidate_path TEXT NOT NULL DEFAULT '',
+                    confidence REAL NOT NULL,
+                    verified_count INTEGER NOT NULL DEFAULT 1,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    notified INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+
+            candidates_dir = tmp_path / "candidates"
+            writer = CandidateFixWriter(db, candidates_dir, min_confidence=0.7)
+
+            # First write at 0.8 confidence
+            suggested_v1 = _t2_result_with_suggestion(confidence=0.8).details["suggested_known_fix"]
+            await writer.write_candidate(suggested_v1, 0.8)
+
+            yaml_files = list(candidates_dir.glob("*.yaml"))
+            assert len(yaml_files) == 1
+            original_content = yaml_files[0].read_text()
+
+            # Second write with different diagnosis at 0.95 confidence
+            result_v2 = _t2_result_with_suggestion(confidence=0.95)
+            suggested_v2 = result_v2.details["suggested_known_fix"]
+            suggested_v2["diagnosis"] = "Updated diagnosis with more detail"
+            await writer.write_candidate(suggested_v2, 0.95)
+
+            # File on disk should be updated (not stale)
+            updated_content = yaml_files[0].read_text()
+            assert "Updated diagnosis with more detail" in updated_content
+            assert updated_content != original_content

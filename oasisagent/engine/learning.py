@@ -56,6 +56,7 @@ def _candidate_to_yaml(candidate: dict[str, Any]) -> str:
                     "type": "handle",
                     "handler": action.get("handler", ""),
                     "operation": action.get("operation", ""),
+                    # T2 prompt uses "params", known fix schema uses "details" — try both
                     "details": action.get("params", action.get("details", {})),
                 },
                 "risk_tier": "recommend",
@@ -128,16 +129,24 @@ class CandidateFixWriter:
 
         # Check for existing candidate with same match
         row = await self._db.execute(
-            "SELECT match_hash, confidence FROM candidate_fixes WHERE match_hash = ?",
+            "SELECT match_hash, confidence, candidate_path"
+            " FROM candidate_fixes WHERE match_hash = ?",
             (mhash,),
         )
         existing = await row.fetchone()
 
         if existing is not None:
             existing_confidence = existing[1]
+            existing_path = existing[2]
             if confidence > existing_confidence:
-                # Higher confidence — update the candidate
+                # Higher confidence — update the candidate and rewrite YAML on disk
                 candidate_yaml = _candidate_to_yaml(suggested_fix)
+                if existing_path:
+                    from pathlib import Path as _Path
+
+                    disk_path = _Path(existing_path)
+                    if disk_path.parent.exists():
+                        disk_path.write_text(candidate_yaml)
                 await self._db.execute(
                     """UPDATE candidate_fixes
                        SET candidate_yaml = ?, confidence = ?,

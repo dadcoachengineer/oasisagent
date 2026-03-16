@@ -1,10 +1,11 @@
-"""Create tables for the learning loop.
+"""Create the candidate_fixes table for the learning loop.
 
-Two tables:
-- ``learning_config``: runtime settings (min_confidence, min_verified_count)
-- ``candidate_fixes``: tracks T2-suggested known fixes with dedup and
-  verification counting. YAML artifacts are written to disk; this table
-  tracks operational metadata (occurrence count, notification state).
+Tracks T2-suggested known fixes with dedup and verification counting.
+YAML artifacts are written to disk; this table tracks operational
+metadata (occurrence count, notification state).
+
+Runtime settings (min_confidence, min_verified_count) come from the
+``LearningConfig`` Pydantic model, not from the database.
 """
 
 from __future__ import annotations
@@ -16,22 +17,7 @@ if TYPE_CHECKING:
 
 
 async def migrate(db: aiosqlite.Connection) -> None:
-    """Create learning loop tables."""
-    await db.execute("""
-        CREATE TABLE learning_config (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-    """)
-    # Seed defaults
-    await db.executemany(
-        "INSERT INTO learning_config (key, value) VALUES (?, ?)",
-        [
-            ("min_confidence", "0.8"),
-            ("min_verified_count", "3"),
-        ],
-    )
-
+    """Create learning loop table."""
     await db.execute("""
         CREATE TABLE candidate_fixes (
             match_hash     TEXT PRIMARY KEY,

@@ -976,7 +976,12 @@ class Orchestrator:
     # -------------------------------------------------------------------
 
     async def _maybe_write_candidate(self, result: DecisionResult) -> None:
-        """Write a T2-suggested known fix as a candidate, if present."""
+        """Write a T2-suggested known fix as a candidate, if present.
+
+        Currently hooked into _dispatch_t2_actions only. When plan-aware
+        dispatch (PlanExecutor) merges from develop, this also needs to
+        be called from _finalize_plan after successful plan execution.
+        """
         if self._candidate_writer is None:
             return
 
