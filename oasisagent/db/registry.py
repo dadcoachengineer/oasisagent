@@ -40,6 +40,7 @@ from oasisagent.config import (
     OverseerrAdapterConfig,
     PlexAdapterConfig,
     PortainerHandlerConfig,
+    ProxmoxAdapterConfig,
     ProxmoxHandlerConfig,
     QBittorrentAdapterConfig,
     ScannerConfig,
@@ -181,6 +182,12 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
         model=VaultwardenAdapterConfig,
         module_path="oasisagent.ingestion.vaultwarden",
         class_name="VaultwardenAdapter",
+    ),
+    "proxmox": TypeMeta(
+        model=ProxmoxAdapterConfig,
+        secret_fields=frozenset({"token_value"}),
+        module_path="oasisagent.ingestion.proxmox",
+        class_name="ProxmoxAdapter",
     ),
 }
 

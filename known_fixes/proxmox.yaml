@@ -6,6 +6,10 @@
 #   1. Infrastructure/cluster-level matches (highest urgency)
 #   2. Single VM/CT or storage matches (diagnostic checklist, notify)
 #   3. Correlated groups are handled by T1/T2 reasoning, not T0
+#
+# Status legend:
+#   active   — matched by the Proxmox ingestion adapter
+#   reserved — future adapter expansion or manual webhook ingestion
 
 fixes:
 
@@ -13,10 +17,11 @@ fixes:
   # Node and cluster — highest urgency
   # =========================================================================
 
+  # active — emitted by _poll_nodes() on node offline transition
   - id: pve-node-unreachable
     match:
       system: proxmox
-      event_type: node_unreachable
+      event_type: pve_node_unreachable
     diagnosis: "Proxmox node is unreachable — possible network partition, node crash, or power failure"
     action:
       type: escalate
@@ -32,10 +37,11 @@ fixes:
           5. If node is confirmed down, HA will fence and migrate services
     risk_tier: escalate
 
+  # reserved — no adapter poll for HA fence events (requires syslog/journald)
   - id: pve-ha-fence
     match:
       system: proxmox
-      event_type: ha_fence
+      event_type: pve_ha_fence
     diagnosis: "Proxmox HA fencing triggered — a node was isolated and its services will be migrated"
     action:
       type: escalate
@@ -55,10 +61,11 @@ fixes:
   # VM/CT state — locked, unexpected stop
   # =========================================================================
 
+  # active — emitted by _poll_vms() on lock status transition
   - id: pve-vm-locked
     match:
       system: proxmox
-      event_type: vm_locked
+      event_type: pve_vm_locked
     diagnosis: "VM/CT is locked — a previous operation (backup, snapshot, migrate) did not release the lock"
     action:
       type: recommend
@@ -78,10 +85,11 @@ fixes:
   # Storage — ZFS, thin provisioning
   # =========================================================================
 
+  # reserved — requires syslog/journald ingestion for ZFS scrub events
   - id: pve-zfs-scrub-errors
     match:
       system: proxmox
-      event_type: zfs_scrub_error
+      event_type: pve_zfs_scrub_error
     diagnosis: "ZFS scrub found errors — possible disk degradation or silent data corruption"
     action:
       type: escalate
@@ -98,10 +106,11 @@ fixes:
           6. Schedule more frequent scrubs until the issue is resolved
     risk_tier: escalate
 
+  # reserved — future storage endpoint poll
   - id: pve-storage-thin-provision
     match:
       system: proxmox
-      event_type: storage_threshold
+      event_type: pve_storage_warning
       payload_contains: "thin"
     diagnosis: "Thin-provisioned storage is running low — VMs may pause if backing store runs out"
     action:
@@ -123,10 +132,11 @@ fixes:
   # Backup failures
   # =========================================================================
 
+  # active — emitted by _poll_tasks() for vzdump task failures
   - id: pve-backup-failed
     match:
       system: proxmox
-      event_type: backup_failed
+      event_type: pve_backup_failed
     diagnosis: "Proxmox backup job (vzdump) failed — data protection gap"
     action:
       type: recommend
@@ -147,10 +157,11 @@ fixes:
   # Proxmox Backup Server (PBS)
   # =========================================================================
 
+  # reserved — requires PBS API access
   - id: pbs-verification-failed
     match:
       system: proxmox
-      event_type: pbs_verify_failed
+      event_type: pve_pbs_verify_failed
     diagnosis: "PBS backup verification failed — backup integrity cannot be confirmed"
     action:
       type: recommend
@@ -167,10 +178,11 @@ fixes:
           6. Check PBS datastore filesystem for errors
     risk_tier: recommend
 
+  # reserved — requires PBS API access
   - id: pbs-datastore-full
     match:
       system: proxmox
-      event_type: pbs_datastore_full
+      event_type: pve_pbs_datastore_full
     diagnosis: "PBS datastore is full or critically low on space — new backups will fail"
     action:
       type: escalate
@@ -187,10 +199,11 @@ fixes:
           6. Consider deduplication efficiency — high churn VMs use more space
     risk_tier: escalate
 
+  # reserved — requires PBS API access
   - id: pbs-gc-running-long
     match:
       system: proxmox
-      event_type: pbs_gc_long
+      event_type: pve_pbs_gc_long
     diagnosis: "PBS garbage collection is running unusually long — may indicate datastore issues"
     action:
       type: recommend
