@@ -35,3 +35,13 @@ docker-compose.override.yml
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Claude Code local settings
+.claude/
+
+# Internal docs (not for public repo)
+docs/research/
+PRD-*.md
+*-CTO-REVIEW.md
+pr-*-review.md
+lab-context*.md

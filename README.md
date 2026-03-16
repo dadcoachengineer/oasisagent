@@ -25,11 +25,21 @@ OasisAgent bridges the gap between **monitoring** (you know something broke) and
 
 | Tier | What it does | Latency | Cost |
 |------|-------------|---------|------|
-| **T0 — Known Fixes** | Pattern match against a YAML registry. No LLM. | <1ms | Free |
-| **T1 — Triage** | Local SLM classifies events, filters noise, packages context. | 100-500ms | Your hardware |
-| **T2 — Diagnosis** | Cloud reasoning model diagnoses novel failures, recommends actions. | 5-45s | Per-token |
+| **T0 — Known Fixes** | Pattern match against a YAML registry of 19 fix files. No LLM. | <1ms | Free |
+| **T1 — Triage** | Local SLM classifies events, filters noise, packages context for T2. | 100-500ms | Your hardware |
+| **T2 — Diagnosis** | Cloud model diagnoses novel failures with dependency-aware context, recommends multi-step remediation plans. | 5-45s | Per-token |
 
 T0 handles the common cases instantly. T1 runs on your own hardware (Ollama, LM Studio, vLLM). T2 is invoked only when needed — Claude, GPT, Gemini, or any OpenAI-compatible endpoint via [LiteLLM](https://github.com/BerriAI/litellm).
+
+### Advanced Reasoning (T2)
+
+When T2 is invoked, it doesn't work blind. The decision engine assembles rich context before the LLM call:
+
+- **Dependency-aware context** — A service topology graph tracks how your infrastructure is connected. BFS subgraph extraction gives T2 upstream/downstream/same-host dependency context for every event.
+- **Multi-handler context assembly** — Each handler contributing context for an entity is called in parallel (5s timeout per handler, failures never block the pipeline).
+- **Cross-domain correlation** — A background correlator detects incidents spanning multiple systems within a sliding window. Same-host, dependency-chain, and network-device rules cluster related events so T2 sees the full picture.
+- **Plan-aware dispatch** — T2 can return multi-step remediation plans with dependency ordering. A `PlanExecutor` state machine runs steps sequentially, verifies each via handler, and persists every transition to SQLite. Plans resume across restarts.
+- **Learning loop** — When T2 suggests a known fix pattern with high confidence, the learning loop writes it as a candidate YAML file and tracks occurrences. After reaching a configurable threshold, the operator is notified for promotion to the T0 registry.
 
 ## Safety Guardrails
 
@@ -39,126 +49,130 @@ All enforced in deterministic code — never in LLM prompts.
 - **Blocked domains**: Security systems (locks, alarms, cameras) permanently excluded
 - **Circuit breaker**: Max 3 attempts per entity per hour, global kill switch at 30% failure rate
 - **Dry-run mode**: Log every decision without executing anything
-- **Approval queue**: `RECOMMEND` actions require operator approval (web UI, Telegram, Slack, or MQTT) before execution
+- **Approval queue**: `RECOMMEND` actions require operator approval before execution — approve via web UI, Telegram inline buttons, Slack, or MQTT
+- **Plan-level approval**: Multi-step plans with any non-`AUTO_FIX` step require whole-plan approval
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/dadcoachengineer/oasisagent.git
-cd oasisagent
-cp .env.example .env
-# Edit .env with your HA token, MQTT credentials, LLM keys, etc.
-docker compose up -d
+docker pull ghcr.io/dadcoachengineer/oasisagent:latest
+docker run -d -p 8080:8080 \
+  -v oasis-data:/data \
+  ghcr.io/dadcoachengineer/oasisagent:latest
 ```
 
-All configuration is driven by environment variables. Docker Compose loads them from the `.env` file automatically. The same `docker-compose.yml` works for both single-node (`docker compose up`) and Swarm (`docker stack deploy`) deployments. See [Deployment Options](#deployment-options) for details.
+Open `http://localhost:8080` and the setup wizard walks you through:
+1. Create an admin account
+2. Configure core services (LLM endpoints, Home Assistant, audit)
+3. Add your first integration
+
+All configuration is managed through the web UI. Secrets are encrypted at rest in SQLite with Fernet encryption. No YAML editing required.
+
+### Docker Compose
+
+For a full stack with bundled InfluxDB:
+
+```bash
+git clone https://github.com/dadcoachengineer/oasisagent.git
+cd oasisagent
+cp .env.example .env    # fill in your values
+docker compose --profile monitoring up -d
+```
+
+See [Deployment Options](#deployment-options) for Swarm and from-source setups.
 
 ### Prerequisites
 
 | Service | Required | Notes |
 |---------|----------|-------|
-| Home Assistant | Yes | Long-lived access token required |
-| MQTT broker | Yes | EMQX, Mosquitto, or any standard broker |
-| InfluxDB v2 | Recommended | Audit trail storage |
-| Local LLM (Ollama) | Recommended | T1 triage — or use a cloud endpoint |
-| Cloud LLM API key | Optional | T2 reasoning — Claude, GPT, Gemini, OpenRouter |
+| Home Assistant | Recommended | Long-lived access token for state monitoring and remediation |
+| MQTT broker | Recommended | EMQX, Mosquitto — for MQTT ingestion and notifications |
+| Cloud LLM API key | Recommended | T2 reasoning — Claude, GPT, Gemini, or any OpenAI-compatible endpoint |
+| Local LLM (Ollama) | Optional | T1 triage — or use a cloud endpoint via OpenRouter |
+| InfluxDB v2 | Optional | Audit trail storage (every event, decision, and action is recorded) |
+
+No single service is mandatory — OasisAgent adapts to what you have. Start with one integration and add more through the web UI.
 
 ## Supported Systems
 
+### Ingestion Adapters (24)
+
 | System | Adapter | Handler | Capabilities |
 |--------|---------|---------|-------------|
-| Home Assistant | **Live** | **Live** | State monitoring, automation errors, log analysis, integration restarts, service calls |
-| Docker/Portainer | **Live** | **Live** | Container health, restart, logs, OOM/crash detection via Portainer API |
-| Proxmox VE/PBS | **Live** | **Live** | VM/CT management, node monitoring, backup verification, ZFS health |
-| UniFi Network | **Live** | **Live** | Device status, AP health, UDMP telemetry, WAN failover, client blocking |
-| Cloudflare | **Live** | **Live** | Tunnel health, WAF events, DNS, SSL certificates, cache purge, IP blocking |
-| Radarr/Sonarr/Lidarr/etc. | **Live** | — | Download health, indexer status, disk space, queue errors |
-| Plex/Tautulli | **Live** | — | Server health, library availability, stream monitoring |
-| qBittorrent | **Live** | — | Download health, torrent status, connectivity |
-| Tdarr | **Live** | — | Transcoding health, worker status, queue monitoring |
-| Overseerr | **Live** | — | Request processing, availability |
-| Frigate NVR | **Live** | — | Camera health, detection events, recording status |
-| N8N | **Live** | — | Workflow execution health, error monitoring |
-| Nginx Proxy Manager | **Live** | — | Proxy host status, SSL certificates, upstream health |
-| Vaultwarden | **Live** | — | Vault health, availability monitoring |
-| Uptime Kuma | **Live** | — | Monitor status, multi-service health aggregation |
-| Planned | [Roadmap](docs/research/PHASE3-PLAN.md) | — | EMQX, Stalwart, Synology, Ollama, Zigbee2MQTT, and more |
+| Home Assistant | HA WebSocket, Log Poller | **Live** | State monitoring, automation errors, log analysis, integration restarts, service calls |
+| Docker/Portainer | Portainer API | **Live** | Container health, restart, logs, OOM/crash, stack status, resource monitoring |
+| Proxmox VE | REST API | **Live** | Node status, VM/CT management, task monitoring, replication, ZFS health |
+| UniFi Network | REST API | **Live** | Device status, AP health, UDMP telemetry, WAN failover, client blocking |
+| Cloudflare | REST API | **Live** | Tunnel health, WAF events, SSL certificates, cache purge, DNS, IP blocking |
+| Radarr/Sonarr/Prowlarr/Bazarr | REST API | — | Download health, indexer status, disk space, queue errors |
+| Plex Media Server | REST API | — | Server reachability, library availability |
+| Tautulli | REST API | — | Plex monitoring via Tautulli — server status, bandwidth |
+| qBittorrent | REST API | — | Download health, errored/stalled torrents, connectivity |
+| Tdarr | REST API | — | Transcoding worker health, queue progress |
+| Overseerr | REST API | — | Request processing, server availability |
+| Frigate NVR | REST API | — | Camera health, detection events, recording status |
+| N8N | REST API | — | Workflow execution health, failed run detection |
+| Nginx Proxy Manager | REST API | — | Proxy host status, SSL certificates, dead host detection |
+| Vaultwarden | REST API | — | Service health, deep health with degraded detection and response time tracking |
+| Uptime Kuma | Prometheus `/metrics` | — | Monitor status, response time thresholds, certificate expiry |
+| Stalwart Mail | REST API | — | Mail server health, queue monitoring |
+| Ollama | REST API | — | LLM server health, loaded model status |
+| EMQX | REST API | — | MQTT broker health, alarms, listener status |
+| Nextcloud | OCS API | — | Server health, cron staleness, maintenance mode |
+| MQTT | Subscriber | — | Any MQTT topic — Zigbee2MQTT, Frigate, ESPresense, Valetudo, custom sensors |
+| HTTP Poller | Generic | — | Any REST API — health checks, JMESPath extraction, threshold alerts |
+| Webhook Receiver | HTTP POST | — | Push-based ingestion from any service |
 
-Adding a new system = implement the [handler interface](ARCHITECTURE.md). No core changes needed.
+### Preventive Scanners (5)
 
-## Ingestion Sources
+Run on configurable intervals with adaptive scheduling (faster polling after detecting issues):
 
-Multiple adapters produce the same canonical event model:
+- **Certificate Expiry** — TLS certificate checks with warning/critical thresholds
+- **Disk Space** — Filesystem usage monitoring
+- **Backup Freshness** — PBS and local backup age detection
+- **HA Health** — Integration error state detection
+- **Docker Health** — Unhealthy, exited, or restarting container detection
 
-- **MQTT** — Subscribe to topics on any broker (zigbee2mqtt, frigate, ESPresence, valetudo, custom sensors)
-- **HA WebSocket** — Real-time state changes, automation failures, service call errors
-- **HA Log Poller** — WebSocket `system_log/list` with pattern matching against structured entries
-- **Webhook Receiver** — HTTP endpoint for push-based ingestion (Radarr, Sonarr, Plex, Proxmox)
-- **HTTP Poller** — Periodic REST API polling with JMESPath extraction (any service with a health API)
-- **Preventive Scanners** — Certificate expiry, disk space, backup freshness, HA health, Docker health sweeps
+### Notification Channels (8)
+
+| Channel | Interactive | Notes |
+|---------|-------------|-------|
+| Web UI | Approve/reject in dashboard | Built-in, always available |
+| Telegram | Inline keyboard buttons | Bot token required |
+| Slack | Webhook | Block Kit buttons planned |
+| Discord | Webhook | Rich embeds |
+| MQTT | Topic-based | For CLI/automation consumers |
+| Email | — | SMTP |
+| Webhook | — | HTTP POST JSON |
 
 ## Configuration
 
-### Current Release (v0.2.x)
+OasisAgent uses a **three-layer configuration model**:
 
-All settings are passed as **environment variables**. The `config.yaml` baked into the Docker image uses `${VAR}` interpolation to read them at startup.
+| Layer | What | Where | Managed By |
+|-------|------|-------|------------|
+| **Bootstrap** | Port, data dir, secret key, log level | 4 env vars | Docker / orchestrator |
+| **Runtime** | All integrations, handlers, notifications, scanners | SQLite (secrets encrypted at rest) | Web UI + REST API |
+| **Content** | Known fix patterns, prompt templates | YAML files on disk | Volume mount / git |
 
-**Required** — agent will not start without these:
+### Bootstrap Environment Variables
 
-```bash
-HA_TOKEN=your_ha_long_lived_access_token
-MQTT_PASS=your_mqtt_password
-REASONING_LLM_API_KEY=your_cloud_llm_key
-INFLUXDB_TOKEN=your_influxdb_token
-```
+Only 4 env vars are needed to start the agent:
 
-**Optional** — sensible defaults are provided:
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `OASIS_PORT` | `8080` | Web UI + API port |
+| `OASIS_DATA_DIR` | `/data` | SQLite database and state |
+| `OASIS_SECRET_KEY` | Auto-generated | Fernet key for secret encryption |
+| `OASIS_LOG_LEVEL` | `info` | debug, info, warning, error |
 
-```bash
-# Home Assistant
-HA_URL=http://localhost:8123
-HA_WS_URL=ws://localhost:8123/api/websocket
+Everything else — integrations, LLM endpoints, notification channels, scanners — is configured through the web UI after first launch.
 
-# MQTT
-MQTT_BROKER=mqtt://localhost:1883
-MQTT_USER=oasisagent
+### Legacy Environment Variables
 
-# LLM: T1 Triage (defaults to local Ollama)
-TRIAGE_LLM_BASE_URL=http://localhost:11434/v1
-TRIAGE_LLM_MODEL=qwen2.5:7b
-TRIAGE_LLM_API_KEY=not-needed
-TRIAGE_LLM_TIMEOUT=5
-
-# LLM: T2 Reasoning
-REASONING_LLM_BASE_URL=https://api.anthropic.com
-REASONING_LLM_MODEL=claude-sonnet-4-5-20250929
-
-# InfluxDB
-INFLUX_URL=http://localhost:8086
-INFLUX_ORG=myorg
-INFLUX_BUCKET=oasisagent
-
-# Safety — starts in dry-run mode (log decisions, don't execute)
-DRY_RUN=true
-```
-
-See [`.env.example`](.env.example) for the full reference. For advanced config options (log patterns, guardrails tuning, circuit breaker thresholds), see [`config.example.yaml`](config.example.yaml).
-
-### Upcoming (v0.3.0+)
-
-v0.3.0 adds a **UI-first configuration model**. Bootstrap with 4 environment variables, then configure everything else through the web admin UI:
-
-| Layer | What | Where |
-|-------|------|-------|
-| **Bootstrap** | Port, data dir, secret key, log level | 4 env vars |
-| **Runtime** | Integrations, services, notifications, scanners | SQLite (secrets encrypted at rest) — managed via web UI |
-| **Content** | Known fixes, prompt templates | YAML files on disk |
-
-Existing configurations can be imported via `oasisagent config import seed.yaml`.
+For backward compatibility and CI/headless deployments, the agent also reads the full set of legacy env vars (`HA_TOKEN`, `MQTT_PASS`, `REASONING_LLM_API_KEY`, etc.). See [`.env.example`](.env.example) for the complete reference. If SQLite has no config and a `config.yaml` is present, it seeds from YAML on first boot.
 
 ## Deployment Options
-
-The same [`docker-compose.yml`](docker-compose.yml) works for all Docker-based deployments. It pulls the published image from GHCR and reads all configuration from environment variables.
 
 ### Docker Compose (single node)
 
@@ -167,7 +181,7 @@ cp .env.example .env   # fill in your values
 docker compose up -d
 ```
 
-To include a bundled InfluxDB for audit logging:
+To include bundled InfluxDB for audit logging:
 
 ```bash
 docker compose --profile monitoring up -d
@@ -179,25 +193,7 @@ docker compose --profile monitoring up -d
 docker stack deploy -c docker-compose.yml oasis
 ```
 
-Set environment variables in your orchestrator (Portainer stack UI, etc.) or export them before deploying. The compose file includes deploy constraints, resource limits, and rolling update policy.
-
-| Variable | Required | Default |
-|----------|----------|---------|
-| `HA_TOKEN` | Yes | — |
-| `HA_URL` | No | `http://localhost:8123` |
-| `HA_WS_URL` | No | `ws://localhost:8123/api/websocket` |
-| `MQTT_BROKER` | No | `mqtt://localhost:1883` |
-| `MQTT_USER` | No | `oasisagent` |
-| `MQTT_PASS` | Yes | — |
-| `TRIAGE_LLM_BASE_URL` | No | `http://localhost:11434/v1` |
-| `TRIAGE_LLM_MODEL` | No | `qwen2.5:7b` |
-| `TRIAGE_LLM_API_KEY` | No | `not-needed` |
-| `REASONING_LLM_API_KEY` | Yes | — |
-| `REASONING_LLM_BASE_URL` | No | `https://api.anthropic.com` |
-| `REASONING_LLM_MODEL` | No | `claude-sonnet-4-5-20250929` |
-| `INFLUXDB_TOKEN` | Yes | — |
-| `INFLUX_URL` | No | `http://localhost:8086` |
-| `DRY_RUN` | No | `true` |
+Set environment variables in your orchestrator (Portainer stack UI, etc.) or export them before deploying. The compose file includes deploy constraints, resource limits (512MB), and rolling update policy.
 
 ### From Source
 
@@ -205,20 +201,34 @@ Set environment variables in your orchestrator (Portainer stack UI, etc.) or exp
 git clone https://github.com/dadcoachengineer/oasisagent.git
 cd oasisagent
 pip install -e ".[dev]"
-cp .env.example .env   # fill in your values
-oasisagent
+python -m oasisagent
 ```
+
+## Web Admin UI
+
+The HTMX-powered web interface provides full operational control:
+
+- **Dashboard** — Live event feed, system stats, quick actions
+- **Connectors** — Add/edit/delete any of the 24 ingestion adapters with guided forms
+- **Services** — Configure LLM endpoints, handlers, InfluxDB, guardrails, circuit breaker, scanners
+- **Notifications** — Email, Telegram, Slack, Discord, MQTT, Webhook channel management
+- **Approvals** — Pending action queue with approve/reject for single actions and multi-step plans
+- **Events** — Searchable event log with filtering by source, system, type, severity, and time range
+- **Service Map** — Interactive topology graph showing service dependencies and health state
+- **Known Fixes** — Browse and manage the T0 fix registry
+- **Setup Wizard** — First-run guided setup for admin account, core services, and first integration
+- **Dark Mode** — System-aware theme with manual toggle
 
 ## Observability
 
-- **InfluxDB audit trail** — Every event, decision, action, and verification recorded
-- **Grafana dashboards** — Import [`dashboards/oasisagent-overview.json`](dashboards/) for event volume, decision distribution, and action results
+- **InfluxDB audit trail** — Every event, decision, action, and verification recorded with full context
 - **Prometheus metrics** — `/metrics` endpoint for real-time alerting (events processed, queue depth, processing latency, LLM call duration)
-- **Web admin dashboard** — Real-time event feed, approval queue, event explorer, connector management, service topology map, notification feed
+- **Grafana dashboards** — Import [`dashboards/oasisagent-overview.json`](dashboards/) for event volume, decision distribution, and action results
+- **Web dashboard** — Real-time stats and event feed in the admin UI
 
 ## Known Fixes Registry
 
-The `known_fixes/` directory contains YAML files that power the T0 tier — instant, zero-cost resolution:
+The `known_fixes/` directory contains 19 YAML files covering all supported systems — instant, zero-cost resolution at the T0 tier:
 
 ```yaml
 fixes:
@@ -234,16 +244,34 @@ fixes:
       operation: notify
 ```
 
-Contributing known fixes is the easiest way to improve OasisAgent. If T1/T2 diagnosed a failure for you, add it to the registry so it resolves instantly next time.
+Each system has an **escalation ladder**: specific component fixes first, then broader coordinator patterns, then T1/T2 reasoning for novel failures. Contributing known fixes is the easiest way to improve OasisAgent — if T2 diagnosed something for you, add it to the registry so it resolves instantly next time.
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design specification — data models, component interfaces, configuration schema, and the complete decision engine pipeline.
+
+**Key modules:**
+
+| Module | Purpose |
+|--------|---------|
+| `oasisagent/orchestrator.py` | Main event loop, component wiring, lifecycle management |
+| `oasisagent/engine/decision.py` | Three-tier decision engine (T0/T1/T2 + guardrails) |
+| `oasisagent/engine/plan_executor.py` | Multi-step remediation state machine |
+| `oasisagent/engine/service_graph.py` | Service topology graph + dependency BFS |
+| `oasisagent/engine/cross_correlator.py` | Cross-domain event correlation |
+| `oasisagent/engine/context_assembly.py` | Multi-handler context gathering for T2 |
+| `oasisagent/engine/learning.py` | T2-to-T0 candidate fix promotion |
+| `oasisagent/db/config_store.py` | SQLite config backend with Fernet encryption |
+| `oasisagent/web/app.py` | Single-process FastAPI (web UI + API + webhooks) |
 
 ## Contributing
 
 Contributions welcome! The most impactful areas:
 
 1. **Known fixes** — Add YAML entries for failure patterns you've encountered
-2. **Plugins** — Community handlers, adapters, and notification channels via the plugin system *(v0.3.6)*
-3. **Integrations** — Service-specific adapters for your infrastructure stack
-4. **Known fix contributions** — If T1/T2 diagnosed a failure for you, add it to the registry so it resolves instantly next time
+2. **Integrations** — New adapters for services in your infrastructure stack
+3. **Notification channels** — New alert/approval surfaces
+4. **Bug reports** — [Open an issue](https://github.com/dadcoachengineer/oasisagent/issues) with reproduction steps
 
 ```bash
 # Development setup
@@ -251,36 +279,28 @@ git clone https://github.com/dadcoachengineer/oasisagent.git
 cd oasisagent
 pip install -e ".[dev]"
 
-# Run tests
+# Run tests (3000+)
 pytest
 
 # Lint
 ruff check .
 ```
 
-Please [open an issue](https://github.com/dadcoachengineer/oasisagent/issues) before starting work on major features to discuss the approach.
-
-## Architecture
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design specification — data models, component interfaces, configuration schema, and phasing details.
+Please open an issue before starting work on major features to discuss the approach.
 
 ## Roadmap
 
-| Phase | Version | Scope | Status |
-|-------|---------|-------|--------|
-| 1 | v0.1.x | Core framework — ingestion, decision engine, HA handler, known fixes, audit, circuit breaker | **Complete** |
-| 2 | v0.2.x | T2 cloud reasoning, approval queue, verification loop, event correlation, email/webhook notifications, Grafana dashboards, Prometheus metrics | **Complete** |
-| 3 | v0.3.0 | Foundation — SQLite config backend, FastAPI scaffold, webhook receiver, HTTP poller, Proxmox + Docker handlers | **Complete** |
-| 3 | v0.3.1 | Web admin UI — HTMX dashboard, setup wizard, connectors, approval queue, event explorer | **Complete** |
-| 3 | v0.3.2 | Messaging — Telegram, Slack, Discord notification + approval channels | **Complete** |
-| 3 | v0.3.3 | Networking — UniFi, Cloudflare integrations + Application integrations (Servarr, Plex, qBittorrent, Tdarr) | **Complete** |
-| 3 | v0.3.4 | Preventive scanning — certificates, disk space, backup freshness, HA + Docker health sweeps | **Complete** |
-| 3 | v0.3.5 | LLM context — dependency-aware T2 reasoning, multi-handler context assembly, plan-aware dispatch, service topology, event timeline | **Current** |
-| 3 | v0.3.6 | Learning loop — auto-generate T0 known fix candidates from T2 diagnoses | Planned |
-| 3 | v0.3.7 | Plugin system, multi-instance coordination, Tier 3 integrations | Planned |
-| — | v1.0.0 | Production release | Target |
-
-See the [Phase 3 plan](docs/research/PHASE3-PLAN.md) for the full integration catalog covering 40+ services and the [epic tracker](https://github.com/dadcoachengineer/oasisagent/issues/70) for issue-level progress.
+| Version | Scope | Status |
+|---------|-------|--------|
+| v0.1.x | Core framework — ingestion, decision engine, HA handler, known fixes, audit, circuit breaker | Complete |
+| v0.2.x | T2 cloud reasoning, approval queue, verification loop, event correlation, notifications, Grafana, Prometheus | Complete |
+| v0.3.0 | SQLite config backend, FastAPI, webhook receiver, HTTP poller, Proxmox + Portainer handlers | Complete |
+| v0.3.1 | Web admin UI — HTMX dashboard, setup wizard, connectors, approval queue, event explorer | Complete |
+| v0.3.2 | Telegram (interactive), Discord, Slack notification channels | Complete |
+| v0.3.3 | UniFi + Cloudflare integrations, service topology, cross-domain correlation | Complete |
+| v0.3.4 | Preventive scanners — certificates, disk, backups, HA health, Docker health | Complete |
+| v0.3.5 | Dependency-aware T2 context, multi-handler context assembly, plan-aware dispatch, event timeline | Complete |
+| **v1.0.0** | **Stable release — develop→main merge, learning loop, 4 new adapters, Vaultwarden deep health, dark mode** | **Current** |
 
 ## License
 
