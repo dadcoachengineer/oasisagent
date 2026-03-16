@@ -67,6 +67,22 @@ extra text.\
 """
 
 
+_REMEDIATION_PLAN_INSTRUCTIONS = """\
+## Remediation Planning
+
+The dependency context above shows multiple related systems. If the root cause \
+spans multiple systems, produce a "remediation_plan" in the JSON response with \
+ordered steps. Fix upstream causes before downstream effects.
+
+Each step has: order (1-based), action (same schema as recommended_actions), \
+success_criteria (what to verify), depends_on (list of step orders that must \
+succeed first), and conditional (if true, skip instead of abort when dependency fails).
+
+You may ALSO include recommended_actions for immediate single-system fixes. \
+remediation_plan is for coordinated multi-system recovery.
+"""
+
+
 def _format_dependency_section(dep_ctx: DependencyContext) -> str | None:
     """Format a DependencyContext into a prompt section.
 
@@ -163,10 +179,15 @@ def build_diagnose_messages(
             f"Entity Context:\n{json.dumps(entity_context, indent=2, default=str)}\n"
         )
 
+    has_dependency_context = False
     if dependency_context is not None:
         dep_section = _format_dependency_section(dependency_context)
         if dep_section:
             sections.append(dep_section)
+            has_dependency_context = True
+
+    if has_dependency_context:
+        sections.append(_REMEDIATION_PLAN_INSTRUCTIONS)
 
     if known_fixes:
         sections.append(
