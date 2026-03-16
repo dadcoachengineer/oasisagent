@@ -32,6 +32,7 @@ from oasisagent.engine.decision import (
 )
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
+from oasisagent.engine.learning import CandidateFixWriter
 from oasisagent.engine.queue import EventQueue
 from oasisagent.handlers.docker import DockerHandler
 from oasisagent.handlers.homeassistant import HomeAssistantHandler
@@ -109,6 +110,7 @@ class Orchestrator:
         self._adapters: list[IngestAdapter] = []
         self._adapter_tasks: list[asyncio.Task[None]] = []
         self._stats_store: StatsStore | None = None
+        self._candidate_writer: CandidateFixWriter | None = None
 
         # Stats — seeded from SQLite on startup when db is available
         self._events_processed: int = 0
@@ -164,6 +166,19 @@ class Orchestrator:
             self._actions_taken = vals["actions_taken"]
             self._errors = vals["errors"]
             self._stats_store.start(self._get_stats)
+
+            # Learning loop — candidate fix writer
+            if self._config.learning.enabled:
+                candidates_dir = Path(
+                    self._config.agent.known_fixes_dir
+                ) / "candidates"
+                self._candidate_writer = CandidateFixWriter(
+                    db=self._db,
+                    candidates_dir=candidates_dir,
+                    min_confidence=self._config.learning.min_confidence,
+                )
+                logger.info("Learning loop enabled (min_confidence=%.2f)",
+                            self._config.learning.min_confidence)
 
         await self._start_components()
         logger.info("OasisAgent started")
@@ -929,6 +944,9 @@ class Orchestrator:
                     self._actions_taken += 1
                     await self._verify_action(handler, event, action, action_result)
 
+                    # Learning loop: write candidate fix if T2 suggested one
+                    await self._maybe_write_candidate(result)
+
                 # Audit each action individually
                 if action_result.duration_ms is None:
                     action_result = action_result.model_copy(
@@ -952,6 +970,34 @@ class Orchestrator:
                 self._circuit_breaker.record_attempt(
                     event.entity_id, success=False
                 )
+
+    # -------------------------------------------------------------------
+    # Learning loop
+    # -------------------------------------------------------------------
+
+    async def _maybe_write_candidate(self, result: DecisionResult) -> None:
+        """Write a T2-suggested known fix as a candidate, if present.
+
+        Currently hooked into _dispatch_t2_actions only. When plan-aware
+        dispatch (PlanExecutor) merges from develop, this also needs to
+        be called from _finalize_plan after successful plan execution.
+        """
+        if self._candidate_writer is None:
+            return
+
+        suggested = result.details.get("suggested_known_fix")
+        if not suggested or not isinstance(suggested, dict):
+            return
+
+        confidence = result.details.get("confidence", 0.0)
+        try:
+            await self._candidate_writer.write_candidate(suggested, confidence)
+        except Exception:
+            logger.warning(
+                "Failed to write candidate fix for event %s",
+                result.event_id,
+                exc_info=True,
+            )
 
     # -------------------------------------------------------------------
     # Approval queue

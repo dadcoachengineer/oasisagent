@@ -356,17 +356,21 @@ class DecisionEngine:
             blocked_count,
         )
 
+        details: dict[str, Any] = {
+            "confidence": diagnosis.confidence,
+            "risk_assessment": diagnosis.risk_assessment,
+            "total_actions": len(diagnosis.recommended_actions),
+            "approved_actions": len(approved_actions),
+            "blocked_count": blocked_count,
+        }
+        if diagnosis.suggested_known_fix is not None:
+            details["suggested_known_fix"] = diagnosis.suggested_known_fix
+
         return DecisionResult(
             event_id=event.id,
             tier=DecisionTier.T2,
             disposition=DecisionDisposition.MATCHED,
             diagnosis=diagnosis.root_cause,
             recommended_actions=approved_actions,
-            details={
-                "confidence": diagnosis.confidence,
-                "risk_assessment": diagnosis.risk_assessment,
-                "total_actions": len(diagnosis.recommended_actions),
-                "approved_actions": len(approved_actions),
-                "blocked_count": blocked_count,
-            },
+            details=details,
         )

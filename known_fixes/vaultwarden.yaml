@@ -1,0 +1,56 @@
+fixes:
+  - id: vaultwarden-unreachable
+    match:
+      system: vaultwarden
+      event_type: vaultwarden_unreachable
+    diagnosis: "Vaultwarden (Bitwarden) service is unreachable — critical security service down"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Vaultwarden is unreachable — password manager is down. Checklist:
+          1. Check if the Vaultwarden container/service is running
+          2. Verify the host is reachable on the network
+          3. Check for resource exhaustion (disk full, memory)
+          4. Review Vaultwarden container logs for errors
+          5. Verify reverse proxy configuration if applicable
+    risk_tier: escalate
+
+  - id: vaultwarden-degraded
+    match:
+      system: vaultwarden
+      event_type: vaultwarden_degraded
+    diagnosis: "Vaultwarden is running but /api/config is unreachable — service partially degraded"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Vaultwarden is alive but /api/config failed — partial degradation. Checklist:
+          1. Check Vaultwarden container logs for application errors
+          2. Verify the database backend (SQLite/MySQL/PostgreSQL) is healthy
+          3. Check disk space on the Vaultwarden data volume
+          4. Restart the container if the database connection is stale
+    risk_tier: escalate
+
+  - id: vaultwarden-slow
+    match:
+      system: vaultwarden
+      event_type: vaultwarden_slow
+    diagnosis: "Vaultwarden response time exceeds threshold — performance degradation"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Vaultwarden is responding slowly. Checklist:
+          1. Check host resource usage (CPU, memory, disk I/O)
+          2. Check database size and query performance
+          3. Look for lock contention on the SQLite database
+          4. Verify network path (reverse proxy, DNS) is not adding latency
+          5. Consider restarting the container if resources look normal
+    risk_tier: recommend
