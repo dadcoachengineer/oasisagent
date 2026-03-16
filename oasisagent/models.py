@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -305,8 +305,8 @@ class TopologyDiff(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action: str  # "added", "updated", "stale"
-    entity_type: str  # "node" or "edge"
+    action: Literal["added", "updated", "stale"]
+    entity_type: Literal["node", "edge"]
     entity_id: str  # node entity_id or "from->to" for edges
     details: str = ""
 

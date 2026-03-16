@@ -44,22 +44,16 @@ def _get_templates(request: Request) -> Jinja2Templates:
 
 
 def _get_topology_store(request: Request) -> TopologyStore:
-    """Get the topology store from the orchestrator."""
-    orch = getattr(request.app.state, "orchestrator", None)
-    if orch is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not available")
-    store = getattr(orch, "_topology_store", None)
+    """Get the topology store from app state."""
+    store = getattr(request.app.state, "topology_store", None)
     if store is None:
         raise HTTPException(status_code=503, detail="Topology store not initialized")
     return store
 
 
 def _get_service_graph(request: Request) -> ServiceGraph:
-    """Get the service graph from the orchestrator."""
-    orch = getattr(request.app.state, "orchestrator", None)
-    if orch is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not available")
-    graph = getattr(orch, "_service_graph", None)
+    """Get the service graph from app state."""
+    graph = getattr(request.app.state, "service_graph", None)
     if graph is None:
         raise HTTPException(status_code=503, detail="Service graph not initialized")
     return graph
@@ -91,8 +85,7 @@ async def service_map_page(
     templates = _get_templates(request)
 
     # Gracefully handle missing topology backend
-    orch = getattr(request.app.state, "orchestrator", None)
-    graph = getattr(orch, "_service_graph", None) if orch else None
+    graph = getattr(request.app.state, "service_graph", None)
 
     topology_json: dict[str, Any] = {"nodes": [], "links": []}
     if graph is not None:
@@ -308,13 +301,10 @@ async def trigger_discovery(
     current_user: TokenPayload = Depends(require_operator),
 ) -> Response:
     """Trigger a fresh topology discovery from all adapters."""
+    store = getattr(request.app.state, "topology_store", None)
+    graph = getattr(request.app.state, "service_graph", None)
     orch = getattr(request.app.state, "orchestrator", None)
-    if orch is None:
-        raise HTTPException(status_code=503, detail="Orchestrator not available")
-
-    store = getattr(orch, "_topology_store", None)
-    graph = getattr(orch, "_service_graph", None)
-    adapters = getattr(orch, "_adapters", [])
+    adapters = getattr(orch, "_adapters", []) if orch else []
 
     if store is None or graph is None:
         raise HTTPException(status_code=503, detail="Topology not initialized")

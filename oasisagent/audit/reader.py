@@ -396,6 +396,7 @@ schema.tagValues(
 from(bucket: "{self._bucket}")
   |> range(start: -{duration})
   |> filter(fn: (r) => r["_measurement"] == "oasis_event")
+  |> filter(fn: (r) => r["_field"] == "event_id")
   |> group()
   |> aggregateWindow(every: {window}, fn: count, column: "_value", createEmpty: true)
   |> yield(name: "density")"""

@@ -55,7 +55,7 @@ async def _load_cluster_for_event(
         if row is None:
             return None
 
-        cluster_id = row[0]
+        cluster_id = row["cluster_id"] if hasattr(row, "keys") else row[0]
 
         cursor = await db.execute(
             "SELECT id, created_at, updated_at, leader_event_id, diagnosis, "
@@ -74,23 +74,26 @@ async def _load_cluster_for_event(
         )
         events = await cursor.fetchall()
 
+        def _col(r: Any, key: str, idx: int) -> Any:
+            return r[key] if hasattr(r, "keys") else r[idx]
+
         return {
-            "id": cluster_row[0],
-            "created_at": cluster_row[1],
-            "updated_at": cluster_row[2],
-            "leader_event_id": cluster_row[3],
-            "diagnosis": cluster_row[4],
-            "rule_type": cluster_row[5],
-            "event_count": cluster_row[6],
+            "id": _col(cluster_row, "id", 0),
+            "created_at": _col(cluster_row, "created_at", 1),
+            "updated_at": _col(cluster_row, "updated_at", 2),
+            "leader_event_id": _col(cluster_row, "leader_event_id", 3),
+            "diagnosis": _col(cluster_row, "diagnosis", 4),
+            "rule_type": _col(cluster_row, "rule_type", 5),
+            "event_count": _col(cluster_row, "event_count", 6),
             "events": [
                 {
-                    "event_id": e[0],
-                    "entity_id": e[1],
-                    "source": e[2],
-                    "system": e[3],
-                    "severity": e[4],
-                    "timestamp": e[5],
-                    "matched_rule": e[6],
+                    "event_id": _col(e, "event_id", 0),
+                    "entity_id": _col(e, "entity_id", 1),
+                    "source": _col(e, "source", 2),
+                    "system": _col(e, "system", 3),
+                    "severity": _col(e, "severity", 4),
+                    "timestamp": _col(e, "timestamp", 5),
+                    "matched_rule": _col(e, "matched_rule", 6),
                 }
                 for e in events
             ],

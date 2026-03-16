@@ -1513,11 +1513,14 @@ class Orchestrator:
         """Periodically discover topology from all adapters.
 
         Runs on startup (after a short delay for adapters to connect)
-        and then every 5 minutes. Merges discovered nodes/edges into
-        the service graph and persists to SQLite.
+        and then at ``agent.discovery_interval`` seconds. Merges
+        discovered nodes/edges into the service graph and persists
+        to SQLite.
         """
         assert self._service_graph is not None
         assert self._topology_store is not None
+
+        interval = self._config.agent.discovery_interval
 
         # Wait for adapters to establish connections
         await asyncio.sleep(30)
@@ -1553,9 +1556,8 @@ class Orchestrator:
             except Exception:
                 logger.exception("Topology discovery cycle failed")
 
-            # Re-discover every 5 minutes
             try:
-                await asyncio.sleep(300)
+                await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 return
 

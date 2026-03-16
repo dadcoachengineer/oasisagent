@@ -85,6 +85,11 @@ def _setup_topology(client: AsyncClient) -> tuple[MagicMock, MagicMock]:
     orch._topology_store = store
     orch._service_graph = graph
 
+    # Routes read from app.state directly (not orchestrator internals)
+    app = client._transport.app  # type: ignore[union-attr]
+    app.state.topology_store = store
+    app.state.service_graph = graph
+
     return store, graph
 
 

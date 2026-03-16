@@ -139,6 +139,7 @@ class AgentConfig(BaseModel):
     correlation_window: Annotated[int, Field(ge=0)] = 30
     metrics_port: Annotated[int, Field(ge=0, le=65535)] = 0
     max_consecutive_identical: Annotated[int, Field(ge=1)] = 3
+    discovery_interval: Annotated[int, Field(ge=60)] = 300
 
 
 # -- Ingestion: MQTT --------------------------------------------------------

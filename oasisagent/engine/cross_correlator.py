@@ -148,21 +148,33 @@ class CrossDomainCorrelator:
         # Prune stale window entries
         self._prune_window()
 
+        # Check if this event's entity already belongs to a cluster
+        # (it was a window entry that got claimed by an earlier event)
+        existing_cluster_id = self._cluster_for_entity(event.entity_id)
+
         # Try matching rules in order of cost
         match = self._match_same_host(event, host_ip)
-        if match.matched:
-            await self._add_to_cluster(event, decision, match)
-            self._add_to_window(event, decision, host_ip)
-            return match
+        if not match.matched:
+            match = self._match_dependency(event)
+        if not match.matched:
+            match = self._match_subnet(event, host_ip)
 
-        match = self._match_dependency(event)
         if match.matched:
-            await self._add_to_cluster(event, decision, match)
-            self._add_to_window(event, decision, host_ip)
-            return match
+            # If this event already belongs to a different cluster, merge
+            if (
+                existing_cluster_id
+                and match.cluster_id
+                and existing_cluster_id != match.cluster_id
+            ):
+                survivor = await self.merge_clusters(
+                    existing_cluster_id, match.cluster_id,
+                )
+                match = ClusterMatch(
+                    matched=True,
+                    cluster_id=survivor,
+                    rule_type=match.rule_type,
+                )
 
-        match = self._match_subnet(event, host_ip)
-        if match.matched:
             await self._add_to_cluster(event, decision, match)
             self._add_to_window(event, decision, host_ip)
             return match
@@ -274,15 +286,16 @@ class CrossDomainCorrelator:
             row = await cursor.fetchone()
 
             if row is None:
-                # Find the leader entry
-                leader_event_id = event.id
+                # Find the leader entry and its event metadata
+                leader_entry: WindowEntry | None = None
                 for entry in self._window:
-                    if (
-                        hasattr(entry, "_cluster_id")
-                        and entry._cluster_id == match.cluster_id
-                    ):
-                        leader_event_id = entry.event.id
+                    if entry._cluster_id == match.cluster_id:
+                        leader_entry = entry
                         break
+
+                leader_event_id = (
+                    leader_entry.event.id if leader_entry else event.id
+                )
 
                 await self._db.execute(
                     "INSERT INTO correlation_clusters "
@@ -291,22 +304,25 @@ class CrossDomainCorrelator:
                     (match.cluster_id, now_iso, now_iso, leader_event_id, match.rule_type),
                 )
 
-                # Add the leader event too
-                await self._db.execute(
-                    "INSERT OR IGNORE INTO cluster_events "
-                    "(cluster_id, event_id, entity_id, source, system, severity, "
-                    "timestamp, matched_rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        match.cluster_id,
-                        leader_event_id,
-                        "",  # leader entity_id filled below if found
-                        "",
-                        "",
-                        "",
-                        now_iso,
-                        match.rule_type,
-                    ),
-                )
+                # Add the leader event with its actual metadata
+                if leader_entry is not None:
+                    le = leader_entry.event
+                    await self._db.execute(
+                        "INSERT OR IGNORE INTO cluster_events "
+                        "(cluster_id, event_id, entity_id, source, system, "
+                        "severity, timestamp, matched_rule) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            match.cluster_id,
+                            le.id,
+                            le.entity_id,
+                            le.source,
+                            le.system,
+                            le.severity.value,
+                            le.timestamp.isoformat(),
+                            match.rule_type,
+                        ),
+                    )
 
             # Add this event to the cluster
             await self._db.execute(
@@ -448,6 +464,13 @@ class CrossDomainCorrelator:
     # -------------------------------------------------------------------
     # Internal
     # -------------------------------------------------------------------
+
+    def _cluster_for_entity(self, entity_id: str) -> str | None:
+        """Check if an entity already belongs to a cluster via the window."""
+        for entry in self._window:
+            if entry.entity_id == entity_id and entry._cluster_id:
+                return entry._cluster_id
+        return None
 
     def _add_to_window(
         self, event: Event, decision: DecisionResult, host_ip: str | None,
