@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from oasisagent.clients.frigate import FrigateClient
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     from oasisagent.config import FrigateAdapterConfig
@@ -319,4 +319,29 @@ class FrigateAdapter(IngestAdapter):
                         dedup_key=f"frigate:events:{camera}:spike",
                     ),
                 ))
+
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover this service as a topology node."""
+        from urllib.parse import urlparse
+
+        source = f"auto:{self.name}"
+        parsed = urlparse(self._config.url)
+        nodes = [
+            TopologyNode(
+                entity_id=f"{self.name}:{self.name}",
+                entity_type="service",
+                display_name="Frigate",
+                host_ip=parsed.hostname,
+                source=source,
+                last_seen=datetime.now(UTC),
+                metadata={"url": self._config.url},
+            ),
+        ]
+        return nodes, []
 

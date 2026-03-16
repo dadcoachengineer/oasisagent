@@ -36,41 +36,41 @@ class TestSuppressionActivation:
 
     def test_below_threshold_not_suppressed(self) -> None:
         tracker = EventSuppressionTracker(threshold=3)
-        assert tracker.check(_event()) is False  # 1
-        assert tracker.check(_event()) is False  # 2
-        assert tracker.check(_event()) is False  # 3 (== threshold, log fires)
+        assert tracker.check(_event()) == 0  # 1
+        assert tracker.check(_event()) == 0  # 2
+        assert tracker.check(_event()) == 0  # 3 (== threshold, log fires)
 
     def test_above_threshold_suppressed(self) -> None:
         tracker = EventSuppressionTracker(threshold=3)
         for _ in range(3):
             tracker.check(_event())
         # 4th and beyond are suppressed
-        assert tracker.check(_event()) is True
-        assert tracker.check(_event()) is True
+        assert tracker.check(_event()) > 0
+        assert tracker.check(_event()) > 0
 
     def test_threshold_of_one(self) -> None:
         tracker = EventSuppressionTracker(threshold=1)
-        assert tracker.check(_event()) is False  # 1 == threshold
-        assert tracker.check(_event()) is True   # 2 > threshold
+        assert tracker.check(_event()) == 0  # 1 == threshold
+        assert tracker.check(_event()) > 0   # 2 > threshold
 
     def test_different_entities_independent(self) -> None:
         tracker = EventSuppressionTracker(threshold=2)
         # Exhaust entity A
         tracker.check(_event(entity_id="sensor.a"))
         tracker.check(_event(entity_id="sensor.a"))
-        assert tracker.check(_event(entity_id="sensor.a")) is True
+        assert tracker.check(_event(entity_id="sensor.a")) > 0
 
         # Entity B is still fresh
-        assert tracker.check(_event(entity_id="sensor.b")) is False
+        assert tracker.check(_event(entity_id="sensor.b")) == 0
 
     def test_different_event_types_independent(self) -> None:
         tracker = EventSuppressionTracker(threshold=2)
         tracker.check(_event(event_type="unavailable"))
         tracker.check(_event(event_type="unavailable"))
-        assert tracker.check(_event(event_type="unavailable")) is True
+        assert tracker.check(_event(event_type="unavailable")) > 0
 
         # Same entity, different event_type — not suppressed
-        assert tracker.check(_event(event_type="error")) is False
+        assert tracker.check(_event(event_type="error")) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -88,16 +88,16 @@ class TestSuppressionReset:
         # Exhaust the counter
         tracker.check(_event(entity_id=entity, event_type="state_unavailable"))
         tracker.check(_event(entity_id=entity, event_type="state_unavailable"))
-        assert tracker.check(_event(entity_id=entity, event_type="state_unavailable")) is True
+        assert tracker.check(_event(entity_id=entity, event_type="state_unavailable")) > 0
 
         # Recovery event resets
         result = tracker.check(
             _event(entity_id=entity, event_type="device_reconnected")
         )
-        assert result is False
+        assert result == 0
 
         # Original event_type is no longer suppressed
-        assert tracker.check(_event(entity_id=entity, event_type="state_unavailable")) is False
+        assert tracker.check(_event(entity_id=entity, event_type="state_unavailable")) == 0
 
     def test_recovered_suffix_resets(self) -> None:
         tracker = EventSuppressionTracker(threshold=2)
@@ -105,11 +105,11 @@ class TestSuppressionReset:
 
         tracker.check(_event(entity_id=entity, event_type="health_check_failed"))
         tracker.check(_event(entity_id=entity, event_type="health_check_failed"))
-        assert tracker.check(_event(entity_id=entity, event_type="health_check_failed")) is True
+        assert tracker.check(_event(entity_id=entity, event_type="health_check_failed")) > 0
 
         tracker.check(_event(entity_id=entity, event_type="health_check_recovered"))
 
-        assert tracker.check(_event(entity_id=entity, event_type="health_check_failed")) is False
+        assert tracker.check(_event(entity_id=entity, event_type="health_check_failed")) == 0
 
     def test_renewed_suffix_resets(self) -> None:
         tracker = EventSuppressionTracker(threshold=2)
@@ -117,11 +117,11 @@ class TestSuppressionReset:
 
         tracker.check(_event(entity_id=entity, event_type="certificate_expiring"))
         tracker.check(_event(entity_id=entity, event_type="certificate_expiring"))
-        assert tracker.check(_event(entity_id=entity, event_type="certificate_expiring")) is True
+        assert tracker.check(_event(entity_id=entity, event_type="certificate_expiring")) > 0
 
         tracker.check(_event(entity_id=entity, event_type="certificate_renewed"))
 
-        assert tracker.check(_event(entity_id=entity, event_type="certificate_expiring")) is False
+        assert tracker.check(_event(entity_id=entity, event_type="certificate_expiring")) == 0
 
     def test_different_event_type_resets_previous(self) -> None:
         """A non-recovery event_type for the same entity resets the old counter."""
@@ -130,12 +130,12 @@ class TestSuppressionReset:
 
         tracker.check(_event(entity_id=entity, event_type="unavailable"))
         tracker.check(_event(entity_id=entity, event_type="unavailable"))
-        assert tracker.check(_event(entity_id=entity, event_type="unavailable")) is True
+        assert tracker.check(_event(entity_id=entity, event_type="unavailable")) > 0
 
         # Different (non-recovery) event type resets the "unavailable" counter
         tracker.check(_event(entity_id=entity, event_type="power_cycle_failed"))
 
-        assert tracker.check(_event(entity_id=entity, event_type="unavailable")) is False
+        assert tracker.check(_event(entity_id=entity, event_type="unavailable")) == 0
 
     def test_recovery_event_itself_not_suppressed(self) -> None:
         """Recovery events are never suppressed, even if repeated."""
@@ -143,9 +143,9 @@ class TestSuppressionReset:
         entity = "sensor.x"
 
         # Recovery events reset on every call, so counter never accumulates
-        assert tracker.check(_event(entity_id=entity, event_type="health_check_recovered")) is False
-        assert tracker.check(_event(entity_id=entity, event_type="health_check_recovered")) is False
-        assert tracker.check(_event(entity_id=entity, event_type="health_check_recovered")) is False
+        assert tracker.check(_event(entity_id=entity, event_type="health_check_recovered")) == 0
+        assert tracker.check(_event(entity_id=entity, event_type="health_check_recovered")) == 0
+        assert tracker.check(_event(entity_id=entity, event_type="health_check_recovered")) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +160,8 @@ class TestTrackerReset:
         tracker = EventSuppressionTracker(threshold=2)
         tracker.check(_event())
         tracker.check(_event())
-        assert tracker.check(_event()) is True
+        assert tracker.check(_event()) > 0
 
         tracker.reset()
 
-        assert tracker.check(_event()) is False
+        assert tracker.check(_event()) == 0

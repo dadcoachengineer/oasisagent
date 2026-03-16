@@ -9,7 +9,7 @@ Three routes:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
@@ -17,6 +17,8 @@ from fastapi.responses import HTMLResponse
 from oasisagent.ui.auth import TokenPayload, require_viewer
 
 if TYPE_CHECKING:
+    import aiosqlite
+
     from oasisagent.audit.reader import AuditReader
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,78 @@ router = APIRouter(tags=["events-ui"])
 def _get_audit_reader(request: Request) -> AuditReader | None:
     """Get the audit reader from app state, or None if not configured."""
     return getattr(request.app.state, "audit_reader", None)
+
+
+def _get_db(request: Request) -> aiosqlite.Connection | None:
+    """Get the SQLite connection from app state, or None."""
+    return getattr(request.app.state, "db", None)
+
+
+async def _load_cluster_for_event(
+    db: aiosqlite.Connection | None, event_id: str,
+) -> dict[str, Any] | None:
+    """Load correlation cluster info for an event from SQLite.
+
+    Returns a dict with cluster metadata and member events, or None.
+    """
+    if db is None:
+        return None
+
+    try:
+        cursor = await db.execute(
+            "SELECT cluster_id FROM cluster_events WHERE event_id = ?",
+            (event_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+
+        cluster_id = row["cluster_id"] if hasattr(row, "keys") else row[0]
+
+        cursor = await db.execute(
+            "SELECT id, created_at, updated_at, leader_event_id, diagnosis, "
+            "rule_type, event_count FROM correlation_clusters WHERE id = ?",
+            (cluster_id,),
+        )
+        cluster_row = await cursor.fetchone()
+        if cluster_row is None:
+            return None
+
+        cursor = await db.execute(
+            "SELECT event_id, entity_id, source, system, severity, "
+            "timestamp, matched_rule FROM cluster_events WHERE cluster_id = ? "
+            "ORDER BY timestamp",
+            (cluster_id,),
+        )
+        events = await cursor.fetchall()
+
+        def _col(r: Any, key: str, idx: int) -> Any:
+            return r[key] if hasattr(r, "keys") else r[idx]
+
+        return {
+            "id": _col(cluster_row, "id", 0),
+            "created_at": _col(cluster_row, "created_at", 1),
+            "updated_at": _col(cluster_row, "updated_at", 2),
+            "leader_event_id": _col(cluster_row, "leader_event_id", 3),
+            "diagnosis": _col(cluster_row, "diagnosis", 4),
+            "rule_type": _col(cluster_row, "rule_type", 5),
+            "event_count": _col(cluster_row, "event_count", 6),
+            "events": [
+                {
+                    "event_id": _col(e, "event_id", 0),
+                    "entity_id": _col(e, "entity_id", 1),
+                    "source": _col(e, "source", 2),
+                    "system": _col(e, "system", 3),
+                    "severity": _col(e, "severity", 4),
+                    "timestamp": _col(e, "timestamp", 5),
+                    "matched_rule": _col(e, "matched_rule", 6),
+                }
+                for e in events
+            ],
+        }
+    except Exception:
+        logger.debug("Failed to load cluster data for event %s", event_id)
+        return None
 
 
 def _safe_int(value: str | None, default: int) -> int:
@@ -48,6 +122,7 @@ def _parse_event_filters(request: Request) -> dict:
         "source": params.get("source") or None,
         "system": params.get("system") or None,
         "event_type": params.get("event_type") or None,
+        "disposition": params.get("disposition") or None,
         "offset": _safe_int(params.get("offset"), 0),
         "limit": _safe_int(params.get("limit"), 25),
     }
@@ -61,6 +136,7 @@ def _filters_for_template(filters: dict) -> dict:
         "source": filters["source"] or "",
         "system": filters["system"] or "",
         "event_type": filters["event_type"] or "",
+        "disposition": filters["disposition"] or "",
     }
 
 
@@ -92,9 +168,18 @@ async def events_page(
             page = None
             filter_options = None
 
+        suppressions: list[dict] = []
+        try:
+            suppressions = await reader.get_suppressions(
+                duration=filters["duration"],
+            )
+        except Exception:
+            logger.debug("Failed to load suppressions for events list")
+
         ctx["page"] = page
         ctx["filter_options"] = filter_options
         ctx["filters"] = _filters_for_template(filters)
+        ctx["suppressions"] = suppressions
 
     return templates.TemplateResponse("events/list.html", ctx)
 
@@ -122,8 +207,17 @@ async def events_table_partial(
             logger.exception("Failed to query events from InfluxDB")
             page = None
 
+        suppressions: list[dict] = []
+        try:
+            suppressions = await reader.get_suppressions(
+                duration=filters["duration"],
+            )
+        except Exception:
+            logger.debug("Failed to load suppressions for table partial")
+
         ctx["page"] = page
         ctx["filters"] = _filters_for_template(filters)
+        ctx["suppressions"] = suppressions
 
     return templates.TemplateResponse("events/_table.html", ctx)
 
@@ -145,6 +239,7 @@ async def event_detail_page(
         "version": request.app.version,
         "audit_configured": reader is not None,
         "timeline": None,
+        "cluster": None,
     }
 
     if reader is not None:
@@ -153,5 +248,9 @@ async def event_detail_page(
             ctx["timeline"] = timeline
         except Exception:
             logger.exception("Failed to query event timeline from InfluxDB")
+
+        # Load correlation cluster data from SQLite
+        db = _get_db(request)
+        ctx["cluster"] = await _load_cluster_for_event(db, event_id)
 
     return templates.TemplateResponse("events/detail.html", ctx)

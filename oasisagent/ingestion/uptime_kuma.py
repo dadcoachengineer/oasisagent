@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from oasisagent.clients.uptime_kuma import MonitorMetrics, UptimeKumaClient
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 from oasisagent.util.dedup import normalize_cert_dedup_key
 
 if TYPE_CHECKING:
@@ -281,4 +281,46 @@ class UptimeKumaAdapter(IngestAdapter):
                 dedup_key=dedup_key,
             ),
         )
+
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover monitored services from Uptime Kuma."""
+        from urllib.parse import urlparse
+
+        nodes: list[TopologyNode] = []
+        edges: list[TopologyEdge] = []
+        source = f"auto:{self.name}"
+        now = datetime.now(UTC)
+
+        try:
+            monitors = await self._client.get_metrics()
+        except Exception:
+            logger.debug("Uptime Kuma topology discovery failed")
+            return [], []
+
+        for monitor in monitors:
+            host_ip: str | None = None
+            if monitor.url:
+                parsed = urlparse(monitor.url)
+                host_ip = parsed.hostname
+
+            nodes.append(TopologyNode(
+                entity_id=f"uptime_kuma:{monitor.name}",
+                entity_type="monitor",
+                display_name=monitor.name,
+                host_ip=host_ip,
+                source=source,
+                last_seen=now,
+                metadata={
+                    "url": monitor.url,
+                    "monitor_type": monitor.monitor_type,
+                },
+            ))
+
+        return nodes, edges
 

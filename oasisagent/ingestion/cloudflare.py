@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from oasisagent.clients.cloudflare import CloudflareClient
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     from oasisagent.config import CloudflareAdapterConfig
@@ -387,4 +387,23 @@ class CloudflareAdapter(IngestAdapter):
                     dedup_key=f"cloudflare:ssl:{hostname}",
                 ),
             ))
+
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover Cloudflare as a topology node."""
+        nodes = [
+            TopologyNode(
+                entity_id="cloudflare:cloudflare",
+                entity_type="service",
+                display_name="Cloudflare",
+                source=f"auto:{self.name}",
+                last_seen=datetime.now(UTC),
+            ),
+        ]
+        return nodes, []
 

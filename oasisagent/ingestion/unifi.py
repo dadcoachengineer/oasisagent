@@ -28,7 +28,7 @@ import aiohttp
 
 from oasisagent.clients.unifi import UnifiClient
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     from oasisagent.config import UnifiAdapterConfig
@@ -776,4 +776,70 @@ class UnifiAdapter(IngestAdapter):
         if isinstance(exc, aiohttp.ClientResponseError) and exc.status in (403, 404):
             return True
         return isinstance(exc, ConnectionError) and "login failed (HTTP 403)" in str(exc)
+
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover network devices and their connections."""
+        nodes: list[TopologyNode] = []
+        edges: list[TopologyEdge] = []
+        source = f"auto:{self.name}"
+        now = datetime.now(UTC)
+
+        try:
+            resp = await self._client.get("/api/s/{site}/stat/device")
+            devices: list[dict[str, Any]] = resp.get("data", [])
+        except Exception:
+            logger.debug("UniFi topology discovery failed (API unreachable)")
+            return [], []
+
+        for dev in devices:
+            mac = dev.get("mac", "")
+            name = dev.get("name", dev.get("hostname", mac))
+            ip = dev.get("ip", "")
+            dev_type = dev.get("type", "unknown")
+
+            entity_type = "network_device" if dev_type in (
+                "usw", "ugw", "uap", "udm",
+            ) else "host"
+
+            nodes.append(TopologyNode(
+                entity_id=f"unifi:{mac}",
+                entity_type=entity_type,
+                display_name=name,
+                host_ip=ip,
+                source=source,
+                last_seen=now,
+                metadata={
+                    "mac": mac,
+                    "model": dev.get("model", ""),
+                    "type": dev_type,
+                },
+            ))
+
+            # Port connections for switches
+            if dev_type == "usw":
+                port_table = dev.get("port_table", [])
+                for port in port_table:
+                    if port.get("port_poe") and port.get("poe_enable"):
+                        port_idx = port.get("port_idx", "")
+                        nodes[-1].metadata[f"port_{port_idx}"] = "poe"
+
+            # Uplink relationships
+            uplink = dev.get("uplink", {})
+            uplink_mac = uplink.get("uplink_mac", "")
+            if uplink_mac:
+                edges.append(TopologyEdge(
+                    from_entity=f"unifi:{mac}",
+                    to_entity=f"unifi:{uplink_mac}",
+                    edge_type="connects_via",
+                    source=source,
+                    last_seen=now,
+                ))
+
+        return nodes, edges
 

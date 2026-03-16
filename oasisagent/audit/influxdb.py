@@ -242,6 +242,35 @@ class AuditWriter:
 
         await self._write(point, measurement="oasis_verify")
 
+    async def write_suppression(
+        self,
+        event: Event,
+        suppressed_count: int,
+    ) -> None:
+        """Record a suppressed event (oasis_suppression measurement).
+
+        Called when the repeated-event suppression tracker drops an event.
+        Uses the same batching/retry as other write methods.
+        """
+        if not self._enabled:
+            return
+        self._ensure_started()
+
+        point = (
+            Point("oasis_suppression")
+            .tag("source", event.source)
+            .tag("system", event.system)
+            .tag("event_type", event.event_type)
+            .tag("entity_id", event.entity_id)
+            .tag("severity", event.severity.value)
+            .field("event_id", event.id)
+            .field("suppressed_count", suppressed_count)
+            .field("event_timestamp", event.timestamp.isoformat())
+            .time(datetime.now(UTC))
+        )
+
+        await self._write(point, measurement="oasis_suppression")
+
     async def write_notification_archive(
         self, row: dict[str, Any],
     ) -> None:

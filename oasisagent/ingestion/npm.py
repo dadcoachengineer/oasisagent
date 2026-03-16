@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from oasisagent.clients.npm import NpmClient
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     from oasisagent.config import NpmAdapterConfig
@@ -387,4 +387,63 @@ class NpmAdapter(IngestAdapter):
 
         # Evict cleared dead hosts to prevent unbounded growth
         self._seen_dead_hosts = current_dead_ids
+
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover proxy hosts and their upstream targets."""
+        nodes: list[TopologyNode] = []
+        edges: list[TopologyEdge] = []
+        source = f"auto:{self.name}"
+        now = datetime.now(UTC)
+
+        try:
+            data = await self._client.get("/api/nginx/proxy-hosts")
+        except Exception:
+            logger.debug("NPM topology discovery failed (API unreachable)")
+            return [], []
+
+        hosts: list[dict[str, Any]] = data if isinstance(data, list) else []
+        for host in hosts:
+            host_id = host.get("id")
+            if host_id is None:
+                continue
+            domain_names = host.get("domain_names", [])
+            entity = domain_names[0] if domain_names else str(host_id)
+            forward_host = host.get("forward_host", "")
+            forward_port = host.get("forward_port", "")
+
+            nodes.append(TopologyNode(
+                entity_id=f"npm:proxy:{entity}",
+                entity_type="proxy",
+                display_name=entity,
+                source=source,
+                last_seen=now,
+                metadata={"domain_names": domain_names},
+            ))
+
+            if forward_host:
+                upstream_id = f"host:{forward_host}"
+                nodes.append(TopologyNode(
+                    entity_id=upstream_id,
+                    entity_type="host",
+                    display_name=forward_host,
+                    host_ip=forward_host,
+                    source=source,
+                    last_seen=now,
+                    metadata={"port": forward_port},
+                ))
+                edges.append(TopologyEdge(
+                    from_entity=f"npm:proxy:{entity}",
+                    to_entity=upstream_id,
+                    edge_type="proxies_to",
+                    source=source,
+                    last_seen=now,
+                ))
+
+        return nodes, edges
 

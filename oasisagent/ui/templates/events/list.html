@@ -65,6 +65,15 @@
                 {% endfor %}
             </select>
         </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Disposition</label>
+            <select name="disposition" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                <option value="">All</option>
+                {% for s in filter_options.dispositions %}
+                <option value="{{ s }}" {% if filters.disposition == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
         {% endif %}
         <div class="flex gap-2">
             <button type="submit"
