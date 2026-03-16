@@ -71,6 +71,7 @@ class PortainerAdapter(IngestAdapter):
         self._known_endpoints: dict[str, int] = {}        # name → endpoint_id
         self._endpoint_meta: dict[str, dict[str, str]] = {}  # name → {PublicURL, URL}
         self._container_states: dict[str, str] = {}       # "ep/name" → effective_state
+        self._container_ids: dict[str, str] = {}          # "ep/name" → Docker container ID
         self._stack_health: dict[str, tuple[int, int]] = {}  # "ep/stack" → (running, total)
         self._container_cpu_alert: dict[str, bool] = {}
         self._container_mem_alert: dict[str, bool] = {}
@@ -207,7 +208,7 @@ class PortainerAdapter(IngestAdapter):
                         source=self.name,
                         system="portainer",
                         event_type="ptr_endpoint_unreachable",
-                        entity_id=ep_name,
+                        entity_id=f"portainer:{ep_name}",
                         severity=Severity.ERROR,
                         timestamp=datetime.now(tz=UTC),
                         payload={
@@ -224,7 +225,7 @@ class PortainerAdapter(IngestAdapter):
                         source=self.name,
                         system="portainer",
                         event_type="ptr_endpoint_recovered",
-                        entity_id=ep_name,
+                        entity_id=f"portainer:{ep_name}",
                         severity=Severity.INFO,
                         timestamp=datetime.now(tz=UTC),
                         payload={
@@ -291,6 +292,10 @@ class PortainerAdapter(IngestAdapter):
                 key = f"{ep_name}/{ct_name}"
                 current_keys.add(key)
 
+                # Cache container ID for resource polling
+                if ct_id:
+                    self._container_ids[key] = ct_id
+
                 prev = self._container_states.get(key)
                 self._container_states[key] = effective
 
@@ -323,6 +328,7 @@ class PortainerAdapter(IngestAdapter):
         stale = set(self._container_states.keys()) - current_keys
         for key in stale:
             del self._container_states[key]
+            self._container_ids.pop(key, None)
             self._container_cpu_alert.pop(key, None)
             self._container_mem_alert.pop(key, None)
 
@@ -386,7 +392,7 @@ class PortainerAdapter(IngestAdapter):
             source=self.name,
             system="portainer",
             event_type=event_type,
-            entity_id=key,
+            entity_id=f"portainer:{key}",
             severity=severity,
             timestamp=datetime.now(tz=UTC),
             payload=payload,
@@ -444,7 +450,7 @@ class PortainerAdapter(IngestAdapter):
             source=self.name,
             system="portainer",
             event_type=event_type,
-            entity_id=stack_key,
+            entity_id=f"portainer:{stack_key}",
             severity=severity,
             timestamp=datetime.now(tz=UTC),
             payload={
@@ -485,21 +491,8 @@ class PortainerAdapter(IngestAdapter):
                     )
                     return
 
-                ct_name = key.split("/", 1)[1]
-                # We need the container ID for the stats endpoint
-                # Try to get it from a container list
-                try:
-                    containers = await self._client.get_docker(
-                        ep_id, "containers/json",
-                        **{"filters": f'{{"name":["{ct_name}"]}}'},
-                    )
-                except Exception:
-                    continue
-
-                if not isinstance(containers, list) or not containers:
-                    continue
-
-                ct_id = containers[0].get("Id", "")
+                # Use cached container ID from _poll_containers()
+                ct_id = self._container_ids.get(key)
                 if not ct_id:
                     continue
 
@@ -582,7 +575,7 @@ class PortainerAdapter(IngestAdapter):
                 source=self.name,
                 system="portainer",
                 event_type=alert_event,
-                entity_id=entity,
+                entity_id=f"portainer:{entity}",
                 severity=Severity.WARNING,
                 timestamp=datetime.now(tz=UTC),
                 payload={
@@ -599,7 +592,7 @@ class PortainerAdapter(IngestAdapter):
                 source=self.name,
                 system="portainer",
                 event_type=recovery_event,
-                entity_id=entity,
+                entity_id=f"portainer:{entity}",
                 severity=Severity.INFO,
                 timestamp=datetime.now(tz=UTC),
                 payload={

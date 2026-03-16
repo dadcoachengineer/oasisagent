@@ -109,7 +109,7 @@ class TestPollEndpoints:
         event = queue.put_nowait.call_args[0][0]
         assert event.event_type == "ptr_endpoint_unreachable"
         assert event.severity == Severity.ERROR
-        assert event.entity_id == "primary"
+        assert event.entity_id == "portainer:primary"
         assert event.system == "portainer"
 
     @pytest.mark.asyncio
@@ -222,7 +222,7 @@ class TestPollContainers:
         event = queue.put_nowait.call_args[0][0]
         assert event.event_type == "ptr_container_exited"
         assert event.severity == Severity.ERROR
-        assert event.entity_id == "primary/nginx"
+        assert event.entity_id == "portainer:primary/nginx"
         assert event.payload["endpoint_id"] == 1
 
     @pytest.mark.asyncio
@@ -370,7 +370,7 @@ class TestPollContainers:
         await adapter._poll_containers()
 
         event = queue.put_nowait.call_args[0][0]
-        assert event.entity_id == "primary/nginx"
+        assert event.entity_id == "portainer:primary/nginx"
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +488,19 @@ class TestPollStacks:
 
 class TestStaleCleanup:
     @pytest.mark.asyncio
+    async def test_container_ids_cached_during_poll(self) -> None:
+        adapter, _ = _make_adapter()
+        adapter._known_endpoints = {"primary": 1}
+        adapter._endpoint_states = {"primary": "online"}
+
+        adapter._client.get_docker = AsyncMock(return_value=[
+            _container("nginx", "running", ct_id="sha256:abc"),
+        ])
+        await adapter._poll_containers()
+
+        assert adapter._container_ids["primary/nginx"] == "sha256:abc"
+
+    @pytest.mark.asyncio
     async def test_removed_containers_pruned(self) -> None:
         adapter, _ = _make_adapter()
         adapter._known_endpoints = {"primary": 1}
@@ -495,6 +508,10 @@ class TestStaleCleanup:
         adapter._container_states = {
             "primary/nginx": "ok",
             "primary/removed": "ok",
+        }
+        adapter._container_ids = {
+            "primary/nginx": "id1",
+            "primary/removed": "id2",
         }
 
         adapter._client.get_docker = AsyncMock(return_value=[
@@ -504,6 +521,8 @@ class TestStaleCleanup:
 
         assert "primary/nginx" in adapter._container_states
         assert "primary/removed" not in adapter._container_states
+        assert "primary/nginx" in adapter._container_ids
+        assert "primary/removed" not in adapter._container_ids
 
     @pytest.mark.asyncio
     async def test_removed_stacks_pruned(self) -> None:
@@ -537,11 +556,9 @@ class TestPollResources:
         adapter._known_endpoints = {"primary": 1}
         adapter._endpoint_states = {"primary": "online"}
         adapter._container_states = {"primary/nginx": "ok"}
+        adapter._container_ids = {"primary/nginx": "abc123"}
 
-        # get_docker for container list lookup, then for stats
         async def _mock_get_docker(ep_id: int, path: str, **kw: object) -> object:
-            if "containers/json" in path:
-                return [{"Id": "abc123", "Names": ["/nginx"]}]
             if "stats" in path:
                 return {
                     "cpu_stats": {
@@ -581,15 +598,13 @@ class TestPollResources:
         # Create many containers to trigger the cost guard
         for i in range(50):
             adapter._container_states[f"primary/ct{i}"] = "ok"
+            adapter._container_ids[f"primary/ct{i}"] = f"id{i}"
 
         call_count = 0
 
         async def _slow_get_docker(ep_id: int, path: str, **kw: object) -> object:
             nonlocal call_count
             call_count += 1
-            if "containers/json" in path:
-                name = path.split('"')[1] if '"' in str(kw) else f"ct{call_count}"
-                return [{"Id": f"id{call_count}", "Names": [f"/{name}"]}]
             return {}
 
         adapter._client.get_docker = AsyncMock(side_effect=_slow_get_docker)
