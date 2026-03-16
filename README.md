@@ -65,15 +65,24 @@ All configuration is driven by environment variables. Docker Compose loads them 
 
 ## Supported Systems
 
-| System | Status | Capabilities |
-|--------|--------|-------------|
-| Home Assistant | **Live** | State monitoring, automation errors, log analysis, integration restarts, service calls |
-| Docker/Portainer | v0.3.0 | Container health, restart, logs, OOM/crash detection via Portainer API |
-| Proxmox VE/PBS | v0.3.0 | VM/CT management, node monitoring, backup verification, ZFS health |
-| Radarr/Sonarr | v0.3.3 | Download health, indexer status, disk space, queue errors |
-| UniFi Network | v0.3.3 | Device status, AP health, WAN failover, client tracking |
-| Cloudflare | v0.3.3 | Tunnel health, WAF events, DNS, SSL |
-| 30+ more | [Planned](docs/research/PHASE3-PLAN.md) | Plex, EMQX, Stalwart, Synology, N8N, Ollama, Zigbee2MQTT, Frigate, and more |
+| System | Adapter | Handler | Capabilities |
+|--------|---------|---------|-------------|
+| Home Assistant | **Live** | **Live** | State monitoring, automation errors, log analysis, integration restarts, service calls |
+| Docker/Portainer | **Live** | **Live** | Container health, restart, logs, OOM/crash detection via Portainer API |
+| Proxmox VE/PBS | **Live** | **Live** | VM/CT management, node monitoring, backup verification, ZFS health |
+| UniFi Network | **Live** | **Live** | Device status, AP health, UDMP telemetry, WAN failover, client blocking |
+| Cloudflare | **Live** | **Live** | Tunnel health, WAF events, DNS, SSL certificates, cache purge, IP blocking |
+| Radarr/Sonarr/Lidarr/etc. | **Live** | — | Download health, indexer status, disk space, queue errors |
+| Plex/Tautulli | **Live** | — | Server health, library availability, stream monitoring |
+| qBittorrent | **Live** | — | Download health, torrent status, connectivity |
+| Tdarr | **Live** | — | Transcoding health, worker status, queue monitoring |
+| Overseerr | **Live** | — | Request processing, availability |
+| Frigate NVR | **Live** | — | Camera health, detection events, recording status |
+| N8N | **Live** | — | Workflow execution health, error monitoring |
+| Nginx Proxy Manager | **Live** | — | Proxy host status, SSL certificates, upstream health |
+| Vaultwarden | **Live** | — | Vault health, availability monitoring |
+| Uptime Kuma | **Live** | — | Monitor status, multi-service health aggregation |
+| Planned | [Roadmap](docs/research/PHASE3-PLAN.md) | — | EMQX, Stalwart, Synology, Ollama, Zigbee2MQTT, and more |
 
 Adding a new system = implement the [handler interface](ARCHITECTURE.md). No core changes needed.
 
@@ -84,8 +93,9 @@ Multiple adapters produce the same canonical event model:
 - **MQTT** — Subscribe to topics on any broker (zigbee2mqtt, frigate, ESPresence, valetudo, custom sensors)
 - **HA WebSocket** — Real-time state changes, automation failures, service call errors
 - **HA Log Poller** — WebSocket `system_log/list` with pattern matching against structured entries
-- **Webhook Receiver** — HTTP endpoint for push-based ingestion (Radarr, Sonarr, Plex, Proxmox) *(v0.3.0)*
-- **HTTP Poller** — Periodic REST API polling with JMESPath extraction (any service with a health API) *(v0.3.0)*
+- **Webhook Receiver** — HTTP endpoint for push-based ingestion (Radarr, Sonarr, Plex, Proxmox)
+- **HTTP Poller** — Periodic REST API polling with JMESPath extraction (any service with a health API)
+- **Preventive Scanners** — Certificate expiry, disk space, backup freshness, HA health, Docker health sweeps
 
 ## Configuration
 
@@ -204,7 +214,7 @@ oasisagent
 - **InfluxDB audit trail** — Every event, decision, action, and verification recorded
 - **Grafana dashboards** — Import [`dashboards/oasisagent-overview.json`](dashboards/) for event volume, decision distribution, and action results
 - **Prometheus metrics** — `/metrics` endpoint for real-time alerting (events processed, queue depth, processing latency, LLM call duration)
-- **Web admin dashboard** — Real-time event feed, approval queue, event explorer, connector management *(v0.3.1)*
+- **Web admin dashboard** — Real-time event feed, approval queue, event explorer, connector management, service topology map, notification feed
 
 ## Known Fixes Registry
 
@@ -260,13 +270,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design specification — dat
 |-------|---------|-------|--------|
 | 1 | v0.1.x | Core framework — ingestion, decision engine, HA handler, known fixes, audit, circuit breaker | **Complete** |
 | 2 | v0.2.x | T2 cloud reasoning, approval queue, verification loop, event correlation, email/webhook notifications, Grafana dashboards, Prometheus metrics | **Complete** |
-| 3 | v0.3.0 | Foundation — SQLite config backend, FastAPI scaffold, webhook receiver, HTTP poller, Proxmox + Docker handlers | In progress |
-| 3 | v0.3.1 | Web admin UI — HTMX dashboard, setup wizard, connectors, approval queue, event explorer | Planned |
-| 3 | v0.3.2 | Messaging — Telegram, Slack, Discord notification + approval channels | Planned |
-| 3 | v0.3.3 | Networking — UniFi, Cloudflare, Radarr/Sonarr integrations | Planned |
-| 3 | v0.3.4 | Preventive scanning — certificates, disk space, backup freshness, health sweeps | Planned |
-| 3 | v0.3.5 | Learning loop — auto-generate T0 known fix candidates from T2 diagnoses | Planned |
-| 3 | v0.3.6 | Plugin system, multi-instance coordination, Tier 3 integrations | Planned |
+| 3 | v0.3.0 | Foundation — SQLite config backend, FastAPI scaffold, webhook receiver, HTTP poller, Proxmox + Docker handlers | **Complete** |
+| 3 | v0.3.1 | Web admin UI — HTMX dashboard, setup wizard, connectors, approval queue, event explorer | **Complete** |
+| 3 | v0.3.2 | Messaging — Telegram, Slack, Discord notification + approval channels | **Complete** |
+| 3 | v0.3.3 | Networking — UniFi, Cloudflare integrations + Application integrations (Servarr, Plex, qBittorrent, Tdarr) | **Complete** |
+| 3 | v0.3.4 | Preventive scanning — certificates, disk space, backup freshness, HA + Docker health sweeps | **Complete** |
+| 3 | v0.3.5 | LLM context — dependency-aware T2 reasoning, multi-handler context assembly, plan-aware dispatch, service topology, event timeline | **Current** |
+| 3 | v0.3.6 | Learning loop — auto-generate T0 known fix candidates from T2 diagnoses | Planned |
+| 3 | v0.3.7 | Plugin system, multi-instance coordination, Tier 3 integrations | Planned |
 | — | v1.0.0 | Production release | Target |
 
 See the [Phase 3 plan](docs/research/PHASE3-PLAN.md) for the full integration catalog covering 40+ services and the [epic tracker](https://github.com/dadcoachengineer/oasisagent/issues/70) for issue-level progress.
