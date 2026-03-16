@@ -503,13 +503,10 @@ class ProxmoxAdapter(IngestAdapter):
             upid: ts for upid, ts in self._seen_tasks.items() if ts > cutoff
         }
 
-        since = self._last_task_poll or now.replace(
-            second=0, microsecond=0,
-        ).replace(
-            minute=now.minute,
-        )
-        # On first poll, look back one poll interval
-        if self._last_task_poll is None:
+        if self._last_task_poll is not None:
+            since = self._last_task_poll
+        else:
+            # First poll — look back one poll interval
             since = datetime.fromtimestamp(
                 now.timestamp() - self._config.poll_interval, tz=UTC,
             )
