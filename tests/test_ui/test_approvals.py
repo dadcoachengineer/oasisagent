@@ -47,8 +47,13 @@ def _mock_orchestrator_with_queue() -> tuple[MagicMock, PendingQueue]:
     return orch, queue
 
 
+_add_counter = 0
+
+
 async def _add_test_action(queue: PendingQueue, description: str = "Restart nginx") -> str:
     """Add a test action to the queue and return its ID."""
+    global _add_counter
+    _add_counter += 1
     action = RecommendedAction(
         description=description,
         handler="ha_handler",
@@ -56,9 +61,10 @@ async def _add_test_action(queue: PendingQueue, description: str = "Restart ngin
         params={"integration": "nginx"},
         risk_tier=RiskTier.RECOMMEND,
         reasoning="Container is unhealthy for >5 minutes",
+        target_entity_id=f"integration.nginx_{_add_counter}",
     )
     pending = await queue.add(
-        event_id="evt-test-001",
+        event_id=f"evt-test-{_add_counter:03d}",
         action=action,
         diagnosis="Nginx container health check failing since 14:30",
         timeout_minutes=30,

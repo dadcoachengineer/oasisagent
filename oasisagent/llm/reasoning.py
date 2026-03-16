@@ -15,11 +15,11 @@ from typing import TYPE_CHECKING, Any
 
 from oasisagent.llm.client import LLMError, LLMRole
 from oasisagent.llm.prompts.diagnose_failure import build_diagnose_messages
-from oasisagent.models import DiagnosisResult, RecommendedAction, RiskTier
+from oasisagent.models import DiagnosisResult, RecommendedAction, RemediationStep, RiskTier
 
 if TYPE_CHECKING:
     from oasisagent.llm.client import LLMClient
-    from oasisagent.models import Event, TriageResult
+    from oasisagent.models import DependencyContext, Event, TriageResult
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,87 @@ def _validate_risk_tier(raw: str) -> RiskTier:
     return RiskTier(normalized)
 
 
+def _validate_action_data(action_data: dict[str, Any], index: int) -> dict[str, Any] | None:
+    """Validate and normalize a single action dict.
+
+    Returns the validated dict, or None if the action should be skipped.
+    """
+    if not isinstance(action_data, dict):
+        logger.warning("T2 action #%d is not a dict, skipping", index)
+        return None
+
+    raw_tier = action_data.get("risk_tier", "")
+    try:
+        validated_tier = _validate_risk_tier(raw_tier)
+    except ValueError:
+        logger.warning(
+            "T2 action #%d has invalid risk_tier '%s', defaulting to escalate",
+            index,
+            raw_tier,
+        )
+        validated_tier = RiskTier.ESCALATE
+
+    action_data["risk_tier"] = validated_tier.value
+    return action_data
+
+
+def _validate_plan_steps(raw_plan: list[Any]) -> list[RemediationStep] | None:
+    """Validate and normalize a remediation plan from T2 output.
+
+    - Validates each step's action risk_tier
+    - Validates depends_on references point to existing step orders
+    - Strips steps with invalid dependency references
+    - Returns None if no valid steps remain
+    """
+    if not raw_plan:
+        return None
+
+    # First pass: validate individual steps
+    valid_steps: list[RemediationStep] = []
+    for i, raw_step in enumerate(raw_plan):
+        if not isinstance(raw_step, dict):
+            logger.warning("T2 plan step #%d is not a dict, skipping", i)
+            continue
+
+        # Validate the action's risk_tier within the step
+        action_data = raw_step.get("action")
+        if isinstance(action_data, dict):
+            validated = _validate_action_data(action_data, i)
+            if validated is None:
+                continue
+            raw_step["action"] = validated
+
+        try:
+            step = RemediationStep.model_validate(raw_step)
+            valid_steps.append(step)
+        except Exception:
+            logger.warning("T2 plan step #%d failed validation, skipping", i)
+
+    if not valid_steps:
+        return None
+
+    # Second pass: validate depends_on references
+    existing_orders = {s.order for s in valid_steps}
+    final_steps: list[RemediationStep] = []
+    for step in valid_steps:
+        invalid_deps = [d for d in step.depends_on if d not in existing_orders or d >= step.order]
+        if invalid_deps:
+            logger.warning(
+                "T2 plan step order=%d has invalid depends_on %s, stripping step",
+                step.order, invalid_deps,
+            )
+            continue
+        final_steps.append(step)
+
+    return final_steps or None
+
+
 def _parse_diagnosis(raw_json: str) -> DiagnosisResult:
     """Parse raw JSON from the reasoning model into a DiagnosisResult.
 
     Validates risk_tier on each action against the enum — the model's
-    output is never trusted.
+    output is never trusted. Defensively extracts and validates
+    remediation_plan if present.
 
     Raises:
         ValueError: If the JSON is invalid or doesn't match the schema.
@@ -62,26 +138,22 @@ def _parse_diagnosis(raw_json: str) -> DiagnosisResult:
     validated_actions: list[dict[str, Any]] = []
 
     for i, action_data in enumerate(raw_actions):
-        if not isinstance(action_data, dict):
-            logger.warning("T2 action #%d is not a dict, skipping", i)
-            continue
-
-        # Validate risk_tier against the enum
-        raw_tier = action_data.get("risk_tier", "")
-        try:
-            validated_tier = _validate_risk_tier(raw_tier)
-        except ValueError:
-            logger.warning(
-                "T2 action #%d has invalid risk_tier '%s', defaulting to escalate",
-                i,
-                raw_tier,
-            )
-            validated_tier = RiskTier.ESCALATE
-
-        action_data["risk_tier"] = validated_tier.value
-        validated_actions.append(action_data)
+        validated = _validate_action_data(action_data, i)
+        if validated is not None:
+            validated_actions.append(validated)
 
     data["recommended_actions"] = validated_actions
+
+    # Defensively extract and validate remediation_plan
+    raw_plan = data.pop("remediation_plan", None)
+    validated_plan = None
+    if isinstance(raw_plan, list):
+        try:
+            validated_plan = _validate_plan_steps(raw_plan)
+        except Exception:
+            logger.warning("T2 remediation_plan parse failed, ignoring plan")
+            validated_plan = None
+    data["remediation_plan"] = validated_plan
 
     # Clamp confidence
     confidence = data.get("confidence", 0.0)
@@ -107,6 +179,7 @@ class ReasoningService:
         triage_result: TriageResult,
         entity_context: dict[str, Any] | None = None,
         known_fixes: list[dict[str, Any]] | None = None,
+        dependency_context: DependencyContext | None = None,
     ) -> DiagnosisResult:
         """Diagnose an event and return a DiagnosisResult.
 
@@ -114,7 +187,8 @@ class ReasoningService:
         returns a safe result recommending human escalation.
         """
         messages = build_diagnose_messages(
-            event, triage_result, entity_context, known_fixes
+            event, triage_result, entity_context, known_fixes,
+            dependency_context=dependency_context,
         )
 
         try:

@@ -112,6 +112,11 @@ class LLMClient:
             LLMRole.TRIAGE: UsageStats(),
             LLMRole.REASONING: UsageStats(),
         }
+        # Track last call outcome per role: None = no calls yet
+        self._last_call_ok: dict[LLMRole, bool | None] = {
+            LLMRole.TRIAGE: None,
+            LLMRole.REASONING: None,
+        }
 
     async def complete(
         self,
@@ -146,7 +151,7 @@ class LLMClient:
 
         # Try primary endpoint with retries
         try:
-            return await self._complete_with_retries(
+            result = await self._complete_with_retries(
                 role=role,
                 endpoint=endpoint,
                 messages=messages,
@@ -154,7 +159,10 @@ class LLMClient:
                 temperature=temperature,
                 max_retries=retry_attempts,
             )
+            self._last_call_ok[role] = True
+            return result
         except _NON_RETRYABLE_ERRORS:
+            self._last_call_ok[role] = False
             raise
         except Exception as primary_err:
             # Fallback: reasoning → triage (only after retries exhausted)
@@ -165,6 +173,7 @@ class LLMClient:
                     retry_attempts,
                     primary_err,
                 )
+                self._last_call_ok[LLMRole.REASONING] = False
                 triage_endpoint = self._endpoint_for(LLMRole.TRIAGE)
                 try:
                     response = await self._complete_with_retries(
@@ -175,14 +184,17 @@ class LLMClient:
                         temperature=temperature,
                         max_retries=retry_attempts,
                     )
+                    self._last_call_ok[LLMRole.TRIAGE] = True
                     # Mark as degraded — caller/audit can use this
                     return response.model_copy(update={"degraded": True})
                 except Exception as fallback_err:
+                    self._last_call_ok[LLMRole.TRIAGE] = False
                     raise LLMError(
                         f"Both reasoning and triage endpoints failed. "
                         f"Reasoning: {primary_err}. Triage: {fallback_err}"
                     ) from fallback_err
 
+            self._last_call_ok[role] = False
             raise LLMError(
                 f"LLM completion failed for role '{role.value}' "
                 f"after {retry_attempts} retries: {primary_err}"
@@ -191,6 +203,72 @@ class LLMClient:
     def get_usage_stats(self) -> dict[str, UsageStats]:
         """Return cumulative token usage per role."""
         return {role.value: stats for role, stats in self._usage.items()}
+
+    async def warm_up(self) -> dict[LLMRole, bool]:
+        """Send a minimal probe prompt to each configured role.
+
+        Validates the full LLM path (endpoint, auth, model) by sending a
+        single-token completion request. Results are logged and update the
+        ``_last_call_ok`` tracker so ``get_role_health()`` reflects real
+        status immediately after startup.
+
+        Never raises — failed probes are logged as warnings and the
+        corresponding role is marked unhealthy. Probe calls are not
+        counted toward usage statistics.
+        """
+        results: dict[LLMRole, bool] = {}
+        probe_messages = [{"role": "user", "content": "Respond with OK"}]
+        parts: list[str] = []
+
+        for role in LLMRole:
+            endpoint = self._endpoint_for(role)
+            start = time.monotonic()
+            try:
+                kwargs: dict[str, Any] = {
+                    "model": endpoint.model,
+                    "messages": probe_messages,
+                    "api_base": endpoint.base_url,
+                    "timeout": min(endpoint.timeout, 15),
+                    "max_tokens": 1,
+                    "temperature": 0,
+                }
+                if endpoint.api_key:
+                    kwargs["api_key"] = endpoint.api_key
+
+                await litellm.acompletion(**kwargs)
+                latency_ms = (time.monotonic() - start) * 1000
+                self._last_call_ok[role] = True
+                results[role] = True
+                parts.append(f"{role.value}=ok ({latency_ms:.0f}ms)")
+            except Exception as exc:
+                latency_ms = (time.monotonic() - start) * 1000
+                self._last_call_ok[role] = False
+                results[role] = False
+                # Use the exception type + message for concise logging
+                err_desc = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+                parts.append(f"{role.value}=FAILED ({err_desc})")
+                logger.warning(
+                    "LLM warm-up probe failed for %s (%s, %.0fms): %s",
+                    role.value,
+                    endpoint.model,
+                    latency_ms,
+                    exc,
+                )
+
+        logger.info("LLM warm-up: %s", ", ".join(parts))
+        return results
+
+    def get_role_health(self, role: LLMRole) -> str:
+        """Return health status for a role based on last call outcome.
+
+        Returns ``"unknown"`` if no calls have been made yet,
+        ``"connected"`` if the last call succeeded, or
+        ``"error"`` if the last call failed.
+        """
+        last = self._last_call_ok.get(role)
+        if last is None:
+            return "unknown"
+        return "connected" if last else "error"
 
     # -------------------------------------------------------------------
     # Internal helpers

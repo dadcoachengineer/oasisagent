@@ -45,11 +45,18 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "unifi": "UniFi Network",
     "cloudflare": "Cloudflare",
     "uptime_kuma": "Uptime Kuma",
+    "frigate": "Frigate NVR",
+    "npm": "Nginx Proxy Manager",
+    "servarr": "Servarr (Sonarr/Radarr/Prowlarr/Bazarr)",
+    "qbittorrent": "qBittorrent",
+    "plex": "Plex Media Server",
+    "tautulli": "Tautulli",
+    "tdarr": "Tdarr",
+    "n8n": "N8N",
+    "overseerr": "Overseerr",
     "vaultwarden": "Vaultwarden",
-    "stalwart": "Stalwart Mail",
-    "ollama": "Ollama",
-    "emqx": "EMQX",
-    "nextcloud": "Nextcloud",
+    "proxmox": "Proxmox VE",
+    "portainer": "Portainer",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -69,6 +76,8 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "email": "Email (SMTP)",
     "webhook": "Webhook",
     "telegram": "Telegram",
+    "discord": "Discord",
+    "slack": "Slack",
 }
 
 TYPE_DESCRIPTIONS: dict[str, str] = {
@@ -95,25 +104,51 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
         "Pull monitor status from Uptime Kuma's"
         " Prometheus endpoint"
     ),
+    "frigate": (
+        "Monitor Frigate NVR camera health"
+        " and detection events"
+    ),
+    "npm": (
+        "Monitor Nginx Proxy Manager proxy hosts,"
+        " certificates, and dead hosts"
+    ),
+    "servarr": (
+        "Monitor Sonarr, Radarr, Prowlarr, or Bazarr"
+        " health and download queue"
+    ),
+    "qbittorrent": (
+        "Monitor qBittorrent for errored, stalled,"
+        " and disconnected torrents"
+    ),
+    "plex": (
+        "Monitor Plex Media Server reachability"
+        " and library health"
+    ),
+    "tautulli": (
+        "Monitor Plex via Tautulli — server status"
+        " and bandwidth"
+    ),
+    "tdarr": (
+        "Monitor Tdarr transcoding workers"
+        " and queue progress"
+    ),
+    "n8n": (
+        "Monitor N8N workflow execution health"
+        " and failed runs"
+    ),
+    "overseerr": (
+        "Monitor Overseerr server connectivity"
+    ),
     "vaultwarden": (
         "Monitor Vaultwarden (Bitwarden) service health"
-        " with optional deep health checks"
     ),
-    "stalwart": (
-        "Monitor Stalwart Mail Server health"
-        " and mail queue depth"
+    "proxmox": (
+        "Poll Proxmox VE for node status, VM states,"
+        " tasks, and replication"
     ),
-    "ollama": (
-        "Monitor Ollama LLM server health"
-        " and loaded model status"
-    ),
-    "emqx": (
-        "Monitor EMQX MQTT broker health,"
-        " alarms, and listener status"
-    ),
-    "nextcloud": (
-        "Monitor Nextcloud health, cron freshness,"
-        " and maintenance mode"
+    "portainer": (
+        "Monitor Docker containers, stacks, and"
+        " endpoints via Portainer API"
     ),
     # Services
     "llm_triage": (
@@ -160,11 +195,20 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "email": "Send notifications via SMTP email",
     "webhook": "POST notifications to webhook URLs",
     "telegram": "Send notifications via Telegram bot",
+    "discord": "Send notifications via Discord webhook",
+    "slack": "Send notifications via Slack Incoming Webhook",
 }
 
-# Types that only allow a single instance
+# Types that allow multiple instances (e.g., multiple Servarr apps)
+MULTI_INSTANCE_TYPES: frozenset[str] = frozenset({
+    "servarr",
+    "http_poller",
+    "webhook_receiver",
+})
+
+# Types that only allow a single instance (everything else)
 SINGLE_INSTANCE_TYPES: frozenset[str] = frozenset(
-    TYPE_DISPLAY_NAMES.keys()
+    TYPE_DISPLAY_NAMES.keys() - MULTI_INSTANCE_TYPES
 )
 
 
@@ -185,10 +229,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Broker username — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Broker password — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
@@ -217,6 +263,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "Long-Lived Access Token", "password",
+            help_text=(
+                "HA → Profile → Long-Lived Access Tokens"
+                " → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         # subscriptions: deferred (nested model)
@@ -230,6 +280,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "Long-Lived Access Token", "password",
+            help_text=(
+                "HA → Profile → Long-Lived Access Tokens"
+                " → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -263,6 +317,7 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "auth_secret", "Auth Secret", "password",
+            help_text="Shared secret the sender includes in the header",
             show_when=("auth_mode", "header_secret"),
         ),
         FieldSpec(
@@ -327,11 +382,13 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "auth_username", "Username", "text",
+            help_text="HTTP Basic Auth username",
             group="Authentication",
             show_when=("auth_mode", "basic"),
         ),
         FieldSpec(
             "auth_password", "Password", "password",
+            help_text="HTTP Basic Auth password",
             group="Authentication",
             show_when=("auth_mode", "basic"),
         ),
@@ -343,6 +400,7 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "auth_value", "Auth Value", "password",
+            help_text="e.g. Bearer <token> or raw API key",
             group="Authentication",
             show_when=("auth_mode", "token"),
         ),
@@ -357,10 +415,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Local admin account — avoid using SSO credentials",
             required=True, group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Password for the local admin account",
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -388,6 +448,50 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             default=True, group="Polling",
         ),
         FieldSpec(
+            "poll_ips", "Poll IDS/IPS Events", "checkbox",
+            help_text="Monitor intrusion detection/prevention alerts",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_rogue_ap", "Poll Rogue APs", "checkbox",
+            help_text="Detect unauthorized access points",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_clients", "Poll Clients", "checkbox",
+            help_text="Track client count spikes (high volume, disabled by default)",
+            default=False, group="Polling",
+        ),
+        FieldSpec(
+            "poll_anomalies", "Poll Anomalies", "checkbox",
+            help_text="Monitor network traffic anomalies",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_events", "Poll Controller Events", "checkbox",
+            help_text="Monitor actionable controller events",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_dpi", "Poll DPI Stats", "checkbox",
+            help_text="Monitor bandwidth by app category (disabled by default)",
+            default=False, group="Polling",
+        ),
+        FieldSpec(
+            "client_spike_threshold",
+            "Client Spike Threshold (%)", "float",
+            help_text="Percent change in client count to trigger alert",
+            default=20.0, min_val=1, max_val=100,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "dpi_bandwidth_threshold_mbps",
+            "DPI Bandwidth Threshold (Mbps)", "float",
+            help_text="Bandwidth per app category to trigger alert",
+            default=100.0, min_val=1,
+            group="Thresholds",
+        ),
+        FieldSpec(
             "timeout", "Request Timeout (seconds)",
             "number", default=10, min_val=1,
         ),
@@ -395,24 +499,38 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             "cpu_threshold", "CPU Alert Threshold (%)",
             "float",
             default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
         ),
         FieldSpec(
             "memory_threshold",
             "Memory Alert Threshold (%)", "float",
             default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
         ),
     ],
     "cloudflare": [
         FieldSpec(
             "api_token", "API Token", "password",
+            help_text=(
+                "Cloudflare dashboard → My Profile"
+                " → API Tokens → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
             "account_id", "Account ID", "text",
+            help_text=(
+                "Dashboard → any domain → Overview sidebar"
+                " → Account ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
             "zone_id", "Zone ID", "text",
+            help_text=(
+                "Dashboard → domain → Overview sidebar"
+                " → Zone ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
@@ -494,20 +612,44 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
     ],
 
-    "stalwart": [
+    "frigate": [
         FieldSpec(
-            "url", "Server URL", "text",
-            help_text="e.g. https://mail.example.com:443",
+            "url", "Frigate URL", "text",
+            help_text="e.g. https://192.168.1.130:8971",
             required=True,
         ),
         FieldSpec(
-            "api_key", "API Key", "password",
-            help_text="Optional — enables mail queue monitoring",
-            group="Authentication",
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60, min_val=5,
         ),
         FieldSpec(
-            "poll_interval", "Poll Interval (seconds)",
-            "number", default=60,
+            "poll_events", "Poll Detection Events",
+            "checkbox",
+            help_text=(
+                "Track detection event spikes"
+                " (disabled by default)"
+            ),
+            default=False, group="Polling",
+        ),
+        FieldSpec(
+            "detector_fps_threshold",
+            "Detector FPS Threshold", "float",
+            help_text=(
+                "Alert when detector inference FPS"
+                " drops below this value"
+            ),
+            default=5.0, min_val=0.1,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "detection_spike_threshold",
+            "Detection Spike Threshold", "number",
+            help_text=(
+                "Detections per poll interval to"
+                " trigger a spike alert"
+            ),
+            default=20, min_val=1,
+            group="Thresholds",
         ),
         FieldSpec(
             "verify_ssl", "Verify SSL Certificate",
@@ -519,78 +661,56 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             "timeout", "Request Timeout (seconds)",
             "number", default=10, min_val=1,
         ),
-        FieldSpec(
-            "queue_threshold", "Queue Alert Threshold",
-            "number", default=100, min_val=1,
-            help_text="Alert when queued messages exceed this count",
-        ),
     ],
-    "ollama": [
+    "npm": [
         FieldSpec(
-            "url", "Server URL", "text",
-            help_text="e.g. http://localhost:11434",
-            required=True,
-            default="http://localhost:11434",
-        ),
-        FieldSpec(
-            "poll_interval", "Poll Interval (seconds)",
-            "number", default=60,
-        ),
-        FieldSpec(
-            "timeout", "Request Timeout (seconds)",
-            "number", default=10, min_val=1,
-        ),
-    ],
-    "emqx": [
-        FieldSpec(
-            "url", "Dashboard URL", "text",
-            help_text="e.g. http://emqx.local:18083",
+            "url", "NPM URL", "text",
+            help_text="e.g. http://192.168.1.50:81",
             required=True,
         ),
         FieldSpec(
-            "api_key", "API Key", "password",
+            "email", "Admin Email", "text",
+            help_text="NPM admin login email",
             required=True, group="Authentication",
-        ),
-        FieldSpec(
-            "api_secret", "API Secret", "password",
-            required=True, group="Authentication",
-        ),
-        FieldSpec(
-            "poll_interval", "Poll Interval (seconds)",
-            "number", default=60,
-        ),
-        FieldSpec(
-            "verify_ssl", "Verify SSL Certificate",
-            "checkbox", default=False,
-        ),
-        FieldSpec(
-            "timeout", "Request Timeout (seconds)",
-            "number", default=10, min_val=1,
-        ),
-    ],
-    "nextcloud": [
-        FieldSpec(
-            "url", "Server URL", "text",
-            help_text="e.g. https://nextcloud.example.com",
-            required=True,
-        ),
-        FieldSpec(
-            "username", "Username", "text",
-            required=True, group="Authentication",
-            help_text="Admin user or app password user",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="NPM admin login password",
             required=True, group="Authentication",
-            help_text="App password recommended",
         ),
         FieldSpec(
             "poll_interval", "Poll Interval (seconds)",
-            "number", default=60,
+            "number", default=300,
         ),
         FieldSpec(
-            "verify_ssl", "Verify SSL Certificate",
-            "checkbox", default=False,
+            "poll_proxy_hosts", "Poll Proxy Hosts",
+            "checkbox", default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_certificates", "Poll Certificates",
+            "checkbox", default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_dead_hosts", "Poll Dead Hosts",
+            "checkbox", default=True, group="Polling",
+        ),
+        FieldSpec(
+            "cert_warning_days",
+            "Cert Warning (days)", "number",
+            help_text=(
+                "Warn when certificate expires"
+                " within N days"
+            ),
+            default=14, min_val=1,
+        ),
+        FieldSpec(
+            "cert_critical_days",
+            "Cert Critical (days)", "number",
+            help_text=(
+                "Alert when certificate expires"
+                " within N days"
+            ),
+            default=7, min_val=1,
         ),
         FieldSpec(
             "timeout", "Request Timeout (seconds)",
@@ -598,7 +718,170 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
     ],
 
-    # -----------------------------------------------------------------------
+    "servarr": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8989",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "app_type", "Application", "select",
+            options=[
+                ("sonarr", "Sonarr"),
+                ("radarr", "Radarr"),
+                ("prowlarr", "Prowlarr"),
+                ("bazarr", "Bazarr"),
+            ],
+            default="sonarr",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "qbittorrent": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8080",
+            required=True,
+        ),
+        FieldSpec(
+            "username", "Username", "text",
+            required=True, group="Authentication",
+            default="admin",
+        ),
+        FieldSpec(
+            "password", "Password", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "plex": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:32400",
+            required=True,
+        ),
+        FieldSpec(
+            "token", "X-Plex-Token", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "tautulli": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8181",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "bandwidth_threshold_kbps",
+            "Bandwidth Threshold (kbps)", "number",
+            help_text=(
+                "Alert when total bandwidth exceeds"
+                " this value (default: 100000 = 100 Mbps)"
+            ),
+            default=100_000, min_val=1,
+        ),
+    ],
+    "tdarr": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:8265",
+            required=True,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "n8n": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:5678",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text=(
+                "N8N Settings → API → Create API Key"
+            ),
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=300,
+        ),
+        FieldSpec(
+            "poll_executions",
+            "Poll Failed Executions", "checkbox",
+            help_text=(
+                "Monitor for failed workflow executions"
+            ),
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+    "overseerr": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:5055",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
     "vaultwarden": [
         FieldSpec(
             "url", "Server URL", "text",
@@ -619,31 +902,140 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             "timeout", "Request Timeout (seconds)",
             "number", default=10, min_val=1,
         ),
+    ],
+
+    "proxmox": [
         FieldSpec(
-            "deep_health", "Enable Deep Health Checks",
+            "url", "Server URL", "text",
+            help_text="e.g. https://192.168.1.106:8006",
+            required=True,
+            default="https://localhost:8006",
+        ),
+        FieldSpec(
+            "user", "API User", "text",
+            help_text="e.g. root@pam",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "token_name", "Token Name", "text",
+            help_text="API token name (Datacenter → Permissions → API Tokens)",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "token_value", "Token Value", "password",
+            help_text="API token secret value",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL", "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=30,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "poll_nodes", "Poll Nodes", "checkbox",
+            help_text="Monitor node online/offline status and resources",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_vms", "Poll VMs/CTs", "checkbox",
+            help_text="Monitor VM and container state transitions",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_tasks", "Poll Tasks", "checkbox",
+            help_text="Detect failed backups and other task errors",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_replication", "Poll Replication", "checkbox",
+            help_text="Monitor replication job failures",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "cpu_threshold", "CPU Alert Threshold (%)",
+            "float", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "memory_threshold", "Memory Alert Threshold (%)",
+            "float", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
+        ),
+    ],
+    "portainer": [
+        FieldSpec(
+            "url", "Portainer URL", "text",
+            help_text="e.g. https://192.168.1.120:9443",
+            required=True,
+            default="https://localhost:9443",
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text="Portainer → Settings → Access control → API keys",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL", "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=30,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+        FieldSpec(
+            "poll_endpoints", "Poll Endpoints", "checkbox",
+            help_text="Monitor Docker host endpoint online/offline status",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_containers", "Poll Containers", "checkbox",
+            help_text="Monitor container state transitions across all endpoints",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_stacks", "Poll Stacks", "checkbox",
+            help_text="Derive stack health from container states",
+            default=True, group="Polling",
+        ),
+        FieldSpec(
+            "poll_container_resources", "Poll Container Resources",
             "checkbox",
             help_text=(
-                "Poll /api/config for degraded detection"
-                " and response time tracking"
+                "Monitor CPU/memory per container"
+                " (expensive — 1 API call per container)"
             ),
-            default=False, group="Deep Health",
+            default=False, group="Polling",
         ),
         FieldSpec(
-            "admin_token", "Admin Token", "password",
-            help_text="Optional — enables /admin panel health check",
-            group="Deep Health",
+            "cpu_threshold", "CPU Alert Threshold (%)",
+            "float", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
         ),
         FieldSpec(
-            "slow_threshold_ms", "Slow Threshold (ms)",
-            "number", default=2000, min_val=100,
-            help_text=(
-                "Response time above this triggers"
-                " a slow warning"
-            ),
-            group="Deep Health",
+            "memory_threshold", "Memory Alert Threshold (%)",
+            "float", default=90.0, min_val=0, max_val=100,
+            group="Thresholds",
+        ),
+        FieldSpec(
+            "ignore_containers", "Ignore Containers", "list_str",
+            help_text="Container names to skip (one per line)",
         ),
     ],
 
+    # -----------------------------------------------------------------------
     # Core services
     # -----------------------------------------------------------------------
     "llm_triage": [
@@ -658,6 +1050,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "api_key", "API Key", "password",
+            help_text=(
+                "Optional for local Ollama; required for"
+                " OpenRouter or other hosted providers"
+            ),
             group="Authentication",
         ),
         FieldSpec(
@@ -686,6 +1082,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "api_key", "API Key", "password",
+            help_text=(
+                "Provider API key — e.g. OpenRouter,"
+                " Anthropic, or OpenAI"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -738,6 +1138,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "Long-Lived Access Token", "password",
+            help_text=(
+                "HA → Profile → Long-Lived Access Tokens"
+                " → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -792,6 +1196,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "api_key", "API Key", "password",
+            help_text=(
+                "Portainer → My Account → Access Tokens"
+                " → Add access token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -829,10 +1237,15 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token_name", "Token Name", "text",
+            help_text=(
+                "Datacenter → Permissions → API Tokens"
+                " → token ID (without user@realm!)"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
             "token_value", "Token Value", "password",
+            help_text="Secret value shown once at token creation",
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -848,10 +1261,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Local admin account — avoid using SSO credentials",
             required=True, group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Password for the local admin account",
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -883,14 +1298,26 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     "cloudflare_handler": [
         FieldSpec(
             "api_token", "API Token", "password",
+            help_text=(
+                "Cloudflare dashboard → My Profile"
+                " → API Tokens → Create Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
             "zone_id", "Zone ID", "text",
+            help_text=(
+                "Dashboard → domain → Overview sidebar"
+                " → Zone ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
             "account_id", "Account ID", "text",
+            help_text=(
+                "Dashboard → any domain → Overview sidebar"
+                " → Account ID"
+            ),
             group="Authentication",
         ),
         FieldSpec(
@@ -906,6 +1333,10 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "token", "API Token", "password",
+            help_text=(
+                "InfluxDB → Data → API Tokens"
+                " → Generate Token"
+            ),
             required=True, group="Authentication",
         ),
         FieldSpec(
@@ -1008,10 +1439,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="Broker username — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="Broker password — leave blank if anonymous",
             group="Authentication",
         ),
         FieldSpec(
@@ -1039,10 +1472,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "username", "Username", "text",
+            help_text="SMTP login — often your email address",
             group="Authentication",
         ),
         FieldSpec(
             "password", "Password", "password",
+            help_text="SMTP password or app-specific password",
             group="Authentication",
         ),
         FieldSpec(
@@ -1070,10 +1505,15 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
     "telegram": [
         FieldSpec(
             "bot_token", "Bot Token", "password",
+            help_text="Message @BotFather on Telegram → /newbot",
             required=True, group="Authentication",
         ),
         FieldSpec(
             "chat_id", "Chat ID", "text",
+            help_text=(
+                "Numeric chat/group ID — message your bot"
+                " then check /getUpdates"
+            ),
             required=True,
         ),
         FieldSpec(
@@ -1083,6 +1523,52 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
                 ("MarkdownV2", "MarkdownV2"),
             ],
             default="HTML",
+        ),
+    ],
+    "discord": [
+        FieldSpec(
+            "webhook_url", "Webhook URL", "password",
+            help_text=(
+                "Server Settings → Integrations → Webhooks"
+                " → Copy Webhook URL"
+            ),
+            required=True,
+        ),
+        FieldSpec(
+            "username", "Bot Username", "text",
+            help_text="Display name for the webhook messages",
+            default="OasisAgent",
+        ),
+        FieldSpec(
+            "avatar_url", "Avatar URL", "text",
+            help_text="URL for the webhook avatar image (optional)",
+        ),
+    ],
+    "slack": [
+        FieldSpec(
+            "webhook_url", "Webhook URL", "password",
+            help_text=(
+                "Slack Incoming Webhook URL — create one at"
+                " api.slack.com/apps → Incoming Webhooks"
+            ),
+            required=True,
+        ),
+        FieldSpec(
+            "channel", "Channel Override", "text",
+            help_text=(
+                "Override the default channel (e.g. #alerts)."
+                " Leave blank to use the webhook default"
+            ),
+        ),
+        FieldSpec(
+            "username", "Bot Username", "text",
+            help_text="Display name for the bot in Slack",
+            default="OasisAgent",
+        ),
+        FieldSpec(
+            "icon_emoji", "Icon Emoji", "text",
+            help_text="Emoji for the bot avatar (e.g. :robot_face:)",
+            default=":robot_face:",
         ),
     ],
 }
@@ -1103,8 +1589,9 @@ DEFERRED_FIELDS: dict[str, frozenset[str]] = {
     "guardrails": frozenset({"circuit_breaker"}),
     # Scanner uses a custom page (PR 2) — all fields deferred
     "scanner": frozenset({
-        "interval", "certificate_expiry", "disk_space",
-        "ha_health", "docker_health",
+        "interval", "adaptive_enabled", "adaptive_fast_factor",
+        "adaptive_recovery_scans", "certificate_expiry", "disk_space",
+        "ha_health", "docker_health", "backup_freshness",
     }),
 }
 

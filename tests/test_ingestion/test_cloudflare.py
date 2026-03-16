@@ -83,7 +83,7 @@ class TestAdapterLifecycle:
         adapter._client = AsyncMock()
         await adapter.stop()
         assert adapter._stopping is True
-        assert adapter._connected is False
+        assert all(v is False for v in adapter._endpoint_health.values())
 
     @pytest.mark.asyncio
     async def test_start_connection_failure(self) -> None:
@@ -92,7 +92,7 @@ class TestAdapterLifecycle:
             side_effect=ConnectionError("refused"),
         )
         await adapter.start()
-        assert adapter._connected is False
+        assert not await adapter.healthy()
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +232,20 @@ class TestTunnelPolling:
 # ---------------------------------------------------------------------------
 
 
+def _graphql_waf_response(
+    events: list[dict[str, object]],
+) -> dict[str, object]:
+    """Wrap WAF events in the Cloudflare GraphQL response envelope."""
+    return {
+        "data": {
+            "viewer": {
+                "zones": [{"firewallEventsAdaptive": events}],
+            },
+        },
+        "errors": None,
+    }
+
+
 class TestWafPolling:
     @pytest.mark.asyncio
     async def test_waf_spike_event(self) -> None:
@@ -246,9 +260,9 @@ class TestWafPolling:
             {"action": "managed_challenge", "ruleId": "r3", "clientIP": "9.0.1.2"},
         ]
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": waf_events,
-        })
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response(waf_events),
+        )
 
         await adapter._poll_waf()
 
@@ -264,11 +278,11 @@ class TestWafPolling:
     async def test_waf_below_threshold_no_event(self) -> None:
         adapter, queue = _make_adapter(waf_spike_threshold=10)
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": [
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([
                 {"action": "block", "ruleId": "r1", "clientIP": "1.2.3.4"},
-            ],
-        })
+            ]),
+        )
 
         await adapter._poll_waf()
         queue.put_nowait.assert_not_called()
@@ -277,13 +291,13 @@ class TestWafPolling:
     async def test_waf_allow_actions_not_counted(self) -> None:
         adapter, queue = _make_adapter(waf_spike_threshold=3)
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": [
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([
                 {"action": "allow", "ruleId": "r1", "clientIP": "1.2.3.4"},
                 {"action": "log", "ruleId": "r2", "clientIP": "5.6.7.8"},
                 {"action": "block", "ruleId": "r3", "clientIP": "9.0.1.2"},
-            ],
-        })
+            ]),
+        )
 
         await adapter._poll_waf()
         queue.put_nowait.assert_not_called()  # only 1 blocked
@@ -292,41 +306,58 @@ class TestWafPolling:
     async def test_waf_empty_response_no_event(self) -> None:
         adapter, queue = _make_adapter()
 
-        adapter._client.get = AsyncMock(return_value={"result": []})
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([]),
+        )
 
         await adapter._poll_waf()
         queue.put_nowait.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_waf_lookback_uses_last_poll_time(self) -> None:
-        """Second poll should use last poll time, not lookback window."""
+        """Second poll should use datetime_gt in query string."""
         from datetime import UTC, datetime
 
         adapter, _queue = _make_adapter(waf_spike_threshold=100)
         first_time = datetime(2026, 3, 12, 10, 0, 0, tzinfo=UTC)
         adapter._last_waf_poll = first_time
 
-        adapter._client.get = AsyncMock(return_value={"result": []})
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([]),
+        )
 
         await adapter._poll_waf()
 
-        call_kwargs = adapter._client.get.call_args[1]
-        assert call_kwargs["since"] == "2026-03-12T10:00:00Z"
+        query_arg = adapter._client.graphql.call_args[0][0]
+        assert "2026-03-12T10:00:00Z" in query_arg
 
     @pytest.mark.asyncio
     async def test_waf_dedup_key(self) -> None:
         adapter, queue = _make_adapter(waf_spike_threshold=1)
 
-        adapter._client.get = AsyncMock(return_value={
-            "result": [
+        adapter._client.graphql = AsyncMock(
+            return_value=_graphql_waf_response([
                 {"action": "block", "ruleId": "r1", "clientIP": "1.2.3.4"},
-            ],
-        })
+            ]),
+        )
 
         await adapter._poll_waf()
 
         event = queue.put_nowait.call_args[0][0]
         assert event.metadata.dedup_key == "cloudflare:waf:zone-456:spike"
+
+    @pytest.mark.asyncio
+    async def test_waf_empty_zones_no_event(self) -> None:
+        """Invalid zone tag returns empty zones list — should not crash."""
+        adapter, queue = _make_adapter()
+
+        adapter._client.graphql = AsyncMock(return_value={
+            "data": {"viewer": {"zones": []}},
+            "errors": None,
+        })
+
+        await adapter._poll_waf()
+        queue.put_nowait.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +564,177 @@ class TestEnqueueErrorHandling:
         )
 
         adapter._enqueue(event)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Per-endpoint health tracking
+# ---------------------------------------------------------------------------
+
+
+class TestEndpointHealth:
+    def test_endpoint_health_initial_state(self) -> None:
+        """All endpoints start False before first poll."""
+        adapter, _ = _make_adapter()
+        assert adapter._endpoint_health == {
+            "tunnels": False, "waf": False, "ssl": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_healthy_any_endpoint_up(self) -> None:
+        adapter, _ = _make_adapter()
+        adapter._endpoint_health["tunnels"] = True
+        adapter._endpoint_health["waf"] = False
+        assert await adapter.healthy() is True
+
+    @pytest.mark.asyncio
+    async def test_healthy_all_endpoints_down(self) -> None:
+        adapter, _ = _make_adapter()
+        # All start False
+        assert await adapter.healthy() is False
+
+    @pytest.mark.asyncio
+    async def test_healthy_no_endpoints_enabled(self) -> None:
+        adapter, _ = _make_adapter(
+            poll_tunnels=False, poll_waf=False, poll_ssl=False,
+        )
+        assert adapter._endpoint_health == {}
+        assert await adapter.healthy() is False
+
+    @pytest.mark.asyncio
+    async def test_poll_waf_failure_isolates_tunnels_ssl(self) -> None:
+        """WAF failure does not affect tunnels or SSL health."""
+        adapter, _ = _make_adapter()
+
+        async def _fail_waf() -> None:
+            msg = "waf 400"
+            raise RuntimeError(msg)
+
+        adapter._poll_tunnels = AsyncMock()  # type: ignore[method-assign]
+        adapter._poll_waf = _fail_waf  # type: ignore[method-assign]
+        adapter._poll_ssl = AsyncMock()  # type: ignore[method-assign]
+
+        # Run one iteration then stop
+        adapter._stopping = False
+
+        async def _stop_after_one(*_args: object, **_kwargs: object) -> None:
+            adapter._stopping = True
+
+        with patch("asyncio.sleep", new=_stop_after_one):
+            await adapter._poll_loop()
+
+        assert adapter._endpoint_health["tunnels"] is True
+        assert adapter._endpoint_health["waf"] is False
+        assert adapter._endpoint_health["ssl"] is True
+
+    @pytest.mark.asyncio
+    async def test_poll_tunnel_failure_isolates_waf_ssl(self) -> None:
+        """Tunnel failure does not affect WAF or SSL health."""
+        adapter, _ = _make_adapter()
+
+        async def _fail_tunnels() -> None:
+            msg = "tunnel timeout"
+            raise RuntimeError(msg)
+
+        adapter._poll_tunnels = _fail_tunnels  # type: ignore[method-assign]
+        adapter._poll_waf = AsyncMock()  # type: ignore[method-assign]
+        adapter._poll_ssl = AsyncMock()  # type: ignore[method-assign]
+
+        adapter._stopping = False
+
+        async def _stop_after_one(*_args: object, **_kwargs: object) -> None:
+            adapter._stopping = True
+
+        with patch("asyncio.sleep", new=_stop_after_one):
+            await adapter._poll_loop()
+
+        assert adapter._endpoint_health["tunnels"] is False
+        assert adapter._endpoint_health["waf"] is True
+        assert adapter._endpoint_health["ssl"] is True
+
+    @pytest.mark.asyncio
+    async def test_all_polls_fail_healthy_false(self) -> None:
+        """All endpoints fail → healthy() returns False."""
+        adapter, _ = _make_adapter()
+
+        async def _fail() -> None:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+        adapter._poll_tunnels = _fail  # type: ignore[method-assign]
+        adapter._poll_waf = _fail  # type: ignore[method-assign]
+        adapter._poll_ssl = _fail  # type: ignore[method-assign]
+
+        adapter._stopping = False
+
+        async def _stop_after_one(*_args: object, **_kwargs: object) -> None:
+            adapter._stopping = True
+
+        with patch("asyncio.sleep", new=_stop_after_one):
+            await adapter._poll_loop()
+
+        assert await adapter.healthy() is False
+
+    def test_health_detail_returns_per_endpoint_status(self) -> None:
+        """Mixed health returns correct connected/disconnected dict."""
+        adapter, _ = _make_adapter()
+        adapter._endpoint_health["tunnels"] = True
+        adapter._endpoint_health["waf"] = False
+        adapter._endpoint_health["ssl"] = True
+
+        detail = adapter.health_detail()
+        assert detail == {
+            "tunnels": "connected",
+            "waf": "disconnected",
+            "ssl": "connected",
+        }
+
+    @pytest.mark.asyncio
+    async def test_endpoint_health_recovery(self) -> None:
+        """Endpoint fails one cycle, succeeds next → flips to True."""
+        adapter, _ = _make_adapter(
+            poll_tunnels=True, poll_waf=False, poll_ssl=False,
+            account_id="acc-123", zone_id="",
+            poll_interval=1,
+        )
+
+        call_count = 0
+
+        async def _fail_then_succeed() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                msg = "first fail"
+                raise RuntimeError(msg)
+
+        adapter._poll_tunnels = _fail_then_succeed  # type: ignore[method-assign]
+
+        sleep_calls = 0
+
+        async def _stop_after_two_iterations(
+            *_args: object, **_kwargs: object,
+        ) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 2:
+                adapter._stopping = True
+
+        with patch("asyncio.sleep", new=_stop_after_two_iterations):
+            await adapter._poll_loop()
+
+        assert adapter._endpoint_health["tunnels"] is True
+
+    @pytest.mark.asyncio
+    async def test_stop_clears_endpoint_health(self) -> None:
+        """After stop(), all endpoints are False."""
+        adapter, _ = _make_adapter()
+        adapter._endpoint_health["tunnels"] = True
+        adapter._endpoint_health["waf"] = True
+        adapter._endpoint_health["ssl"] = True
+
+        adapter._client = AsyncMock()
+        await adapter.stop()
+
+        assert all(v is False for v in adapter._endpoint_health.values())
 
 
 # ---------------------------------------------------------------------------

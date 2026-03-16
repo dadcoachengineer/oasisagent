@@ -78,8 +78,8 @@ class TestPendingQueueAdd:
     @pytest.mark.asyncio
     async def test_add_multiple_unique_ids(self) -> None:
         queue = PendingQueue()
-        p1 = await queue.add("e1", _make_action(), "d1", 30)
-        p2 = await queue.add("e2", _make_action(), "d2", 30)
+        p1 = await queue.add("e1", _make_action(target_entity_id="a"), "d1", 30)
+        p2 = await queue.add("e2", _make_action(target_entity_id="b"), "d2", 30)
         assert p1.id != p2.id
 
     @pytest.mark.asyncio
@@ -222,8 +222,8 @@ class TestPendingQueueExpireStale:
     @pytest.mark.asyncio
     async def test_expire_stale_ignores_already_resolved(self) -> None:
         queue = PendingQueue()
-        p1 = await queue.add("evt-1", _make_action(), "test", 30)
-        p2 = await queue.add("evt-2", _make_action(), "test", 30)
+        p1 = await queue.add("evt-1", _make_action(target_entity_id="a"), "test", 30)
+        p2 = await queue.add("evt-2", _make_action(target_entity_id="b"), "test", 30)
         await queue.approve(p1.id)
         await queue.reject(p2.id)
 
@@ -238,8 +238,8 @@ class TestPendingQueueExpireStale:
     @pytest.mark.asyncio
     async def test_expire_stale_multiple(self) -> None:
         queue = PendingQueue()
-        p1 = await queue.add("evt-1", _make_action(), "test", 30)
-        p2 = await queue.add("evt-2", _make_action(), "test", 30)
+        p1 = await queue.add("evt-1", _make_action(target_entity_id="a"), "test", 30)
+        p2 = await queue.add("evt-2", _make_action(target_entity_id="b"), "test", 30)
 
         p1.expires_at = datetime.now(UTC) - timedelta(seconds=1)
         p2.expires_at = datetime.now(UTC) - timedelta(seconds=1)
@@ -272,9 +272,9 @@ class TestPendingQueueLookup:
     @pytest.mark.asyncio
     async def test_list_pending_returns_only_pending(self) -> None:
         queue = PendingQueue()
-        p1 = await queue.add("evt-1", _make_action(), "test", 30)
-        p2 = await queue.add("evt-2", _make_action(), "test", 30)
-        p3 = await queue.add("evt-3", _make_action(), "test", 30)
+        p1 = await queue.add("evt-1", _make_action(target_entity_id="a"), "test", 30)
+        p2 = await queue.add("evt-2", _make_action(target_entity_id="b"), "test", 30)
+        p3 = await queue.add("evt-3", _make_action(target_entity_id="c"), "test", 30)
         await queue.approve(p1.id)
         await queue.reject(p2.id)
 
@@ -297,8 +297,8 @@ class TestPendingQueuePayload:
     @pytest.mark.asyncio
     async def test_to_list_payload_only_pending(self) -> None:
         queue = PendingQueue()
-        p1 = await queue.add("evt-1", _make_action(), "test", 30)
-        p2 = await queue.add("evt-2", _make_action(), "test", 30)
+        p1 = await queue.add("evt-1", _make_action(target_entity_id="a"), "test", 30)
+        p2 = await queue.add("evt-2", _make_action(target_entity_id="b"), "test", 30)
         await queue.approve(p1.id)
 
         payload = queue.to_list_payload()
@@ -518,9 +518,9 @@ class TestPendingQueuePersistence:
     async def test_from_db_does_not_load_resolved(self, db: aiosqlite.Connection) -> None:
         """Approved/rejected/expired rows are not loaded on restart."""
         queue1 = await PendingQueue.from_db(db)
-        p1 = await queue1.add("evt-1", _make_action(), "test", 30)
-        p2 = await queue1.add("evt-2", _make_action(), "test", 30)
-        p3 = await queue1.add("evt-3", _make_action(), "test", 30)
+        p1 = await queue1.add("evt-1", _make_action(target_entity_id="a"), "test", 30)
+        p2 = await queue1.add("evt-2", _make_action(target_entity_id="b"), "test", 30)
+        p3 = await queue1.add("evt-3", _make_action(target_entity_id="c"), "test", 30)
         await queue1.approve(p1.id)
         await queue1.reject(p2.id)
         # Force p3 to be expired — update both SQLite and in-memory

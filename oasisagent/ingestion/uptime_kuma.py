@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 
 from oasisagent.clients.uptime_kuma import MonitorMetrics, UptimeKumaClient
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
+from oasisagent.util.dedup import normalize_cert_dedup_key
 
 if TYPE_CHECKING:
     from oasisagent.config import UptimeKumaAdapterConfig
@@ -200,7 +201,12 @@ class UptimeKumaAdapter(IngestAdapter):
         return []
 
     def _check_cert(self, monitor: MonitorMetrics) -> list[Event]:
-        """Emit certificate_expiry on threshold transitions."""
+        """Emit certificate_expiry on threshold transitions.
+
+        Uses normalized dedup keys so that certificate events from both
+        Uptime Kuma and the cert scanner share the same key for the same
+        hostname, allowing the EventQueue to deduplicate across sources.
+        """
         if monitor.cert_days_remaining is None:
             return []
 
@@ -218,6 +224,9 @@ class UptimeKumaAdapter(IngestAdapter):
         if old_state == new_state:
             return []
 
+        # Use monitor URL for normalized dedup key (cross-source correlation)
+        cert_dedup_key = normalize_cert_dedup_key(monitor.url) if monitor.url else None
+
         # Recovery
         if new_state == "ok" and old_state in ("warning", "critical"):
             return [self._make_event(
@@ -226,7 +235,7 @@ class UptimeKumaAdapter(IngestAdapter):
                     "cert_days_remaining": days,
                     "previous_state": old_state,
                 },
-                dedup_suffix=":cert",
+                dedup_key_override=cert_dedup_key,
             )]
 
         # Warning or critical
@@ -239,7 +248,7 @@ class UptimeKumaAdapter(IngestAdapter):
                     "state": new_state,
                     "cert_is_valid": monitor.cert_is_valid,
                 },
-                dedup_suffix=":cert",
+                dedup_key_override=cert_dedup_key,
             )]
 
         return []
@@ -252,8 +261,10 @@ class UptimeKumaAdapter(IngestAdapter):
         *,
         payload: dict[str, object] | None = None,
         dedup_suffix: str = "",
+        dedup_key_override: str | None = None,
     ) -> Event:
         """Build an Event from monitor data."""
+        dedup_key = dedup_key_override or f"uptime_kuma:{monitor.name}{dedup_suffix}"
         return Event(
             source=self.name,
             system="uptime_kuma",
@@ -267,16 +278,49 @@ class UptimeKumaAdapter(IngestAdapter):
                 **(payload or {}),
             },
             metadata=EventMetadata(
-                dedup_key=f"uptime_kuma:{monitor.name}{dedup_suffix}",
+                dedup_key=dedup_key,
             ),
         )
 
-    def _enqueue(self, event: Event) -> None:
-        """Enqueue an event, logging on failure."""
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover monitored services from Uptime Kuma."""
+        from urllib.parse import urlparse
+
+        nodes: list[TopologyNode] = []
+        edges: list[TopologyEdge] = []
+        source = f"auto:{self.name}"
+        now = datetime.now(UTC)
+
         try:
-            self._queue.put_nowait(event)
+            monitors = await self._client.get_metrics()
         except Exception:
-            logger.warning(
-                "Uptime Kuma: failed to enqueue event: %s/%s",
-                event.system, event.event_type,
-            )
+            logger.debug("Uptime Kuma topology discovery failed")
+            return [], []
+
+        for monitor in monitors:
+            host_ip: str | None = None
+            if monitor.url:
+                parsed = urlparse(monitor.url)
+                host_ip = parsed.hostname
+
+            nodes.append(TopologyNode(
+                entity_id=f"uptime_kuma:{monitor.name}",
+                entity_type="monitor",
+                display_name=monitor.name,
+                host_ip=host_ip,
+                source=source,
+                last_seen=now,
+                metadata={
+                    "url": monitor.url,
+                    "monitor_type": monitor.monitor_type,
+                },
+            ))
+
+        return nodes, edges
+

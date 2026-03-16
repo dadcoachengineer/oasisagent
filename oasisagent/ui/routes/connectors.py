@@ -97,7 +97,7 @@ def _parse_form_config(
                 if spec.default is not None:
                     config[spec.name] = spec.default
                 continue
-            config[spec.name] = int(value)
+            config[spec.name] = int(float(value))
             continue
 
         if spec.input_type == "float":
@@ -154,6 +154,7 @@ def _build_ui_crud(
     create_method: str,
     update_method: str,
     delete_method: str,
+    health_key: str | None = None,
 ) -> None:
     """Register all CRUD UI routes for a category on the module-level router."""
 
@@ -177,7 +178,7 @@ def _build_ui_crud(
                 "rows": masked,
                 "table": url_prefix,
                 "title": title,
-                "health_poll_interval": 5,
+                "health_poll_interval": 10,
             },
         )
 
@@ -261,9 +262,9 @@ def _build_ui_crud(
             raise HTTPException(status_code=422, detail=f"Unknown type: {type_name}")
 
         specs = get_form_specs(type_name)
-        config = _parse_form_config(form_data, specs, is_edit=False)
 
         try:
+            config = _parse_form_config(form_data, specs, is_edit=False)
             await getattr(store, create_method)(type_name, name, config)
         except (ValueError, ValidationError) as exc:
             errors = (
@@ -386,12 +387,11 @@ def _build_ui_crud(
         type_name = existing["type"]
         name = str(form_data.get("name", existing["name"])).strip()
         specs = get_form_specs(type_name)
-        config = _parse_form_config(form_data, specs, is_edit=True)
-
-        # Build the update payload
-        updates: dict[str, Any] = {"name": name, "config": config}
 
         try:
+            config = _parse_form_config(form_data, specs, is_edit=True)
+            # Build the update payload
+            updates: dict[str, Any] = {"name": name, "config": config}
             result = await getattr(store, update_method)(row_id, updates)
         except (ValueError, ValidationError) as exc:
             errors = (
@@ -476,7 +476,8 @@ def _build_ui_crud(
             try:
                 health = await orchestrator.get_component_health()
                 # The category key matches: connectors, services, notifications
-                health_map = health.get(url_prefix, {})
+                _key = health_key or url_prefix
+                health_map = health.get(_key, {})
                 scanner_detail = health.get("scanner_detail", {}).get("detail", "")
             except Exception:
                 pass  # All will show "not_running"
@@ -539,6 +540,74 @@ def _build_ui_crud(
                 "table": url_prefix,
             },
         )
+
+    # -----------------------------------------------------------------------
+    # POST /{category}/{id}/restart — restart component (HTMX)
+    # -----------------------------------------------------------------------
+
+    # Build the restart method name from the category
+    _restart_methods = {
+        "connectors": "restart_connector",
+        "services": "restart_service",
+        "channels": "restart_notification",
+    }
+    restart_method_name = _restart_methods.get(url_prefix)
+
+    if restart_method_name is not None:
+
+        @router.post(
+            f"/{url_prefix}/{{row_id}}/restart",
+            response_class=HTMLResponse,
+            name=f"{url_prefix}_restart",
+        )
+        async def restart_item(
+            request: Request,
+            row_id: int,
+            current_user: TokenPayload = Depends(require_admin),
+            _restart_method: str = restart_method_name,
+        ) -> Response:
+            store = _get_store(request)
+            existing = await getattr(store, get_method)(row_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Not found")
+
+            orchestrator = getattr(request.app.state, "orchestrator", None)
+            if orchestrator is None:
+                raise HTTPException(
+                    status_code=503, detail="Orchestrator not available",
+                )
+
+            restart_fn = getattr(orchestrator, _restart_method, None)
+            if restart_fn is None:
+                raise HTTPException(
+                    status_code=501, detail="Restart not supported",
+                )
+
+            success = await restart_fn(row_id)
+
+            # Return updated row via HTMX swap
+            refreshed = await getattr(store, get_method)(row_id)
+            if refreshed is None:
+                raise HTTPException(status_code=404, detail="Not found")
+
+            masked = store.mask_row(table, refreshed)
+            templates = _get_templates(request)
+
+            response = templates.TemplateResponse(
+                "connectors/_row.html",
+                {
+                    **_base_context(request, current_user),
+                    "row": masked,
+                    "table": url_prefix,
+                    "restart_success": success,
+                },
+            )
+            # Signal restart result to the UI via HX-Trigger header
+            if success:
+                response.headers["HX-Trigger"] = "restart-success"
+            else:
+                response.headers["HX-Trigger"] = "restart-failed"
+            return response
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +815,7 @@ _build_ui_crud(
 )
 
 _build_ui_crud(
-    url_prefix="notifications",
+    url_prefix="channels",
     table="notification_channels",
     title="Notification Channels",
     type_registry=NOTIFICATION_TYPES,
@@ -755,4 +824,5 @@ _build_ui_crud(
     create_method="create_notification",
     update_method="update_notification",
     delete_method="delete_notification",
+    health_key="notifications",
 )

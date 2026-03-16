@@ -13,8 +13,9 @@ TLS connections. It complements two other certificate monitoring sources:
   data from Uptime Kuma's external monitoring — covers whatever monitors are
   configured there.
 
-All three sources use different ``source`` fields and ``dedup_key`` prefixes,
-so the pipeline can distinguish and correlate them.
+Certificate events from the cert scanner and Uptime Kuma adapter use the
+same normalized dedup key (via ``util.dedup.normalize_cert_dedup_key``) so
+the EventQueue drops duplicates when both sources report the same hostname.
 """
 
 from __future__ import annotations
@@ -23,10 +24,11 @@ import asyncio
 import logging
 import ssl
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from oasisagent.models import Event, EventMetadata, Severity
 from oasisagent.scanner.base import ScannerIngestAdapter
+from oasisagent.util.dedup import normalize_cert_dedup_key
 
 if TYPE_CHECKING:
     from oasisagent.config import CertExpiryCheckConfig
@@ -46,9 +48,13 @@ class CertExpiryScannerAdapter(ScannerIngestAdapter):
     """
 
     def __init__(
-        self, config: CertExpiryCheckConfig, queue: EventQueue, interval: int,
+        self,
+        config: CertExpiryCheckConfig,
+        queue: EventQueue,
+        interval: int,
+        **kwargs: Any,
     ) -> None:
-        super().__init__(queue, interval)
+        super().__init__(queue, interval, **kwargs)
         self._config = config
         # State tracking: endpoint -> "ok" | "warning" | "critical"
         self._states: dict[str, str] = {}
@@ -130,7 +136,7 @@ class CertExpiryScannerAdapter(ScannerIngestAdapter):
                     "previous_state": old_state,
                 },
                 metadata=EventMetadata(
-                    dedup_key=f"scanner.cert_expiry:{endpoint}",
+                    dedup_key=normalize_cert_dedup_key(endpoint),
                 ),
             )]
 
@@ -151,7 +157,7 @@ class CertExpiryScannerAdapter(ScannerIngestAdapter):
                     "critical_days": self._config.critical_days,
                 },
                 metadata=EventMetadata(
-                    dedup_key=f"scanner.cert_expiry:{endpoint}",
+                    dedup_key=normalize_cert_dedup_key(endpoint),
                 ),
             )]
 
@@ -178,7 +184,7 @@ class CertExpiryScannerAdapter(ScannerIngestAdapter):
                 "error_type": type(exc).__name__,
             },
             metadata=EventMetadata(
-                dedup_key=f"scanner.cert_expiry:{endpoint}:error",
+                dedup_key=f"{normalize_cert_dedup_key(endpoint)}:error",
             ),
         )]
 

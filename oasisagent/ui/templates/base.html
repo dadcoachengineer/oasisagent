@@ -1,19 +1,54 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full bg-gray-50">
+<html lang="en" class="h-full" x-data :class="$store.theme.dark ? 'dark' : ''">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}OasisAgent{% endblock %}</title>
     <meta name="csrf-token" content="{{ csrf_token }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        accent: {
+                            50:  '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0',
+                            300: '#6ee7b7', 400: '#34d399', 500: '#10b981',
+                            600: '#059669', 700: '#047857', 800: '#065f46',
+                            900: '#064e3b', 950: '#022c22',
+                        },
+                        surface: {
+                            50:  '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0',
+                            700: '#1e293b', 800: '#0f172a', 900: '#020617',
+                        },
+                    },
+                },
+            },
+        }
+    </script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
     <link rel="stylesheet" href="/ui/static/oasis.css">
     <script>
+        // Theme store — persists to localStorage, respects system preference
+        document.addEventListener('alpine:init', () => {
+            Alpine.store('theme', {
+                dark: localStorage.getItem('oasis-theme') === 'dark' ||
+                      (!localStorage.getItem('oasis-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches),
+                toggle() {
+                    this.dark = !this.dark;
+                    localStorage.setItem('oasis-theme', this.dark ? 'dark' : 'light');
+                },
+            });
+        });
+
         // Inject CSRF token into all HTMX requests.
-        // Read from cookie (not meta tag) so it stays in sync after
-        // the sliding-window middleware reissues the JWT + CSRF pair.
         function getCsrfToken() {
             var match = document.cookie.match(/(?:^|;\s*)oasis_csrf_token=([^;]+)/);
             return match ? match[1] : '';
@@ -22,51 +57,107 @@
             document.body.addEventListener('htmx:configRequest', function(e) {
                 e.detail.headers['X-CSRF-Token'] = getCsrfToken();
             });
+            document.body.addEventListener('htmx:responseError', function(evt) {
+                if (evt.detail.xhr && evt.detail.xhr.status === 401) {
+                    window.location.href = '/ui/login';
+                }
+            });
+            document.body.addEventListener('htmx:sseError', function(evt) {
+                if (!getCsrfToken()) {
+                    window.location.href = '/ui/login';
+                }
+            });
         });
     </script>
+    <!-- Prevent FOUC: apply dark class before paint -->
+    <script>
+        if (localStorage.getItem('oasis-theme') === 'dark' ||
+            (!localStorage.getItem('oasis-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
 </head>
-<body class="h-full" x-data="{ sidebarOpen: true, toast: null }"
+<body class="h-full bg-surface-50 dark:bg-surface-900 text-gray-900 dark:text-gray-100 font-sans antialiased"
+      x-data="{ sidebarOpen: true, toast: null }"
       @toast-success.window="toast = { type: 'success', message: $event.detail.message }; setTimeout(() => toast = null, 4000)"
       @toast-error.window="toast = { type: 'error', message: $event.detail.message }; setTimeout(() => toast = null, 6000)">
 
 {% block layout %}
 <div class="flex h-full">
     <!-- Sidebar -->
-    <aside class="w-64 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0" x-show="sidebarOpen">
-        <div class="p-4 border-b border-gray-700">
-            <h1 class="text-lg font-bold text-white tracking-wide">OasisAgent</h1>
-            <p class="text-xs text-gray-500 mt-1">v{{ version }}</p>
+    <aside class="w-64 flex flex-col flex-shrink-0 border-r border-gray-200 dark:border-gray-700/50
+                  bg-white/80 dark:bg-surface-800/90 backdrop-blur-xl"
+           x-show="sidebarOpen" x-transition:enter="transition ease-out duration-200"
+           x-transition:enter-start="-translate-x-full" x-transition:enter-end="translate-x-0">
+        <div class="p-4 border-b border-gray-200 dark:border-gray-700/50">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-accent-600 flex items-center justify-center">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-sm font-bold text-gray-900 dark:text-white tracking-wide">OasisAgent</h1>
+                    <p class="text-[10px] text-gray-400 dark:text-gray-500">v{{ version }}</p>
+                </div>
+            </div>
         </div>
-        <nav class="flex-1 p-3 space-y-1">
+        <nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">
             {% set nav_items = [
-                ("/ui/dashboard", "Dashboard", "viewer"),
-                ("/ui/connectors", "Connectors", "viewer"),
-                ("/ui/services", "Services", "viewer"),
-                ("/ui/notifications", "Notifications", "viewer"),
-                ("/ui/approvals", "Approvals", "operator"),
-                ("/ui/events", "Events", "viewer"),
-                ("/ui/known-fixes", "Known Fixes", "viewer"),
-                ("/ui/users", "Users", "admin"),
+                ("/ui/dashboard", "Dashboard", "viewer", "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"),
+                ("/ui/connectors", "Connectors", "viewer", "M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"),
+                ("/ui/services", "Services", "viewer", "M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"),
+                ("/ui/channels", "Channels", "operator", "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"),
+                ("/ui/notifications", "Notifications", "viewer", "M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"),
+                ("/ui/approvals", "Approvals", "operator", "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"),
+                ("/ui/events", "Events", "viewer", "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"),
+                ("/ui/known-fixes", "Known Fixes", "viewer", "M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"),
+                ("/ui/service-map", "Service Map", "viewer", "M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"),
+                ("/ui/users", "Users", "admin", "M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"),
             ] %}
-            {% for href, label, min_role in nav_items %}
+            {% for href, label, min_role, icon in nav_items %}
             {% if (min_role == "viewer") or
                   (min_role == "operator" and current_user.role in ("admin", "operator")) or
                   (min_role == "admin" and current_user.role == "admin") %}
             <a href="{{ href }}"
-               class="block px-3 py-2 rounded text-sm {% if request.url.path.startswith(href) %}bg-gray-800 text-white{% else %}hover:bg-gray-800 hover:text-white{% endif %}">
-                {{ label }}
+               class="flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-colors duration-150
+                      {% if request.url.path.startswith(href) %}
+                      bg-accent-50 dark:bg-accent-900/30 text-accent-700 dark:text-accent-400 font-medium
+                      {% else %}
+                      text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700/40 hover:text-gray-900 dark:hover:text-gray-200
+                      {% endif %}">
+                <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="{{ icon }}"/>
+                </svg>
+                {{ label }}{% if label == "Notifications" %}<span
+                    hx-get="/ui/notifications/unread-count"
+                    hx-trigger="load, every 30s [document.visibilityState === 'visible']"
+                    hx-swap="innerHTML"></span>{% endif %}
             </a>
             {% endif %}
             {% endfor %}
         </nav>
-        <div class="p-3 border-t border-gray-700 text-xs">
-            <div class="flex items-center justify-between">
-                <span>{{ current_user.username }}</span>
-                <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">{{ current_user.role }}</span>
+        <div class="p-3 border-t border-gray-200 dark:border-gray-700/50">
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-gray-600 dark:text-gray-400">{{ current_user.username }}</span>
+                <span class="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-[10px] font-medium uppercase tracking-wider">{{ current_user.role }}</span>
             </div>
-            <form method="post" action="/ui/logout" class="mt-2">
-                <button type="submit" class="text-gray-500 hover:text-gray-300 text-xs">Sign out</button>
-            </form>
+            <div class="flex items-center justify-between mt-2">
+                <form method="post" action="/ui/logout">
+                    <button type="submit" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-xs transition-colors">Sign out</button>
+                </form>
+                <!-- Dark mode toggle -->
+                <button @click="$store.theme.toggle()"
+                        class="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        title="Toggle dark mode">
+                    <svg x-show="!$store.theme.dark" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                    </svg>
+                    <svg x-show="$store.theme.dark" x-cloak class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                    </svg>
+                </button>
+            </div>
         </div>
     </aside>
 
@@ -81,8 +172,8 @@
 
 <!-- Toast notifications -->
 <div class="fixed top-4 right-4 z-50" x-show="toast" x-transition x-cloak>
-    <div class="rounded-lg shadow-lg px-4 py-3 text-sm text-white"
-         :class="toast?.type === 'error' ? 'bg-red-600' : 'bg-green-600'">
+    <div class="rounded-lg shadow-lg ring-1 px-4 py-3 text-sm text-white backdrop-blur-sm"
+         :class="toast?.type === 'error' ? 'bg-red-600/90 ring-red-500/20' : 'bg-accent-600/90 ring-accent-500/20'">
         <span x-text="toast?.message"></span>
     </div>
 </div>

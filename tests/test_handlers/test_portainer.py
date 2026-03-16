@@ -669,6 +669,101 @@ class TestVerify:
 # ---------------------------------------------------------------------------
 
 
+class TestExtractContainerId:
+    """Test _extract_container_id strips portainer:endpoint/ prefix."""
+
+    def test_prefixed_entity_id(self) -> None:
+        result = PortainerHandler._extract_container_id(
+            "portainer:Swarm (mix of nodes)/mediastack_radarr1.1.abc123",
+        )
+        assert result == "mediastack_radarr1.1.abc123"
+
+    def test_simple_prefix(self) -> None:
+        result = PortainerHandler._extract_container_id(
+            "portainer:local/my_container",
+        )
+        assert result == "my_container"
+
+    def test_bare_container_name(self) -> None:
+        result = PortainerHandler._extract_container_id("my_container")
+        assert result == "my_container"
+
+    def test_empty_string(self) -> None:
+        result = PortainerHandler._extract_container_id("")
+        assert result == ""
+
+    def test_container_id_with_no_slash(self) -> None:
+        result = PortainerHandler._extract_container_id("portainer:abc123")
+        assert result == "portainer:abc123"
+
+    @pytest.mark.asyncio
+    async def test_restart_uses_extracted_id(self) -> None:
+        """Regression: restart_container must strip entity prefix."""
+        handler = PortainerHandler(_make_config())
+        handler._session = AsyncMock()
+
+        mock_resp = AsyncMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        handler._session.post = MagicMock(return_value=mock_resp)
+
+        event = _make_event(
+            entity_id="portainer:Swarm (nodes)/mediastack_radarr1.1.xyz",
+        )
+        action = _make_action(operation="restart_container", params={})
+
+        result = await handler._op_restart_container(event, action)
+
+        assert result.status == ActionStatus.SUCCESS
+        call_url = handler._session.post.call_args[0][0]
+        assert "mediastack_radarr1.1.xyz" in call_url
+        assert "Swarm" not in call_url
+
+
+class TestDockerPrefixRouting:
+    """Test multi-endpoint routing via _docker_prefix_for()."""
+
+    def test_endpoint_id_from_event_payload_overrides_config(self) -> None:
+        handler = PortainerHandler(_make_config(endpoint_id=1))
+        event = _make_event(payload={"endpoint_id": 2})
+        prefix = handler._docker_prefix_for(event)
+        assert prefix == "/api/endpoints/2/docker"
+
+    def test_endpoint_id_from_action_params_wins(self) -> None:
+        handler = PortainerHandler(_make_config(endpoint_id=1))
+        event = _make_event(payload={"endpoint_id": 2})
+        action = _make_action(params={"endpoint_id": 3, "container_id": "x"})
+        prefix = handler._docker_prefix_for(event, action)
+        assert prefix == "/api/endpoints/3/docker"
+
+    def test_fallback_to_config_when_no_endpoint_id(self) -> None:
+        handler = PortainerHandler(_make_config(endpoint_id=5))
+        event = _make_event(payload={})
+        prefix = handler._docker_prefix_for(event)
+        assert prefix == "/api/endpoints/5/docker"
+
+    async def test_restart_uses_event_endpoint_id(self) -> None:
+        handler = _started_handler(endpoint_id=1)
+        _patch_session(handler, {
+            "post:/api/endpoints/2/docker/containers/my_container/restart": _mock_response(
+                status=204,
+            ),
+        })
+        action = _make_action(
+            operation="restart_container",
+            params={"container_id": "my_container"},
+        )
+        event = _make_event(payload={"endpoint_id": 2})
+
+        result = await handler.execute(event, action)
+
+        assert result.status == ActionStatus.SUCCESS
+        handler._session.post.assert_called()
+        call_path = handler._session.post.call_args[0][0]
+        assert call_path == "/api/endpoints/2/docker/containers/my_container/restart"
+
+
 class TestGetContext:
     async def test_gathers_inspect_and_logs(self) -> None:
         handler = _started_handler()

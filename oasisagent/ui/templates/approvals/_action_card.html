@@ -24,6 +24,7 @@
             {% endif %}
 
             {# Handler + operation badge #}
+            {% if action.action %}
             <div class="flex items-center gap-2 mb-2">
                 <span class="px-2 py-0.5 rounded bg-gray-100 text-xs font-mono text-gray-600">
                     {{ action.action.handler }}.{{ action.action.operation }}
@@ -44,8 +45,12 @@
                 {% endif %}
             </div>
 
+            {% endif %}
+
             {# Description #}
+            {% if action.action %}
             <p class="text-sm font-medium text-gray-900">{{ action.action.description }}</p>
+            {% endif %}
 
             {# Diagnosis #}
             {% if action.diagnosis %}
@@ -53,7 +58,7 @@
             {% endif %}
 
             {# Parameters #}
-            {% if action.action.params %}
+            {% if action.action and action.action.params %}
             <div class="mt-2">
                 <details class="text-xs">
                     <summary class="text-gray-400 cursor-pointer hover:text-gray-600">Parameters</summary>
@@ -63,7 +68,7 @@
             {% endif %}
 
             {# Reasoning #}
-            {% if action.action.reasoning %}
+            {% if action.action and action.action.reasoning %}
             <div class="mt-2">
                 <details class="text-xs">
                     <summary class="text-gray-400 cursor-pointer hover:text-gray-600">Reasoning</summary>

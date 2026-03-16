@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, TypedDict
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -147,6 +147,19 @@ class RecommendedAction(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     risk_tier: RiskTier
     reasoning: str = ""
+    target_entity_id: str | None = None
+
+
+class RemediationStep(BaseModel):
+    """A single step in a multi-system remediation plan from T2."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order: Annotated[int, Field(ge=1)]
+    action: RecommendedAction
+    success_criteria: str
+    depends_on: list[int] = Field(default_factory=list)
+    conditional: bool = False
 
 
 class DiagnosisResult(BaseModel):
@@ -157,6 +170,7 @@ class DiagnosisResult(BaseModel):
     root_cause: str
     confidence: Annotated[float, Field(ge=0.0, le=1.0)]
     recommended_actions: list[RecommendedAction] = Field(default_factory=list)
+    remediation_plan: list[RemediationStep] | None = None
     risk_assessment: str = ""
     additional_context: str = ""
     suggested_known_fix: dict[str, Any] | None = None
@@ -189,8 +203,239 @@ class VerifyResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Remediation plan execution (P2 plan-aware dispatch)
+# ---------------------------------------------------------------------------
+
+
+class PlanStatus(StrEnum):
+    """Lifecycle states of a remediation plan."""
+
+    PENDING_APPROVAL = "pending_approval"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class StepStatus(StrEnum):
+    """Lifecycle states of a single remediation step."""
+
+    PENDING = "pending"
+    READY = "ready"
+    EXECUTING = "executing"
+    VERIFYING = "verifying"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    BLOCKED = "blocked"
+
+
+class StepState(BaseModel):
+    """Runtime state of a remediation step within an executing plan."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    order: int
+    status: StepStatus = StepStatus.PENDING
+    action_result: ActionResult | None = None
+    verify_result: VerifyResult | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
+
+
+class RemediationPlan(BaseModel):
+    """A tracked remediation plan with step-level state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    event_id: str
+    status: PlanStatus = PlanStatus.PENDING_APPROVAL
+    steps: list[RemediationStep]
+    step_states: list[StepState] = Field(default_factory=list)
+    diagnosis: str = ""
+    effective_risk_tier: RiskTier
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    entity_id: str = ""
+    severity: str = ""
+    source: str = ""
+    system: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Notification (§10)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Decision details contract (§ issue #218)
+# ---------------------------------------------------------------------------
+
+
+class DecisionDetails(TypedDict, total=False):
+    """Explicit contract for DecisionResult.details dict.
+
+    All fields optional. Downstream consumers (timeline UI, correlation
+    engine, audit reader) can rely on these keys existing when the
+    corresponding tier produced the decision.
+
+    T0 fields:
+        matched_fix_id: The known fix ID that matched.
+
+    T1 fields:
+        classification: Event category from T1 triage.
+        confidence: T1 confidence score (0.0-1.0).
+        reasoning: T1 model reasoning text.
+        suggested_fix: T1 suggested fix (if disposition=KNOWN_PATTERN).
+
+    T2 fields:
+        t2_root_cause: Root cause analysis from T2 reasoning.
+        t2_confidence: T2 confidence score (0.0-1.0).
+        risk_assessment: T2 risk assessment text.
+        total_actions: Total actions recommended by T2.
+        approved_actions: Actions that passed guardrails.
+        blocked_count: Actions blocked by guardrails.
+
+    Guardrail fields:
+        guardrail_rule: The specific rule/pattern name that triggered.
+
+    Correlation fields:
+        leader_event_id: Leader event ID for correlated events.
+        escalate_to: Escalation target ("human", "t2").
+
+    Suppression fields:
+        suppressed_count: Number of consecutive events suppressed.
+    """
+
+    # T1
+    classification: str
+    confidence: float
+    reasoning: str
+    suggested_fix: str | None
+
+    # T2
+    t2_root_cause: str
+    t2_confidence: float
+    risk_assessment: str
+    total_actions: int
+    approved_actions: int
+    blocked_count: int
+
+    # Guardrails
+    guardrail_rule: str
+
+    # Correlation
+    leader_event_id: str
+    escalate_to: str
+
+    # Suppression
+    suppressed_count: int
+
+    # Dependency context (T2)
+    dependency_upstream: list[str]
+    dependency_downstream: list[str]
+    dependency_same_host: list[str]
+    dependency_depth: int
+
+    # Multi-handler context (T2)
+    multi_handler_context_systems: list[str]
+
+    # Remediation plan (T2)
+    remediation_plan_steps: int
+
+
+# ---------------------------------------------------------------------------
+# Service topology (§ issue #218 M2a)
+# ---------------------------------------------------------------------------
+
+
+class TopologyNode(BaseModel):
+    """A node in the service topology graph.
+
+    Represents a service, host, or network device discovered by an adapter
+    or manually added by the operator.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    entity_type: str  # e.g. "service", "host", "network_device", "proxy"
+    display_name: str = ""
+    host_ip: str | None = None
+    source: str = "manual"  # "manual" or "auto:<adapter_name>"
+    manually_edited: bool = False
+    last_seen: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TopologyEdge(BaseModel):
+    """A directed edge between two topology nodes.
+
+    Represents a dependency or relationship (e.g. "proxies_to",
+    "runs_on", "depends_on", "connects_via").
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_entity: str
+    to_entity: str
+    edge_type: str  # e.g. "proxies_to", "runs_on", "depends_on", "connects_via"
+    source: str = "manual"
+    manually_edited: bool = False
+    last_seen: datetime | None = None
+
+
+class TopologyDiff(BaseModel):
+    """A single change detected during topology discovery merge."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["added", "updated", "stale"]
+    entity_type: Literal["node", "edge"]
+    entity_id: str  # node entity_id or "from->to" for edges
+    details: str = ""
+
+
+class DependencyNode(BaseModel):
+    """A node in a dependency subgraph extracted for T2 context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    entity_type: str
+    display_name: str
+    host_ip: str | None = None
+    edge_type: str  # Edge from BFS parent (traversal edge, not relationship to root)
+    depth: int
+
+
+class DependencyEdgeInfo(BaseModel):
+    """An edge in the dependency subgraph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_entity: str
+    to_entity: str
+    edge_type: str
+    manually_edited: bool = False
+
+
+class DependencyContext(BaseModel):
+    """Structured dependency subgraph for T2 prompt injection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str
+    entity_type: str | None = None
+    host_ip: str | None = None
+    upstream: list[DependencyNode] = Field(default_factory=list)
+    downstream: list[DependencyNode] = Field(default_factory=list)
+    same_host: list[DependencyNode] = Field(default_factory=list)
+    edges: list[DependencyEdgeInfo] = Field(default_factory=list)
 
 
 class Notification(BaseModel):

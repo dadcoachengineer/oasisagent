@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+{% block title %}Service Map — OasisAgent{% endblock %}
+{% block layout %}
+<div class="flex h-full">
+    <!-- Sidebar (same as base) -->
+    <aside class="w-64 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0" x-show="sidebarOpen">
+        <div class="p-4 border-b border-gray-700">
+            <h1 class="text-lg font-bold text-white tracking-wide">OasisAgent</h1>
+            <p class="text-xs text-gray-500 mt-1">v{{ version }}</p>
+        </div>
+        <nav class="flex-1 p-3 space-y-1">
+            {% set nav_items = [
+                ("/ui/dashboard", "Dashboard", "viewer"),
+                ("/ui/connectors", "Connectors", "viewer"),
+                ("/ui/services", "Services", "viewer"),
+                ("/ui/channels", "Channels", "operator"),
+                ("/ui/notifications", "Notifications", "viewer"),
+                ("/ui/approvals", "Approvals", "operator"),
+                ("/ui/events", "Events", "viewer"),
+                ("/ui/known-fixes", "Known Fixes", "viewer"),
+                ("/ui/service-map", "Service Map", "viewer"),
+                ("/ui/users", "Users", "admin"),
+            ] %}
+            {% for href, label, min_role in nav_items %}
+            {% if (min_role == "viewer") or
+                  (min_role == "operator" and current_user.role in ("admin", "operator")) or
+                  (min_role == "admin" and current_user.role == "admin") %}
+            <a href="{{ href }}"
+               class="block px-3 py-2 rounded text-sm {% if request.url.path.startswith(href) %}bg-gray-800 text-white{% else %}hover:bg-gray-800 hover:text-white{% endif %}">
+                {{ label }}{% if label == "Notifications" %}<span
+                    hx-get="/ui/notifications/unread-count"
+                    hx-trigger="load, every 30s [document.visibilityState === 'visible']"
+                    hx-swap="innerHTML"></span>{% endif %}
+            </a>
+            {% endif %}
+            {% endfor %}
+        </nav>
+        <div class="p-3 border-t border-gray-700 text-xs">
+            <div class="flex items-center justify-between">
+                <span>{{ current_user.username }}</span>
+                <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">{{ current_user.role }}</span>
+            </div>
+            <form method="post" action="/ui/logout" class="mt-2">
+                <button type="submit" class="text-gray-500 hover:text-gray-300 text-xs">Sign out</button>
+            </form>
+        </div>
+    </aside>
+
+    <!-- Main content — full width for graph -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+        <!-- Toolbar -->
+        <div class="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200 flex-shrink-0">
+            <div>
+                <h1 class="text-lg font-bold text-gray-900">Service Map</h1>
+                <p class="text-xs text-gray-500">Interactive topology of monitored infrastructure</p>
+            </div>
+            <div class="flex items-center gap-2">
+                {% if current_user.role in ("admin", "operator") %}
+                <button id="btn-add-node"
+                        class="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+                    Add Node
+                </button>
+                <button id="btn-add-edge"
+                        class="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+                    Add Edge
+                </button>
+                <button id="btn-discover"
+                        class="bg-gray-600 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-700">
+                    Re-discover
+                </button>
+                {% endif %}
+                <button id="btn-fit"
+                        class="bg-gray-100 text-gray-600 px-3 py-1.5 rounded text-sm hover:bg-gray-200">
+                    Fit View
+                </button>
+            </div>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0">
+            <!-- Search -->
+            <div class="relative">
+                <input id="filter-search" type="text" placeholder="Search nodes..."
+                       class="block w-48 rounded border-gray-300 text-sm py-1 px-2 pr-6">
+                <button id="filter-search-clear"
+                        class="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm px-1">&times;</button>
+            </div>
+            <span class="text-gray-300">|</span>
+            <!-- Type pills (populated by JS) -->
+            <div id="type-filter-pills" class="flex items-center gap-1 flex-wrap"></div>
+            <span class="text-gray-300">|</span>
+            <!-- Focus indicator (hidden by default) -->
+            <div id="focus-indicator" class="hidden flex items-center gap-2 text-xs text-gray-600">
+                <span>Focus:</span>
+                <span id="focus-node-label" class="font-medium text-gray-900"></span>
+                <button id="focus-depth-minus"
+                        class="w-5 h-5 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs leading-none">-</button>
+                <span><span id="focus-depth-label">1</span> hops</span>
+                <button id="focus-depth-plus"
+                        class="w-5 h-5 rounded bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs leading-none">+</button>
+                <button id="focus-show-all"
+                        class="text-blue-600 hover:text-blue-800 text-xs font-medium ml-1">Show All</button>
+            </div>
+        </div>
+
+        <div class="flex flex-1 overflow-hidden relative">
+            <!-- Graph container -->
+            <div id="graph-container" class="flex-1 bg-gray-50">
+                <svg id="service-map-svg" class="w-full h-full"></svg>
+            </div>
+
+            <!-- Side panel (hidden by default) -->
+            <div id="side-panel" class="w-80 bg-white border-l border-gray-200 overflow-y-auto hidden flex-shrink-0">
+                <div id="side-panel-content" class="p-4">
+                    <!-- Filled by JS on node click -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="flex items-center gap-4 px-4 py-2 bg-white border-t border-gray-200 text-xs text-gray-500 flex-shrink-0 flex-wrap">
+            <span class="font-medium text-gray-700">Nodes:</span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #3b82f6;"></span>
+                Network Device
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #22c55e;"></span>
+                Service
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #6b7280;"></span>
+                Host
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #f97316;"></span>
+                Proxy
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #a855f7;"></span>
+                Monitor
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #06b6d4;"></span>
+                Container
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block" style="background: #ef4444;"></span>
+                External
+            </span>
+            <span class="ml-2 flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block border-2 border-dashed border-gray-400 bg-transparent"></span>
+                Manual
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="w-3 h-3 rounded-full inline-block border-2 border-solid border-gray-400 bg-transparent"></span>
+                Auto
+            </span>
+            <span class="ml-2 font-medium text-gray-700">Edges:</span>
+            <span class="flex items-center gap-1">
+                <span class="inline-block w-4 border-t-2" style="border-color: #9ca3af;"></span>
+                runs_on
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="inline-block w-4 border-t-2" style="border-color: #3b82f6;"></span>
+                depends_on
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="inline-block w-4 border-t-2" style="border-color: #f97316;"></span>
+                proxies_to
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="inline-block w-4 border-t-2" style="border-color: #8b5cf6;"></span>
+                forwards_to
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="inline-block w-4 border-t-2" style="border-color: #06b6d4;"></span>
+                resolves_via
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="inline-block w-4 border-t-2" style="border-color: #6b7280;"></span>
+                connects_via
+            </span>
+            <span class="flex items-center gap-1">
+                <span class="inline-block w-4 border-t-2 border-dashed" style="border-color: #9ca3af;"></span>
+                manual edge
+            </span>
+        </div>
+    </main>
+</div>
+
+<!-- Add Node Modal -->
+<div id="add-node-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center"
+     x-data="{ show: false }" x-show="show" x-transition x-cloak
+     @open-add-node.window="show = true" @click.self="show = false" @keydown.escape.window="show = false">
+    <div class="bg-white rounded-lg shadow-xl p-6 w-96" @click.stop>
+        <h2 class="text-lg font-bold text-gray-900 mb-4">Add Node</h2>
+        <form id="add-node-form" class="space-y-3">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Entity ID</label>
+                <input name="entity_id" type="text" required placeholder="e.g. service:my-app"
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Display Name</label>
+                <input name="display_name" type="text" placeholder="My Application"
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Type</label>
+                <select name="entity_type" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                    <option value="service">Service</option>
+                    <option value="host">Host</option>
+                    <option value="container">Container</option>
+                    <option value="network_device">Network Device</option>
+                    <option value="proxy">Proxy</option>
+                    <option value="monitor">Monitor</option>
+                    <option value="external">External</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Host IP (optional)</label>
+                <input name="host_ip" type="text" placeholder="192.168.1.100"
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" @click="show = false"
+                        class="bg-gray-100 text-gray-600 px-4 py-1.5 rounded text-sm hover:bg-gray-200">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">
+                    Create
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Edge Modal -->
+<div id="add-edge-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center"
+     x-data="{ show: false }" x-show="show" x-transition x-cloak
+     @open-add-edge.window="show = true" @click.self="show = false" @keydown.escape.window="show = false">
+    <div class="bg-white rounded-lg shadow-xl p-6 w-96" @click.stop>
+        <h2 class="text-lg font-bold text-gray-900 mb-4">Add Edge</h2>
+        <form id="add-edge-form" class="space-y-3">
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">From Node</label>
+                <input id="edge-from-entity" name="from_entity" type="text" required
+                       list="edge-from-options" placeholder="Start typing to search..."
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                <datalist id="edge-from-options"></datalist>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">To Node</label>
+                <input id="edge-to-entity" name="to_entity" type="text" required
+                       list="edge-to-options" placeholder="Start typing to search..."
+                       class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                <datalist id="edge-to-options"></datalist>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Edge Type</label>
+                <select name="edge_type" class="block w-full rounded border-gray-300 text-sm py-1.5 px-2">
+                    <option value="runs_on">runs_on — infrastructure containment</option>
+                    <option value="depends_on">depends_on — service dependency</option>
+                    <option value="proxies_to">proxies_to — reverse proxy routing</option>
+                    <option value="forwards_to">forwards_to — tunnel / forwarding</option>
+                    <option value="resolves_via">resolves_via — DNS dependency</option>
+                    <option value="connects_via">connects_via — network path</option>
+                </select>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button" @click="show = false"
+                        class="bg-gray-100 text-gray-600 px-4 py-1.5 rounded text-sm hover:bg-gray-200">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">
+                    Create
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Topology data (injected server-side for initial render) -->
+<script>
+    window.__TOPOLOGY_DATA__ = {{ topology_json|safe }};
+</script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="/ui/static/service_map.js"></script>
+{% endblock %}

@@ -22,7 +22,7 @@ def _make_config(**overrides: Any) -> LlmConfig:
             base_url="http://localhost:11434/v1",
             model="qwen2.5:7b",
             api_key="",
-            timeout=5,
+            timeout=30,
             max_tokens=1024,
             temperature=0.1,
         ),
@@ -562,3 +562,256 @@ class TestPromptLogging:
             await client.complete(LLMRole.TRIAGE, _MESSAGES)
 
         assert not any("LLM prompt" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Health tracking (last call outcome)
+# ---------------------------------------------------------------------------
+
+
+class TestRoleHealth:
+    """get_role_health() infers status from last call outcome."""
+
+    def test_initial_state_unknown(self) -> None:
+        client = _client()
+        assert client.get_role_health(LLMRole.TRIAGE) == "unknown"
+        assert client.get_role_health(LLMRole.REASONING) == "unknown"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_successful_call_sets_connected(self, mock_acomp: AsyncMock) -> None:
+        mock_acomp.return_value = _mock_response()
+        client = _client()
+
+        await client.complete(LLMRole.TRIAGE, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"
+        assert client.get_role_health(LLMRole.REASONING) == "unknown"
+
+    @patch("oasisagent.llm.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_failed_call_sets_error(
+        self, mock_acomp: AsyncMock, mock_sleep: AsyncMock
+    ) -> None:
+        mock_acomp.side_effect = _timeout()
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=False))
+
+        with pytest.raises(LLMError):
+            await client.complete(LLMRole.TRIAGE, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_auth_error_sets_error(self, mock_acomp: AsyncMock) -> None:
+        mock_acomp.side_effect = litellm.AuthenticationError(
+            message="bad key", model="test", llm_provider="test"
+        )
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=False))
+
+        with pytest.raises(litellm.AuthenticationError):
+            await client.complete(LLMRole.TRIAGE, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+    @patch("oasisagent.llm.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_fallback_sets_both_roles(
+        self, mock_acomp: AsyncMock, mock_sleep: AsyncMock
+    ) -> None:
+        """Reasoning fails, triage fallback succeeds → reasoning=error, triage=connected."""
+        mock_acomp.side_effect = [
+            _timeout(),  # reasoning fails
+            _mock_response(content="fallback"),  # triage succeeds
+        ]
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=True))
+
+        await client.complete(LLMRole.REASONING, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.REASONING) == "error"
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"
+
+    @patch("oasisagent.llm.client.asyncio.sleep", new_callable=AsyncMock)
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_both_fail_sets_both_error(
+        self, mock_acomp: AsyncMock, mock_sleep: AsyncMock
+    ) -> None:
+        """Both reasoning and triage fail → both error."""
+        mock_acomp.side_effect = _timeout()
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=True))
+
+        with pytest.raises(LLMError):
+            await client.complete(LLMRole.REASONING, _MESSAGES)
+
+        assert client.get_role_health(LLMRole.REASONING) == "error"
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_recovery_after_failure(self, mock_acomp: AsyncMock) -> None:
+        """A successful call after a failure flips status back to connected."""
+        client = _client(options=LlmOptionsConfig(retry_attempts=0, fallback_to_triage=False))
+
+        # First call fails
+        mock_acomp.side_effect = litellm.AuthenticationError(
+            message="bad key", model="test", llm_provider="test"
+        )
+        with pytest.raises(litellm.AuthenticationError):
+            await client.complete(LLMRole.TRIAGE, _MESSAGES)
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+
+        # Second call succeeds
+        mock_acomp.side_effect = None
+        mock_acomp.return_value = _mock_response()
+        await client.complete(LLMRole.TRIAGE, _MESSAGES)
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"
+
+
+# ---------------------------------------------------------------------------
+# Warm-up (health probe at startup)
+# ---------------------------------------------------------------------------
+
+
+class TestWarmUp:
+    """warm_up() sends minimal probes to each role and logs results."""
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_both_roles_healthy(self, mock_acomp: AsyncMock) -> None:
+        mock_acomp.return_value = _mock_response(content="OK")
+        client = _client()
+
+        results = await client.warm_up()
+
+        assert results == {LLMRole.TRIAGE: True, LLMRole.REASONING: True}
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"
+        assert client.get_role_health(LLMRole.REASONING) == "connected"
+        # Two calls: one per role
+        assert mock_acomp.call_count == 2
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_one_role_fails(self, mock_acomp: AsyncMock) -> None:
+        """Triage succeeds, reasoning fails — warm_up doesn't raise."""
+        mock_acomp.side_effect = [
+            _mock_response(content="OK"),  # triage
+            litellm.APIConnectionError(
+                message="connection refused", model="test", llm_provider="test"
+            ),  # reasoning
+        ]
+        client = _client()
+
+        results = await client.warm_up()
+
+        assert results[LLMRole.TRIAGE] is True
+        assert results[LLMRole.REASONING] is False
+        assert client.get_role_health(LLMRole.TRIAGE) == "connected"
+        assert client.get_role_health(LLMRole.REASONING) == "error"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_both_roles_fail(self, mock_acomp: AsyncMock) -> None:
+        """Both fail — warm_up still doesn't raise."""
+        mock_acomp.side_effect = _timeout()
+        client = _client()
+
+        results = await client.warm_up()
+
+        assert results == {LLMRole.TRIAGE: False, LLMRole.REASONING: False}
+        assert client.get_role_health(LLMRole.TRIAGE) == "error"
+        assert client.get_role_health(LLMRole.REASONING) == "error"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_probe_uses_max_tokens_1(self, mock_acomp: AsyncMock) -> None:
+        """Probe uses max_tokens=1 to minimize cost."""
+        mock_acomp.return_value = _mock_response(content="OK")
+        client = _client()
+
+        await client.warm_up()
+
+        for call in mock_acomp.call_args_list:
+            assert call.kwargs["max_tokens"] == 1
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_probe_uses_correct_endpoints(self, mock_acomp: AsyncMock) -> None:
+        """Each probe uses the real endpoint config for its role."""
+        mock_acomp.return_value = _mock_response(content="OK")
+        client = _client()
+
+        await client.warm_up()
+
+        calls = mock_acomp.call_args_list
+        # First call = triage
+        assert calls[0].kwargs["model"] == "qwen2.5:7b"
+        assert calls[0].kwargs["api_base"] == "http://localhost:11434/v1"
+        # Second call = reasoning
+        assert calls[1].kwargs["model"] == "claude-sonnet-4-5-20250929"
+        assert calls[1].kwargs["api_base"] == "https://api.anthropic.com"
+        assert calls[1].kwargs["api_key"] == "sk-test-key"
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_probe_does_not_count_usage(self, mock_acomp: AsyncMock) -> None:
+        """Warm-up probes bypass usage tracking."""
+        mock_acomp.return_value = _mock_response(content="OK")
+        client = _client()
+
+        await client.warm_up()
+
+        stats = client.get_usage_stats()
+        assert stats["triage"].total_requests == 0
+        assert stats["reasoning"].total_requests == 0
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_logs_summary(
+        self, mock_acomp: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Warm-up logs a single summary line."""
+        mock_acomp.return_value = _mock_response(content="OK")
+        client = _client()
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="oasisagent.llm.client"):
+            await client.warm_up()
+
+        assert any("LLM warm-up" in record.message for record in caplog.records)
+        summary = next(r for r in caplog.records if "LLM warm-up" in r.message)
+        assert "triage=ok" in summary.message
+        assert "reasoning=ok" in summary.message
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_logs_failure_detail(
+        self, mock_acomp: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Failed probes include error description in summary."""
+        mock_acomp.side_effect = _timeout()
+        client = _client()
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="oasisagent.llm.client"):
+            await client.warm_up()
+
+        # Find the INFO-level summary line (not the per-role WARNING lines)
+        summary = next(
+            r for r in caplog.records
+            if "LLM warm-up:" in r.message and r.levelno == logging.INFO
+        )
+        assert "triage=FAILED" in summary.message
+        assert "reasoning=FAILED" in summary.message
+
+    @patch("oasisagent.llm.client.litellm.acompletion", new_callable=AsyncMock)
+    async def test_timeout_capped_at_15s(self, mock_acomp: AsyncMock) -> None:
+        """Probe timeout is capped at 15s even if endpoint timeout is higher."""
+        mock_acomp.return_value = _mock_response(content="OK")
+        config = _make_config(
+            reasoning=LlmEndpointConfig(
+                base_url="https://api.anthropic.com",
+                model="claude-sonnet-4-5-20250929",
+                api_key="sk-test-key",
+                timeout=120,  # very long timeout
+                max_tokens=4096,
+                temperature=0.2,
+            ),
+        )
+        client = LLMClient(config)
+
+        await client.warm_up()
+
+        # Reasoning probe timeout should be capped at 15
+        reasoning_call = mock_acomp.call_args_list[1]
+        assert reasoning_call.kwargs["timeout"] == 15

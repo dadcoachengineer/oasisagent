@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from oasisagent.config import MqttNotificationConfig
 from oasisagent.models import Notification, Severity
@@ -265,6 +268,92 @@ class TestMqttErrors:
 
         assert result is False
 
+    async def test_send_failure_triggers_reconnect(self) -> None:
+        """Mid-session publish failure should spawn a reconnect task."""
+        channel = _mock_mqtt_channel()
+        channel._client.publish.side_effect = Exception("broker dropped")
+
+        result = await channel.send(_make_notification())
+
+        assert result is False
+        assert channel._client is None
+        assert channel._reconnect_task is not None
+        assert not channel._reconnect_task.done()
+
+        await channel.stop()
+
+    async def test_publish_raw_failure_triggers_reconnect(self) -> None:
+        """Mid-session raw publish failure should spawn a reconnect task."""
+        channel = _mock_mqtt_channel()
+        channel._client.publish.side_effect = Exception("broker dropped")
+
+        result = await channel.publish_raw("topic", "payload")
+
+        assert result is False
+        assert channel._client is None
+        assert channel._reconnect_task is not None
+
+        await channel.stop()
+
+    async def test_trigger_reconnect_calls_aexit_on_stale_client(self) -> None:
+        """_trigger_reconnect() should schedule __aexit__ on the old client."""
+        channel = _mock_mqtt_channel()
+        old_client = channel._client
+        old_client.__aexit__ = AsyncMock()
+
+        channel._trigger_reconnect()
+
+        # Let the fire-and-forget cleanup task run
+        await asyncio.sleep(0)
+
+        old_client.__aexit__.assert_awaited_once_with(None, None, None)
+        assert channel._client is None
+
+        await channel.stop()
+
+    async def test_trigger_reconnect_suppresses_aexit_error(self) -> None:
+        """If __aexit__ raises on the stale client, it should be suppressed."""
+        channel = _mock_mqtt_channel()
+        old_client = channel._client
+        old_client.__aexit__ = AsyncMock(side_effect=OSError("socket gone"))
+
+        channel._trigger_reconnect()
+
+        # Let the fire-and-forget cleanup task run — should not raise
+        await asyncio.sleep(0)
+
+        old_client.__aexit__.assert_awaited_once_with(None, None, None)
+
+        await channel.stop()
+
+    async def test_trigger_reconnect_skips_cleanup_when_no_client(self) -> None:
+        """If _client is already None, no cleanup task is created."""
+        channel = MqttNotificationChannel(_make_config())
+        assert channel._client is None
+
+        channel._trigger_reconnect()
+
+        # Only the reconnect task should exist, no stale cleanup
+        assert channel._reconnect_task is not None
+
+        await channel.stop()
+
+    async def test_duplicate_reconnect_not_spawned(self) -> None:
+        """Multiple publish failures should not spawn duplicate reconnect tasks."""
+        channel = _mock_mqtt_channel()
+        channel._client.publish.side_effect = Exception("broker dropped")
+
+        await channel.send(_make_notification())
+        first_task = channel._reconnect_task
+
+        # Second failure — client is None so send returns False early
+        # without spawning another task
+        await channel.send(_make_notification())
+
+        assert channel._reconnect_task is first_task
+
+        await channel.stop()
+
 
 # ---------------------------------------------------------------------------
 # MQTT channel: lifecycle
@@ -284,6 +373,30 @@ class TestMqttLifecycle:
         mock_cls.assert_called_once()
         assert channel._client is not None
 
+    @patch("oasisagent.notifications.mqtt.aiomqtt.Client")
+    async def test_start_does_not_block_on_failure(
+        self, mock_cls: MagicMock,
+    ) -> None:
+        """If initial connection fails, start() returns immediately
+        and spawns a background reconnect task."""
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(
+            side_effect=ConnectionRefusedError("Connection refused"),
+        )
+        mock_cls.return_value = mock_instance
+
+        channel = MqttNotificationChannel(_make_config())
+        await channel.start()
+
+        # start() returned without blocking
+        assert channel._client is None
+        assert channel._reconnect_task is not None
+        assert not channel._reconnect_task.done()
+
+        # Clean up
+        await channel.stop()
+        assert channel._reconnect_task is None
+
     async def test_stop_disconnects(self) -> None:
         channel = _mock_mqtt_channel()
         channel._client.__aexit__ = AsyncMock()
@@ -295,6 +408,33 @@ class TestMqttLifecycle:
     async def test_stop_without_start_is_noop(self) -> None:
         channel = MqttNotificationChannel(_make_config())
         await channel.stop()  # Should not raise
+
+    async def test_stop_cancels_reconnect_task(self) -> None:
+        """Stop cancels any pending background reconnect."""
+        channel = MqttNotificationChannel(_make_config())
+        # Simulate a reconnect task in progress
+        channel._reconnect_task = asyncio.create_task(asyncio.sleep(9999))
+
+        await channel.stop()
+
+        assert channel._reconnect_task is None
+
+    @patch("oasisagent.notifications.mqtt.aiomqtt.Client")
+    async def test_connect_does_not_assign_client_on_failure(
+        self, mock_cls: MagicMock,
+    ) -> None:
+        """_connect() should not leave _client set if __aenter__ raises."""
+        mock_instance = AsyncMock()
+        mock_instance.__aenter__ = AsyncMock(
+            side_effect=ConnectionRefusedError("refused"),
+        )
+        mock_cls.return_value = mock_instance
+
+        channel = MqttNotificationChannel(_make_config())
+        with pytest.raises(ConnectionRefusedError):
+            await channel._connect()
+
+        assert channel._client is None
 
 
 # ---------------------------------------------------------------------------

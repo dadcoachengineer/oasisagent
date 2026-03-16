@@ -138,6 +138,10 @@ class AgentConfig(BaseModel):
     known_fixes_dir: str = "known_fixes/"
     correlation_window: Annotated[int, Field(ge=0)] = 30
     metrics_port: Annotated[int, Field(ge=0, le=65535)] = 0
+    max_consecutive_identical: Annotated[int, Field(ge=1)] = 3
+    discovery_interval: Annotated[int, Field(ge=60)] = 300
+    dependency_context_depth: Annotated[int, Field(ge=1, le=5)] = 2
+    plan_step_notifications: bool = False
 
 
 # -- Ingestion: MQTT --------------------------------------------------------
@@ -387,6 +391,14 @@ class UnifiAdapterConfig(BaseModel):
     poll_interval: int = 30
     poll_alarms: bool = True
     poll_health: bool = True
+    poll_ips: bool = True
+    poll_rogue_ap: bool = True
+    poll_clients: bool = False
+    poll_anomalies: bool = True
+    poll_events: bool = True
+    poll_dpi: bool = False
+    client_spike_threshold: float = 20.0
+    dpi_bandwidth_threshold_mbps: float = 100.0
     timeout: int = 10
     cpu_threshold: float = 90.0
     memory_threshold: float = 90.0
@@ -431,7 +443,158 @@ class UptimeKumaAdapterConfig(BaseModel):
     cert_critical_days: int = 7
 
 
-# -- Vaultwarden ------------------------------------------------------------
+# -- Frigate NVR -------------------------------------------------------------
+
+
+class FrigateAdapterConfig(BaseModel):
+    """Frigate NVR polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    poll_interval: int = 60
+    poll_events: bool = False
+    detector_fps_threshold: float = 5.0
+    detection_spike_threshold: int = 20
+    verify_ssl: bool = False
+    timeout: int = 10
+
+
+# -- Nginx Proxy Manager ----------------------------------------------------
+
+
+class NpmAdapterConfig(BaseModel):
+    """Nginx Proxy Manager polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    email: str = ""
+    password: str = ""
+    poll_interval: int = 300
+    poll_proxy_hosts: bool = True
+    poll_certificates: bool = True
+    poll_dead_hosts: bool = True
+    cert_warning_days: int = 14
+    cert_critical_days: int = 7
+    timeout: int = 10
+
+
+# -- Servarr (Sonarr/Radarr/Prowlarr/Bazarr) --------------------------------
+
+
+class ServarrAdapterConfig(BaseModel):
+    """Servarr app polling adapter configuration.
+
+    A single config model for Sonarr, Radarr, Prowlarr, and Bazarr since
+    they all share the same API pattern (differing only in API version).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    app_type: Literal["sonarr", "radarr", "prowlarr", "bazarr"] = "sonarr"
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- qBittorrent ------------------------------------------------------------
+
+
+class QBittorrentAdapterConfig(BaseModel):
+    """qBittorrent Web API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    username: str = "admin"
+    password: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- Plex -------------------------------------------------------------------
+
+
+class PlexAdapterConfig(BaseModel):
+    """Plex Media Server polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    token: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- Tautulli ---------------------------------------------------------------
+
+
+class TautulliAdapterConfig(BaseModel):
+    """Tautulli API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+    bandwidth_threshold_kbps: int = 100_000
+
+
+# -- Tdarr ------------------------------------------------------------------
+
+
+class TdarrAdapterConfig(BaseModel):
+    """Tdarr API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- N8N --------------------------------------------------------------------
+
+
+class N8nAdapterConfig(BaseModel):
+    """N8N workflow automation polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 300
+    poll_executions: bool = True
+    timeout: int = 10
+
+
+# -- Overseerr ---------------------------------------------------------------
+
+
+class OverseerrAdapterConfig(BaseModel):
+    """Overseerr API polling adapter configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    poll_interval: int = 60
+    timeout: int = 10
+
+
+# -- Vaultwarden -------------------------------------------------------------
 
 
 class VaultwardenAdapterConfig(BaseModel):
@@ -444,74 +607,51 @@ class VaultwardenAdapterConfig(BaseModel):
     poll_interval: int = 60
     verify_ssl: bool = False
     timeout: int = 10
-    deep_health: bool = False
-    admin_token: str = ""
-    slow_threshold_ms: int = 2000
 
 
-# -- Stalwart Mail ----------------------------------------------------------
-
-
-class StalwartAdapterConfig(BaseModel):
-    """Stalwart Mail Server health-check adapter configuration."""
+class ProxmoxAdapterConfig(BaseModel):
+    """Proxmox VE ingestion adapter configuration."""
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    url: str = ""
+    url: str = "https://localhost:8006"
+    user: str = ""
+    token_name: str = ""
+    token_value: str = ""
+    verify_ssl: bool = False
+    poll_interval: int = 30
+    timeout: int = 10
+    poll_nodes: bool = True
+    poll_vms: bool = True
+    poll_tasks: bool = True
+    poll_replication: bool = True
+    cpu_threshold: float = 90.0
+    memory_threshold: float = 90.0
+
+
+class PortainerAdapterConfig(BaseModel):
+    """Portainer ingestion adapter configuration.
+
+    Polls the Portainer API for Docker endpoint status, container states,
+    stack health, and (optionally) per-container resource usage.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str = "https://localhost:9443"
     api_key: str = ""
-    poll_interval: int = 60
-    timeout: int = 10
     verify_ssl: bool = False
-    queue_threshold: int = 100
-
-
-# -- Ollama -----------------------------------------------------------------
-
-
-class OllamaAdapterConfig(BaseModel):
-    """Ollama LLM server health-check adapter configuration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    url: str = "http://localhost:11434"
-    poll_interval: int = 60
+    poll_interval: int = 30
     timeout: int = 10
-
-
-# -- EMQX -------------------------------------------------------------------
-
-
-class EmqxAdapterConfig(BaseModel):
-    """EMQX MQTT broker monitoring adapter configuration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    url: str = ""
-    api_key: str = ""
-    api_secret: str = ""
-    poll_interval: int = 60
-    timeout: int = 10
-    verify_ssl: bool = False
-
-
-# -- Nextcloud --------------------------------------------------------------
-
-
-class NextcloudAdapterConfig(BaseModel):
-    """Nextcloud server health-check adapter configuration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    url: str = ""
-    username: str = ""
-    password: str = ""
-    poll_interval: int = 60
-    timeout: int = 10
-    verify_ssl: bool = False
+    poll_endpoints: bool = True
+    poll_containers: bool = True
+    poll_stacks: bool = True
+    poll_container_resources: bool = False
+    cpu_threshold: float = 90.0
+    memory_threshold: float = 90.0
+    ignore_containers: list[str] = Field(default_factory=list)
 
 
 # -- Scanner ----------------------------------------------------------------
@@ -560,6 +700,35 @@ class DockerHealthCheckConfig(BaseModel):
     interval: Annotated[int, Field(ge=60)] = 900
 
 
+class BackupSourceConfig(BaseModel):
+    """Configuration for a single backup source to monitor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: Literal["pbs", "file"]
+    # PBS fields
+    url: str = ""
+    token_id: str = ""
+    token_secret: str = ""
+    datastore: str = ""
+    verify_ssl: bool = True
+    # File fields
+    path: str = ""  # glob pattern, e.g. "/backup/daily/*.tar.gz"
+    # Common
+    max_age_hours: int = 26  # just over 1 day
+
+
+class BackupFreshnessCheckConfig(BaseModel):
+    """Backup freshness scanner configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    interval: Annotated[int, Field(ge=60)] = 3600
+    sources: list[BackupSourceConfig] = Field(default_factory=list)
+
+
 class ScannerConfig(BaseModel):
     """Preventive scanning framework configuration."""
 
@@ -567,10 +736,16 @@ class ScannerConfig(BaseModel):
 
     enabled: bool = False
     interval: Annotated[int, Field(ge=60)] = 900
+    adaptive_enabled: bool = True
+    adaptive_fast_factor: Annotated[float, Field(gt=0.0, lt=1.0)] = 0.25
+    adaptive_recovery_scans: Annotated[int, Field(ge=1)] = 3
     certificate_expiry: CertExpiryCheckConfig = Field(default_factory=CertExpiryCheckConfig)
     disk_space: DiskSpaceCheckConfig = Field(default_factory=DiskSpaceCheckConfig)
     ha_health: HaHealthCheckConfig = Field(default_factory=HaHealthCheckConfig)
     docker_health: DockerHealthCheckConfig = Field(default_factory=DockerHealthCheckConfig)
+    backup_freshness: BackupFreshnessCheckConfig = Field(
+        default_factory=BackupFreshnessCheckConfig,
+    )
 
 
 # -- Ingestion (top-level) --------------------------------------------------
@@ -591,6 +766,30 @@ class IngestionConfig(BaseModel):
     )
     uptime_kuma: UptimeKumaAdapterConfig = Field(
         default_factory=UptimeKumaAdapterConfig,
+    )
+    frigate: FrigateAdapterConfig = Field(default_factory=FrigateAdapterConfig)
+    npm: NpmAdapterConfig = Field(default_factory=NpmAdapterConfig)
+    servarr: list[ServarrAdapterConfig] = Field(default_factory=list)
+    qbittorrent: QBittorrentAdapterConfig = Field(
+        default_factory=QBittorrentAdapterConfig,
+    )
+    plex: PlexAdapterConfig = Field(default_factory=PlexAdapterConfig)
+    tautulli: TautulliAdapterConfig = Field(
+        default_factory=TautulliAdapterConfig,
+    )
+    tdarr: TdarrAdapterConfig = Field(default_factory=TdarrAdapterConfig)
+    n8n: N8nAdapterConfig = Field(default_factory=N8nAdapterConfig)
+    overseerr: OverseerrAdapterConfig = Field(
+        default_factory=OverseerrAdapterConfig,
+    )
+    vaultwarden: VaultwardenAdapterConfig = Field(
+        default_factory=VaultwardenAdapterConfig,
+    )
+    proxmox: ProxmoxAdapterConfig = Field(
+        default_factory=ProxmoxAdapterConfig,
+    )
+    portainer: PortainerAdapterConfig = Field(
+        default_factory=PortainerAdapterConfig,
     )
 
 
@@ -631,7 +830,7 @@ class LlmConfig(BaseModel):
             base_url="http://localhost:11434/v1",
             model="qwen2.5:7b",
             api_key="not-needed",
-            timeout=5,
+            timeout=30,
             max_tokens=1024,
             temperature=0.1,
         )
@@ -872,6 +1071,29 @@ class TelegramNotificationConfig(BaseModel):
     parse_mode: str = "HTML"
 
 
+class DiscordNotificationConfig(BaseModel):
+    """Discord webhook notification channel configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    webhook_url: str = ""
+    username: str = "OasisAgent"
+    avatar_url: str = ""
+
+
+class SlackNotificationConfig(BaseModel):
+    """Slack Incoming Webhook notification channel configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    webhook_url: str = ""
+    channel: str = ""
+    username: str = "OasisAgent"
+    icon_emoji: str = ":robot_face:"
+
+
 class NotificationsConfig(BaseModel):
     """All notification channel configurations."""
 
@@ -881,19 +1103,8 @@ class NotificationsConfig(BaseModel):
     email: EmailNotificationConfig = Field(default_factory=EmailNotificationConfig)
     webhook: WebhookNotificationConfig = Field(default_factory=WebhookNotificationConfig)
     telegram: TelegramNotificationConfig = Field(default_factory=TelegramNotificationConfig)
-
-
-# -- Learning loop ----------------------------------------------------------
-
-
-class LearningConfig(BaseModel):
-    """Learning loop configuration — T2 to T0 promotion."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = 0.8
-    min_verified_count: Annotated[int, Field(ge=1)] = 3
+    discord: DiscordNotificationConfig = Field(default_factory=DiscordNotificationConfig)
+    slack: SlackNotificationConfig = Field(default_factory=SlackNotificationConfig)
 
 
 # -- Top-level config -------------------------------------------------------

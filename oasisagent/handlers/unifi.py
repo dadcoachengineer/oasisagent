@@ -3,7 +3,7 @@
 Operations: notify, restart_device, block_client, unblock_client.
 
 Uses the shared UnifiClient for session cookie auth and automatic
-re-auth on 401.
+re-auth on 401/403.
 """
 
 from __future__ import annotations
@@ -40,6 +40,8 @@ class UnifiHandler(Handler):
     The UnifiClient session is created in start() and closed in stop().
     """
 
+    _HEALTH_TIMEOUT: float = 3.0
+
     def __init__(self, config: UnifiHandlerConfig) -> None:
         self._config = config
         self._client: UnifiClient | None = None
@@ -69,13 +71,18 @@ class UnifiHandler(Handler):
             logger.info("UniFi handler stopped")
 
     async def healthy(self) -> bool:
-        """Check UniFi connectivity — session must be established.
-
-        Known limitation: does not verify the session cookie is still valid.
-        A stale session may report healthy=True but fail on the next API call.
-        UniFi sessions expire unpredictably; the client handles re-auth on 401.
-        """
-        return self._client is not None
+        """Check UniFi connectivity by hitting stat/health."""
+        if self._client is None:
+            return False
+        try:
+            data = await asyncio.wait_for(
+                self._client.get("stat/health"),
+                timeout=self._HEALTH_TIMEOUT,
+            )
+            return isinstance(data.get("data"), list)
+        except Exception:
+            logger.debug("UniFi health check failed", exc_info=True)
+            return False
 
     async def can_handle(
         self, event: Event, action: RecommendedAction,

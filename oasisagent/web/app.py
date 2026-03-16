@@ -86,21 +86,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db = await run_migrations(data_dir / "oasisagent.db")
     store = ConfigStore(db, crypto)
 
-    # Load config: SQLite or YAML fallback for virgin databases
+    # Load config: SQLite is the single source of truth.
+    # On first run with a virgin DB, import config.yaml into SQLite
+    # so both the orchestrator and the web UI read the same data.
     if await store.is_virgin():
         yaml_path = Path("config.yaml")
         if yaml_path.exists():
-            logger.info("Virgin database — loading config from %s", yaml_path)
-            config = load_config(yaml_path)
+            logger.info("Virgin database — importing %s into SQLite", yaml_path)
+            yaml_config = load_config(yaml_path)
+            await store.import_yaml(yaml_config)
         else:
             logger.info("Virgin database, no config.yaml — using defaults")
-            config = await store.load_config()
-    else:
-        config = await store.load_config()
+    config = await store.load_config()
 
     configure_logging(config)
 
-    orchestrator = Orchestrator(config, db=db)
+    orchestrator = Orchestrator(config, db=db, config_store=store)
     await orchestrator.start()
 
     loop_task = asyncio.create_task(orchestrator.run_loop(), name="orchestrator-loop")
@@ -110,6 +111,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.db = db
     app.state.start_time = time.monotonic()
     app.state.jwt_signing_key = derive_jwt_key(secret_key)
+    app.state.notification_store = orchestrator._notification_store
+    app.state.web_notification_channel = orchestrator._web_channel
+    app.state.topology_store = orchestrator._topology_store
+    app.state.service_graph = orchestrator._service_graph
 
     # Audit reader for Event Explorer UI (None if InfluxDB disabled)
     audit_reader: AuditReader | None = None

@@ -1,0 +1,40 @@
+fixes:
+  - id: frigate-camera-offline
+    match:
+      system: frigate
+      event_type: frigate_camera_offline
+    diagnosis: "Frigate camera offline — camera FPS dropped to 0, stream may be disconnected"
+    action:
+      type: recommend
+      handler: notify
+      operation: notify
+      details:
+        message: |
+          Frigate camera offline. Investigation steps:
+          1. Check camera power and network connectivity
+          2. Verify RTSP/RTMP stream URL is correct in Frigate config
+          3. Check Frigate logs for stream decode errors
+          4. Verify camera is not in maintenance mode
+          5. Check if camera firmware needs updating
+          6. Try restarting the Frigate container if multiple cameras affected
+    risk_tier: recommend
+
+  - id: frigate-detector-slow
+    match:
+      system: frigate
+      event_type: frigate_detector_slow
+    diagnosis: "Frigate detector inference is slow — detection FPS below threshold"
+    action:
+      type: recommend
+      handler: notify
+      operation: notify
+      details:
+        message: |
+          Frigate detector running slow. Investigation steps:
+          1. Check system resource usage (CPU/GPU/Coral TPU)
+          2. Verify hardware detector (Coral) is connected and recognized
+          3. Check if too many cameras are assigned to the same detector
+          4. Review Frigate config for detection resolution settings
+          5. Check for thermal throttling on the detection hardware
+          6. Consider reducing detection FPS or resolution in Frigate config
+    risk_tier: recommend

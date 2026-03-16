@@ -98,6 +98,148 @@ class ConfigStore:
         return True
 
     # ------------------------------------------------------------------
+    # YAML → SQLite import (one-way door for virgin databases)
+    # ------------------------------------------------------------------
+
+    async def import_yaml(self, config: OasisAgentConfig) -> None:
+        """Seed SQLite from a parsed YAML config.
+
+        Imports all enabled connectors, services, and notification channels
+        into the database so the orchestrator and UI share a single source
+        of truth.  Only call this on a virgin database — once rows exist
+        the YAML is permanently ignored.
+        """
+        async with self.transaction():
+            # --- Agent config ---
+            agent = config.agent
+            await self._db.execute(
+                "UPDATE agent_config SET name=?, log_level=?, "
+                "event_queue_size=?, dedup_window_seconds=?, "
+                "shutdown_timeout=?, event_ttl=?, known_fixes_dir=?, "
+                "correlation_window=?, metrics_port=?, "
+                "max_consecutive_identical=?, discovery_interval=?, "
+                "dependency_context_depth=?, plan_step_notifications=? "
+                "WHERE id=1",
+                (
+                    agent.name, agent.log_level,
+                    agent.event_queue_size, agent.dedup_window_seconds,
+                    agent.shutdown_timeout, agent.event_ttl,
+                    agent.known_fixes_dir, agent.correlation_window,
+                    agent.metrics_port, agent.max_consecutive_identical,
+                    agent.discovery_interval, agent.dependency_context_depth,
+                    int(agent.plan_step_notifications),
+                ),
+            )
+
+            # --- Connectors ---
+            connector_map: list[tuple[str, str, Any]] = [
+                ("mqtt", "mqtt", config.ingestion.mqtt),
+                ("ha_websocket", "ha-websocket", config.ingestion.ha_websocket),
+                ("ha_log_poller", "ha-log-poller", config.ingestion.ha_log_poller),
+                ("unifi", "unifi", config.ingestion.unifi),
+                ("cloudflare", "cloudflare", config.ingestion.cloudflare),
+                ("uptime_kuma", "uptime-kuma", config.ingestion.uptime_kuma),
+            ]
+            for type_name, default_name, sub_cfg in connector_map:
+                if sub_cfg.enabled:
+                    await self._create_row(
+                        "connectors", type_name, default_name,
+                        sub_cfg.model_dump(),
+                    )
+            # http_poller: multi-row
+            for i, target in enumerate(config.ingestion.http_poller_targets):
+                name = target.system or f"http-poller-{i}"
+                await self._create_row(
+                    "connectors", "http_poller", name,
+                    target.model_dump(),
+                )
+
+            # --- Core services ---
+            # LLM endpoints have no `enabled` flag — always import
+            await self._create_row(
+                "core_services", "llm_triage", "llm-triage",
+                config.llm.triage.model_dump(),
+            )
+            await self._create_row(
+                "core_services", "llm_reasoning", "llm-reasoning",
+                config.llm.reasoning.model_dump(),
+            )
+            await self._create_row(
+                "core_services", "llm_options", "llm-options",
+                config.llm.options.model_dump(),
+            )
+
+            # Handlers + audit — only import if enabled
+            service_map: list[tuple[str, str, Any]] = [
+                ("ha_handler", "ha-handler", config.handlers.homeassistant),
+                ("docker_handler", "docker-handler", config.handlers.docker),
+                ("portainer_handler", "portainer-handler", config.handlers.portainer),
+                ("proxmox_handler", "proxmox-handler", config.handlers.proxmox),
+                ("unifi_handler", "unifi-handler", config.handlers.unifi),
+                ("cloudflare_handler", "cloudflare-handler", config.handlers.cloudflare),
+                ("influxdb", "influxdb", config.audit.influxdb),
+            ]
+            for type_name, default_name, sub_cfg in service_map:
+                if sub_cfg.enabled:
+                    await self._create_row(
+                        "core_services", type_name, default_name,
+                        sub_cfg.model_dump(),
+                    )
+
+            # Guardrails + circuit breaker
+            gr = config.guardrails
+            gr_dict = gr.model_dump(exclude={"circuit_breaker"})
+            await self._create_row(
+                "core_services", "guardrails", "guardrails", gr_dict,
+            )
+            await self._create_row(
+                "core_services", "circuit_breaker", "circuit-breaker",
+                gr.circuit_breaker.model_dump(),
+            )
+
+            # Scanner (if any check is enabled)
+            sc = config.scanner
+            if any([
+                sc.certificate_expiry.enabled,
+                sc.disk_space.enabled,
+                sc.ha_health.enabled,
+                sc.docker_health.enabled,
+                sc.backup_freshness.enabled,
+            ]):
+                await self._create_row(
+                    "core_services", "scanner", "scanner",
+                    sc.model_dump(),
+                )
+
+            # --- Notifications ---
+            notif_map: list[tuple[str, str, Any]] = [
+                ("mqtt_notification", "mqtt-notify", config.notifications.mqtt),
+                ("email", "email", config.notifications.email),
+                ("webhook", "webhook", config.notifications.webhook),
+                ("telegram", "telegram", config.notifications.telegram),
+                ("discord", "discord", config.notifications.discord),
+                ("slack", "slack", config.notifications.slack),
+            ]
+            for type_name, default_name, sub_cfg in notif_map:
+                if sub_cfg.enabled:
+                    await self._create_row(
+                        "notification_channels", type_name, default_name,
+                        sub_cfg.model_dump(),
+                    )
+
+        imported = await self._count_imported()
+        logger.info("YAML config imported to SQLite: %s", imported)
+
+    async def _count_imported(self) -> str:
+        """Return a summary string of imported row counts."""
+        counts = []
+        for table in ("connectors", "core_services", "notification_channels"):
+            cursor = await self._db.execute(f"SELECT COUNT(*) FROM {table}")
+            row = await cursor.fetchone()
+            counts.append(f"{table}={row[0]}" if row else f"{table}=0")
+        return ", ".join(counts)
+
+    # ------------------------------------------------------------------
     # Load full config
     # ------------------------------------------------------------------
 
@@ -144,6 +286,10 @@ class ConfigStore:
             known_fixes_dir=row["known_fixes_dir"],
             correlation_window=row["correlation_window"],
             metrics_port=row["metrics_port"],
+            max_consecutive_identical=row["max_consecutive_identical"],
+            discovery_interval=row["discovery_interval"],
+            dependency_context_depth=row["dependency_context_depth"],
+            plan_step_notifications=bool(row["plan_step_notifications"]),
         )
 
     async def update_agent_config(self, updates: dict[str, Any]) -> AgentConfig:
@@ -408,6 +554,23 @@ class ConfigStore:
                 result[row["type"]] = row
         return result
 
+    @staticmethod
+    def _cfg(row: dict[str, Any]) -> dict[str, Any]:
+        """Return a row's config dict with the DB ``enabled`` column injected.
+
+        The DB ``enabled`` column is the source of truth — ``config_json``
+        may not contain it (UI-created rows omit it). This method ensures
+        Pydantic models that default ``enabled=False`` see the actual DB
+        value rather than the model default.
+
+        Only used for types whose Pydantic model has an ``enabled`` field.
+        LLM/guardrails/circuit_breaker configs don't — call
+        ``row["config"]`` directly for those.
+        """
+        cfg = dict(row["config"])
+        cfg["enabled"] = bool(row["enabled"])
+        return cfg
+
     async def _load_ingestion(self) -> IngestionConfig:
         rows = await self.list_connectors()
         logger.debug(
@@ -418,9 +581,9 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "mqtt" in by_type:
-            kwargs["mqtt"] = by_type["mqtt"]["config"]
+            kwargs["mqtt"] = self._cfg(by_type["mqtt"])
         if "ha_websocket" in by_type:
-            kwargs["ha_websocket"] = by_type["ha_websocket"]["config"]
+            kwargs["ha_websocket"] = self._cfg(by_type["ha_websocket"])
             logger.debug(
                 "Loaded ha_websocket config from DB: url=%s enabled=%s",
                 by_type["ha_websocket"]["config"].get("url", "<missing>"),
@@ -429,7 +592,7 @@ class ConfigStore:
         else:
             logger.debug("No ha_websocket row in connectors (types: %s)", list(by_type.keys()))
         if "ha_log_poller" in by_type:
-            kwargs["ha_log_poller"] = by_type["ha_log_poller"]["config"]
+            kwargs["ha_log_poller"] = self._cfg(by_type["ha_log_poller"])
             logger.debug(
                 "Loaded ha_log_poller config from DB: url=%s enabled=%s",
                 by_type["ha_log_poller"]["config"].get("url", "<missing>"),
@@ -437,6 +600,13 @@ class ConfigStore:
             )
         else:
             logger.debug("No ha_log_poller row in connectors (types: %s)", list(by_type.keys()))
+
+        if "unifi" in by_type:
+            kwargs["unifi"] = self._cfg(by_type["unifi"])
+        if "cloudflare" in by_type:
+            kwargs["cloudflare"] = self._cfg(by_type["cloudflare"])
+        if "uptime_kuma" in by_type:
+            kwargs["uptime_kuma"] = self._cfg(by_type["uptime_kuma"])
 
         # HTTP poller supports multiple targets (one row per target)
         poller_rows = [r for r in rows if r["type"] == "http_poller" and r["enabled"]]
@@ -471,11 +641,17 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "ha_handler" in by_type:
-            kwargs["homeassistant"] = by_type["ha_handler"]["config"]
+            kwargs["homeassistant"] = self._cfg(by_type["ha_handler"])
         if "docker_handler" in by_type:
-            kwargs["docker"] = by_type["docker_handler"]["config"]
+            kwargs["docker"] = self._cfg(by_type["docker_handler"])
+        if "portainer_handler" in by_type:
+            kwargs["portainer"] = self._cfg(by_type["portainer_handler"])
         if "proxmox_handler" in by_type:
-            kwargs["proxmox"] = by_type["proxmox_handler"]["config"]
+            kwargs["proxmox"] = self._cfg(by_type["proxmox_handler"])
+        if "unifi_handler" in by_type:
+            kwargs["unifi"] = self._cfg(by_type["unifi_handler"])
+        if "cloudflare_handler" in by_type:
+            kwargs["cloudflare"] = self._cfg(by_type["cloudflare_handler"])
 
         return HandlersConfig.model_validate(kwargs) if kwargs else HandlersConfig()
 
@@ -497,7 +673,7 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "influxdb" in by_type:
-            kwargs["influxdb"] = by_type["influxdb"]["config"]
+            kwargs["influxdb"] = self._cfg(by_type["influxdb"])
 
         return AuditConfig.model_validate(kwargs) if kwargs else AuditConfig()
 
@@ -507,11 +683,17 @@ class ConfigStore:
 
         kwargs: dict[str, Any] = {}
         if "mqtt_notification" in by_type:
-            kwargs["mqtt"] = by_type["mqtt_notification"]["config"]
+            kwargs["mqtt"] = self._cfg(by_type["mqtt_notification"])
         if "email" in by_type:
-            kwargs["email"] = by_type["email"]["config"]
+            kwargs["email"] = self._cfg(by_type["email"])
         if "webhook" in by_type:
-            kwargs["webhook"] = by_type["webhook"]["config"]
+            kwargs["webhook"] = self._cfg(by_type["webhook"])
+        if "telegram" in by_type:
+            kwargs["telegram"] = self._cfg(by_type["telegram"])
+        if "discord" in by_type:
+            kwargs["discord"] = self._cfg(by_type["discord"])
+        if "slack" in by_type:
+            kwargs["slack"] = self._cfg(by_type["slack"])
 
         return NotificationsConfig.model_validate(kwargs) if kwargs else NotificationsConfig()
 

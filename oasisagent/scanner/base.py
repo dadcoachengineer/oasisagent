@@ -29,12 +29,34 @@ class ScannerIngestAdapter(IngestAdapter):
     Subclasses must implement ``_scan()`` and the ``name`` property.
     """
 
-    def __init__(self, queue: EventQueue, interval: int) -> None:
+    def __init__(
+        self,
+        queue: EventQueue,
+        interval: int,
+        *,
+        adaptive_enabled: bool = True,
+        adaptive_fast_factor: float = 0.25,
+        adaptive_recovery_scans: int = 3,
+    ) -> None:
         super().__init__(queue)
         self._interval = interval
         self._stopping = False
         self._task: asyncio.Task[None] | None = None
         self._connected = True
+
+        # Adaptive interval state
+        self._adaptive_enabled = adaptive_enabled
+        self._adaptive_fast_factor = adaptive_fast_factor
+        self._adaptive_recovery_scans = adaptive_recovery_scans
+        self._consecutive_clean: int = 0
+        self._adapted: bool = False
+
+    @property
+    def _effective_interval(self) -> int:
+        """Return the current polling interval, shortened when in fast mode."""
+        if self._adaptive_enabled and self._adapted:
+            return max(60, int(self._interval * self._adaptive_fast_factor))
+        return self._interval
 
     @abstractmethod
     async def _scan(self) -> list[Event]:
@@ -59,13 +81,19 @@ class ScannerIngestAdapter(IngestAdapter):
         return self._connected
 
     async def _poll_loop(self) -> None:
-        """Poll at fixed intervals, emitting events from each scan cycle."""
+        """Poll at intervals, emitting events from each scan cycle.
+
+        When adaptive intervals are enabled, the scanner switches to a faster
+        polling rate after detecting WARNING+ events, then restores the normal
+        interval after consecutive clean scans.
+        """
         while not self._stopping:
             try:
                 events = await self._scan()
                 for event in events:
                     self._enqueue(event)
                 self._connected = True
+                self._update_adaptive_state(events)
             except asyncio.CancelledError:
                 return
             except Exception as exc:
@@ -73,10 +101,41 @@ class ScannerIngestAdapter(IngestAdapter):
                 self._connected = False
 
             # 1-second sleep increments for responsive shutdown
-            for _ in range(self._interval):
+            for _ in range(self._effective_interval):
                 if self._stopping:
                     return
                 await asyncio.sleep(1)
+
+    def _update_adaptive_state(self, events: list[Event]) -> None:
+        """Update adaptive interval state based on scan results."""
+        if not self._adaptive_enabled:
+            return
+
+        from oasisagent.models import Severity
+
+        has_issues = any(
+            e.severity in (Severity.WARNING, Severity.ERROR, Severity.CRITICAL)
+            for e in events
+        )
+
+        if has_issues:
+            if not self._adapted:
+                old_interval = self._interval
+                self._adapted = True
+                logger.info(
+                    "Scanner %s: entering fast mode (%ds -> %ds)",
+                    self.name, old_interval, self._effective_interval,
+                )
+            self._consecutive_clean = 0
+        elif self._adapted:
+            self._consecutive_clean += 1
+            if self._consecutive_clean >= self._adaptive_recovery_scans:
+                logger.info(
+                    "Scanner %s: exiting fast mode (%ds -> %ds)",
+                    self.name, self._effective_interval, self._interval,
+                )
+                self._adapted = False
+                self._consecutive_clean = 0
 
     def _enqueue(self, event: Event) -> None:
         """Enqueue an event, logging on failure."""

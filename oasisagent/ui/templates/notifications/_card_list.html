@@ -1,0 +1,8 @@
+{# HTMX partial — list of notification cards #}
+{% if notifications %}
+{% for n in notifications %}
+{% include "notifications/_card.html" %}
+{% endfor %}
+{% else %}
+{% include "notifications/_empty.html" %}
+{% endif %}

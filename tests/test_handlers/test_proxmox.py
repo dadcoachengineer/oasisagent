@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +12,7 @@ import pytest
 
 from oasisagent.config import ProxmoxHandlerConfig
 from oasisagent.handlers.proxmox import (
+    _HEALTH_CACHE_TTL,
     HandlerNotStartedError,
     ProxmoxHandler,
 )
@@ -265,6 +267,142 @@ class TestLifecycle:
         handler = ProxmoxHandler(_make_config())
         with pytest.raises(HandlerNotStartedError):
             await handler.get_context(_make_event())
+
+
+# ---------------------------------------------------------------------------
+# healthy()
+# ---------------------------------------------------------------------------
+
+
+class TestHealthy:
+    async def test_healthy_returns_false_when_not_started(self) -> None:
+        handler = ProxmoxHandler(_make_config())
+        assert await handler.healthy() is False
+
+    async def test_healthy_returns_true_on_200(self) -> None:
+        handler = _started_handler()
+        _patch_session(handler, {
+            "get:/api2/json/version": _pve_response(data={"version": "8.0"}, status=200),
+        })
+
+        assert await handler.healthy() is True
+
+    async def test_healthy_returns_false_on_non_200(self) -> None:
+        handler = _started_handler()
+        resp = MagicMock()
+        resp.status = 403
+        resp.raise_for_status = MagicMock()
+        resp.json = AsyncMock(return_value={})
+        _patch_session(handler, {
+            "get:/api2/json/version": resp,
+        })
+
+        assert await handler.healthy() is False
+
+    async def test_healthy_returns_false_on_connection_error(self) -> None:
+        handler = _started_handler()
+        session = MagicMock(spec=aiohttp.ClientSession)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(
+            side_effect=aiohttp.ClientConnectorError(
+                connection_key=MagicMock(),
+                os_error=OSError("Connection refused"),
+            ),
+        )
+        cm.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(return_value=cm)
+        session.close = AsyncMock()
+        handler._session = session
+
+        assert await handler.healthy() is False
+
+    async def test_healthy_returns_false_on_timeout(self) -> None:
+        handler = _started_handler()
+        session = MagicMock(spec=aiohttp.ClientSession)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(return_value=cm)
+        session.close = AsyncMock()
+        handler._session = session
+
+        assert await handler.healthy() is False
+
+    async def test_healthy_returns_false_on_generic_client_error(self) -> None:
+        handler = _started_handler()
+        session = MagicMock(spec=aiohttp.ClientSession)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("something broke"))
+        cm.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(return_value=cm)
+        session.close = AsyncMock()
+        handler._session = session
+
+        assert await handler.healthy() is False
+
+    async def test_healthy_uses_cache_within_ttl(self) -> None:
+        handler = _started_handler()
+        _patch_session(handler, {
+            "get:/api2/json/version": _pve_response(data={"version": "8.0"}, status=200),
+        })
+
+        # First call — hits the session
+        assert await handler.healthy() is True
+        assert handler._session.get.call_count == 1
+
+        # Second call — should use cache, not hit session again
+        assert await handler.healthy() is True
+        assert handler._session.get.call_count == 1
+
+    async def test_healthy_refreshes_after_cache_expires(self) -> None:
+        import time
+
+        handler = _started_handler()
+        _patch_session(handler, {
+            "get:/api2/json/version": _pve_response(data={"version": "8.0"}, status=200),
+        })
+
+        # First call populates cache
+        assert await handler.healthy() is True
+        assert handler._session.get.call_count == 1
+
+        # Expire the cache by backdating the timestamp
+        handler._health_cache_ts = time.monotonic() - _HEALTH_CACHE_TTL - 1
+
+        # Second call should hit the session again
+        assert await handler.healthy() is True
+        assert handler._session.get.call_count == 2
+
+    async def test_healthy_caches_false_result(self) -> None:
+        handler = _started_handler()
+        session = MagicMock(spec=aiohttp.ClientSession)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(return_value=cm)
+        session.close = AsyncMock()
+        handler._session = session
+
+        # First call — timeout → False
+        assert await handler.healthy() is False
+        assert session.get.call_count == 1
+
+        # Second call — should use cached False, not hit session
+        assert await handler.healthy() is False
+        assert session.get.call_count == 1
+
+    async def test_stop_resets_health_cache(self) -> None:
+        handler = _started_handler()
+        _patch_session(handler, {
+            "get:/api2/json/version": _pve_response(data={"version": "8.0"}, status=200),
+        })
+
+        await handler.healthy()
+        assert handler._health_cache is True
+
+        await handler.stop()
+        assert handler._health_cache is None
+        assert handler._health_cache_ts == 0.0
 
 
 # ---------------------------------------------------------------------------

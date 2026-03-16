@@ -1,0 +1,78 @@
+{# Single notification card — used in list and as HTMX swap target #}
+<div id="notification-{{ n.id }}" class="bg-white rounded-lg shadow p-4 mb-3">
+    {% if error is defined and error %}
+    <div class="mb-3 bg-red-50 border border-red-200 rounded p-3">
+        <p class="text-sm text-red-700">{{ error }}</p>
+    </div>
+    {% endif %}
+
+    <div class="flex items-start justify-between">
+        <div class="flex-1 min-w-0">
+            {# Severity badge + title #}
+            <div class="flex items-center gap-2 mb-1">
+                <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                    {% if n.severity == 'critical' %}bg-red-100 text-red-700
+                    {% elif n.severity == 'error' %}bg-red-100 text-red-600
+                    {% elif n.severity == 'warning' %}bg-amber-100 text-amber-700
+                    {% elif n.severity == 'info' %}bg-blue-100 text-blue-700
+                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ n.severity | upper }}
+                </span>
+                {% if n.action_id and n.action_status %}
+                <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                    {% if n.action_status == 'approved' %}bg-green-100 text-green-700
+                    {% elif n.action_status == 'rejected' %}bg-red-100 text-red-700
+                    {% elif n.action_status == 'expired' %}bg-gray-100 text-gray-500
+                    {% elif n.action_status == 'pending' %}bg-amber-100 text-amber-700
+                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ n.action_status | capitalize }}
+                </span>
+                {% endif %}
+            </div>
+
+            {# Title #}
+            <p class="text-sm font-medium text-gray-900">{{ n.title }}</p>
+
+            {# Message #}
+            <p class="mt-1 text-sm text-gray-600 whitespace-pre-line">{{ n.message }}</p>
+
+            {# Metadata footer #}
+            <div class="mt-2 flex items-center gap-4 text-xs text-gray-400">
+                {% if n.metadata and n.metadata.entity_id %}
+                <span class="font-mono">{{ n.metadata.entity_id }}</span>
+                {% endif %}
+                {% if n.metadata and n.metadata.handler %}
+                <span>{{ n.metadata.handler }}</span>
+                {% endif %}
+                {% if n.event_id %}
+                <a href="/ui/events/{{ n.event_id }}"
+                   class="text-blue-500 hover:text-blue-700 hover:underline"
+                   title="{{ n.event_id }}">
+                    Event: {{ n.event_id[:12] }}...
+                </a>
+                {% endif %}
+                <span>{{ n.timestamp[:19] }}</span>
+            </div>
+        </div>
+
+        {# Approve/Reject buttons — only for pending interactive cards #}
+        {% if n.action_id and n.action_status == 'pending' and current_user.role in ('admin', 'operator') %}
+        <div class="flex flex-col gap-2 ml-4 shrink-0">
+            <button hx-post="/ui/notifications/{{ n.id }}/approve"
+                    hx-target="#notification-{{ n.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Approve this action? It will be executed immediately."
+                    class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700">
+                Approve
+            </button>
+            <button hx-post="/ui/notifications/{{ n.id }}/reject"
+                    hx-target="#notification-{{ n.id }}"
+                    hx-swap="outerHTML"
+                    hx-confirm="Reject this action?"
+                    class="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700">
+                Reject
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>

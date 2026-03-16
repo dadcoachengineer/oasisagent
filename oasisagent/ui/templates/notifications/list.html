@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Notifications — OasisAgent{% endblock %}
+{% block content %}
+<div class="mb-6 flex items-center justify-between">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Notifications</h1>
+        <p class="text-sm text-gray-500">Real-time notification feed</p>
+    </div>
+    <div class="flex items-center gap-2">
+        <select id="severity-filter"
+                hx-get="/ui/notifications/list"
+                hx-target="#notification-list"
+                hx-swap="innerHTML"
+                hx-include="[name='severity']"
+                name="severity"
+                class="text-sm border border-gray-300 rounded px-2 py-1.5">
+            <option value="">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="error">Error</option>
+            <option value="warning">Warning</option>
+            <option value="info">Info</option>
+        </select>
+    </div>
+</div>
+
+<div id="notification-list"
+     hx-ext="sse"
+     sse-connect="/ui/notifications/stream"
+     sse-swap="notification"
+     hx-swap="afterbegin"
+     hx-on::sse-message="var e = document.getElementById('empty-state'); if (e) e.remove();">
+    {% if notifications %}
+    {% for n in notifications %}
+    {% include "notifications/_card.html" %}
+    {% endfor %}
+    {% else %}
+    <div id="empty-state">
+    {% include "notifications/_empty.html" %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

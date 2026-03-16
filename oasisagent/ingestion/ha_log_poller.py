@@ -320,59 +320,6 @@ class HaLogPollerAdapter(IngestAdapter):
         for k in expired:
             del self._seen[k]
 
-    # Keep _process_log for backward compatibility with existing tests
-    def _process_log(self, log_text: str) -> None:
-        """Match plain-text log lines against patterns (legacy compat)."""
-        for line in log_text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-
-            for compiled, pattern in self._compiled_patterns:
-                match = compiled.search(line)
-                if not match:
-                    continue
-
-                fp_entry = {"name": "", "message": line}
-                fingerprint = self._fingerprint(fp_entry, pattern)
-                if self._is_seen(fingerprint):
-                    continue
-
-                self._mark_seen(fingerprint)
-                entity_id = (
-                    match.group(1) if match.lastindex and match.lastindex >= 1 else ""
-                )
-                from oasisagent.models import SEVERITY_MAP
-
-                severity = SEVERITY_MAP.get(pattern.severity, Severity.WARNING)
-
-                event = Event(
-                    source=self.name,
-                    system="homeassistant",
-                    event_type=pattern.event_type,
-                    entity_id=entity_id,
-                    severity=severity,
-                    timestamp=datetime.now(UTC),
-                    payload={
-                        "log_line": line,
-                        "matched_pattern": pattern.regex,
-                        "match_groups": list(match.groups()),
-                    },
-                    metadata=EventMetadata(
-                        dedup_key=f"ha_log:{entity_id}:{pattern.event_type}",
-                    ),
-                )
-
-                try:
-                    self._queue.put_nowait(event)
-                except Exception:
-                    logger.warning(
-                        "HA log poller: failed to enqueue event for line: %s",
-                        line[:100],
-                    )
-
-                break
-
 
 class _AuthError(Exception):
     """Raised when HA WebSocket authentication fails."""

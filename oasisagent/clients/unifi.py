@@ -1,12 +1,12 @@
 """UniFi Network controller HTTP client.
 
-Handles session cookie authentication, automatic re-auth on 401,
+Handles session cookie authentication, automatic re-auth on 401/403,
 and UDM/UCG path prefixing. Used by both the UniFi ingestion adapter
 and the UniFi handler.
 
 UniFi local controllers use POST /api/auth/login returning a session
 cookie — not a stateless token. Sessions expire unpredictably, so
-the client retries exactly once on 401 (re-authenticate then replay).
+the client retries exactly once on 401 or 403 (re-authenticate then replay).
 """
 
 from __future__ import annotations
@@ -56,6 +56,8 @@ class UnifiClient:
         self._timeout = timeout
         self._session: aiohttp.ClientSession | None = None
         self._authenticated = False
+
+        self._validate_site_name(site)
 
     @property
     def site(self) -> str:
@@ -124,7 +126,7 @@ class UnifiClient:
         *,
         json: dict[str, Any] | None = None,
     ) -> aiohttp.ClientResponse:
-        """Make an authenticated request. Retries exactly once on 401.
+        """Make an authenticated request. Retries exactly once on 401 or 403.
 
         Args:
             method: HTTP method (GET, POST, PUT, DELETE).
@@ -141,7 +143,7 @@ class UnifiClient:
         url = self._build_url(path)
 
         resp = await self._session.request(method, url, json=json)
-        if resp.status == 401:
+        if resp.status in (401, 403):
             resp.release()
             await self._authenticate()
             resp = await self._session.request(method, url, json=json)
@@ -187,6 +189,30 @@ class UnifiClient:
     # -----------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------
+
+    @staticmethod
+    def _validate_site_name(site: str) -> None:
+        """Warn if the site name looks like a display name instead of a site ID.
+
+        UniFi site IDs are typically lowercase alphanumeric (e.g., "default").
+        Display names often contain spaces or uppercase letters, which produce
+        URLs like ``/api/s/Oasis%20UDMP/stat/device`` and fail with
+        ``api.err.NoSiteContext``.
+        """
+        reasons: list[str] = []
+        if " " in site:
+            reasons.append("contains spaces")
+        if site != site.lower():
+            reasons.append("contains uppercase letters")
+
+        if reasons:
+            logger.warning(
+                "UniFi site '%s' %s — this looks like a display name, not a "
+                "site ID. Site IDs are typically lowercase alphanumeric "
+                "(e.g., 'default').",
+                site,
+                " and ".join(reasons),
+            )
 
     def _build_url(self, path: str) -> str:
         """Build the full URL with optional UDM prefix and site."""

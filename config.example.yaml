@@ -22,6 +22,8 @@ agent:
   known_fixes_dir: known_fixes/ # Directory containing T0 YAML fix registries
   correlation_window: 30        # Group related events within this window (seconds); 0 to disable
   metrics_port: 0               # Prometheus /metrics port; 0 to disable
+  max_consecutive_identical: 3   # Suppress after N consecutive identical events per entity+type
+  dependency_context_depth: 2    # BFS depth for T2 dependency context (1-5, default 2)
 
 # -----------------------------------------------------------------------------
 # Ingestion — Event sources
@@ -206,6 +208,9 @@ ingestion:
 scanner:
   enabled: false
   interval: 900                    # Global default interval (seconds); per-check overrides below
+  adaptive_enabled: true           # Shorten interval after detecting issues, restore after clean scans
+  adaptive_fast_factor: 0.25       # Multiply interval by this when in fast mode (900s → 225s)
+  adaptive_recovery_scans: 3       # Consecutive clean scans before restoring normal interval
 
   # TLS certificate expiry — checks cert validity from OasisAgent's vantage point
   certificate_expiry:
@@ -240,6 +245,26 @@ scanner:
     ignore_containers: []          # Container names to skip (e.g., ["temp-builder"])
     interval: 900                  # Check interval (seconds); min 60
 
+  # Backup freshness — detects stale backups from PBS or local files
+  backup_freshness:
+    enabled: false
+    interval: 3600                 # Check interval (seconds); min 60
+    sources:
+      # Proxmox Backup Server example
+      - name: pbs-nightly
+        type: pbs
+        url: https://pbs.example.com:8007
+        token_id: "${PBS_TOKEN_ID:-}"
+        token_secret: "${PBS_TOKEN_SECRET:-}"
+        datastore: backups
+        verify_ssl: false
+        max_age_hours: 26          # Just over 1 day — allows for scheduling drift
+      # Local file example (glob pattern)
+      - name: local-tarball
+        type: file
+        path: /backup/daily/*.tar.gz
+        max_age_hours: 26
+
 # -----------------------------------------------------------------------------
 # LLM — Language model configuration
 # OasisAgent is provider-agnostic. Any OpenAI-compatible endpoint works:
@@ -257,7 +282,7 @@ llm:
     base_url: http://localhost:11434/v1    # Ollama default
     model: qwen2.5:7b
     api_key: ${TRIAGE_LLM_API_KEY:-not-needed}
-    timeout: 5                   # Seconds — local models should respond fast
+    timeout: 30                  # Seconds — allows for Ollama cold-start model loading
     max_tokens: 1024
     temperature: 0.1             # Low temp for consistent classification
 

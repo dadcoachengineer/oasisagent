@@ -1,0 +1,39 @@
+fixes:
+  - id: n8n-execution-failed
+    match:
+      system: n8n
+      event_type: n8n_execution_failed
+    diagnosis: "N8N workflow execution failed — check workflow logic, node credentials, and connected service availability"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          N8N workflow execution failed. Steps:
+          1. Open the N8N UI and navigate to the failed execution
+          2. Check the error message on the failing node
+          3. Verify credentials for any external services (APIs, databases)
+          4. Check if connected services are reachable
+          5. Review recent workflow changes that may have introduced the failure
+          6. Re-run the execution manually after fixing the issue
+    risk_tier: recommend
+
+  - id: n8n-unreachable
+    match:
+      system: n8n
+      event_type: n8n_unreachable
+    diagnosis: "N8N service is unreachable — the workflow automation platform may be down or experiencing network issues"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          N8N service is unreachable. Steps:
+          1. Check if the N8N container/process is running
+          2. Verify network connectivity to the N8N host
+          3. Check N8N logs for startup errors or crashes
+          4. Verify the configured URL and port are correct
+          5. Check system resources (disk space, memory) on the N8N host
+    risk_tier: recommend

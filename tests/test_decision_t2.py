@@ -14,14 +14,18 @@ from oasisagent.engine.decision import (
 )
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
+from oasisagent.engine.service_graph import ServiceGraph
 from oasisagent.models import (
     DiagnosisResult,
     Disposition,
     Event,
     EventMetadata,
     RecommendedAction,
+    RemediationStep,
     RiskTier,
     Severity,
+    TopologyEdge,
+    TopologyNode,
     TriageResult,
 )
 
@@ -100,6 +104,7 @@ def _make_engine(
     guardrails_config: GuardrailsConfig | None = None,
     triage_service: AsyncMock | None = None,
     reasoning_service: AsyncMock | None = None,
+    service_graph: ServiceGraph | None = None,
 ) -> DecisionEngine:
     registry = KnownFixRegistry()
     guardrails = GuardrailsEngine(guardrails_config or _make_guardrails())
@@ -108,7 +113,39 @@ def _make_engine(
         guardrails=guardrails,
         triage_service=triage_service,
         reasoning_service=reasoning_service,
+        service_graph=service_graph,
     )
+
+
+def _make_service_graph() -> ServiceGraph:
+    """Build a small graph: svc:zigbee --runs_on--> host:rpi4."""
+    graph = ServiceGraph()
+    graph._nodes = {
+        "sensor.temperature": TopologyNode(
+            entity_id="sensor.temperature",
+            entity_type="service",
+            display_name="Temperature Sensor",
+            host_ip="192.168.1.100",
+            source="test",
+        ),
+        "host:rpi4": TopologyNode(
+            entity_id="host:rpi4",
+            entity_type="host",
+            display_name="rpi4",
+            host_ip="192.168.1.100",
+            source="test",
+        ),
+    }
+    graph._edges = [
+        TopologyEdge(
+            from_entity="sensor.temperature",
+            to_entity="host:rpi4",
+            edge_type="runs_on",
+            source="test",
+        ),
+    ]
+    graph._rebuild_indexes()
+    return graph
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +332,63 @@ class TestT2Guardrails:
 
         assert result.disposition == DecisionDisposition.BLOCKED
 
+    async def test_target_entity_id_checked_instead_of_event(self) -> None:
+        """Guardrails check action.target_entity_id when set, not event.entity_id."""
+        diagnosis = DiagnosisResult(
+            root_cause="Lock firmware issue",
+            confidence=0.9,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Restart lock integration",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                    reasoning="Need to restart",
+                    target_entity_id="lock.front_door",
+                ),
+            ],
+            risk_assessment="Affects security domain",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+        # Event entity is NOT in a blocked domain, but target is
+        event = _make_event(entity_id="sensor.temperature")
+
+        result = await engine.process_event(event)
+
+        assert result.disposition == DecisionDisposition.BLOCKED
+
+    async def test_no_target_entity_falls_back_to_event(self) -> None:
+        """Without target_entity_id, guardrails use event.entity_id."""
+        diagnosis = DiagnosisResult(
+            root_cause="Sensor issue",
+            confidence=0.9,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Restart sensor integration",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                    reasoning="Safe restart",
+                ),
+            ],
+            risk_assessment="Low risk",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+        event = _make_event(entity_id="sensor.temperature")
+
+        result = await engine.process_event(event)
+
+        assert result.disposition == DecisionDisposition.MATCHED
+        assert len(result.recommended_actions) == 1
+
     async def test_dry_run_blocks_t2_actions(self) -> None:
         """Dry run mode blocks all T2 actions (they count as not approved)."""
         reasoning = _make_reasoning_service()
@@ -350,3 +444,372 @@ class TestT2ResultDetails:
         result = await engine.process_event(_make_event())
 
         assert "risk_assessment" in result.details
+
+
+# ---------------------------------------------------------------------------
+# T2 with dependency context
+# ---------------------------------------------------------------------------
+
+
+class TestT2DependencyContext:
+    """T2 passes dependency context when service graph is available."""
+
+    async def test_t2_passes_dependency_context(self) -> None:
+        """With a service graph, diagnose() receives dependency_context."""
+        reasoning = _make_reasoning_service()
+        graph = _make_service_graph()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+            service_graph=graph,
+        )
+
+        await engine.process_event(_make_event())
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        dep_ctx = call_kwargs.get("dependency_context")
+        assert dep_ctx is not None
+        assert dep_ctx.entity_id == "sensor.temperature"
+        assert len(dep_ctx.upstream) == 1
+        assert dep_ctx.upstream[0].entity_id == "host:rpi4"
+
+    async def test_t2_without_graph(self) -> None:
+        """Without a service graph, diagnose() gets dependency_context=None."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+            service_graph=None,
+        )
+
+        await engine.process_event(_make_event())
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs.get("dependency_context") is None
+
+    async def test_t2_details_include_dependency_fields(self) -> None:
+        """DecisionResult.details contains dependency_* fields."""
+        reasoning = _make_reasoning_service()
+        graph = _make_service_graph()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+            service_graph=graph,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert "dependency_upstream" in result.details
+        assert "host:rpi4" in result.details["dependency_upstream"]
+        assert "dependency_downstream" in result.details
+        assert "dependency_same_host" in result.details
+        assert "dependency_depth" in result.details
+
+    async def test_set_service_graph_deferred(self) -> None:
+        """set_service_graph() wires graph after construction."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        # Initially no graph
+        await engine.process_event(_make_event())
+        assert reasoning.diagnose.call_args.kwargs.get("dependency_context") is None
+
+        # Wire graph after the fact
+        reasoning.reset_mock()
+        engine.set_service_graph(_make_service_graph())
+        await engine.process_event(_make_event())
+
+        dep_ctx = reasoning.diagnose.call_args.kwargs.get("dependency_context")
+        assert dep_ctx is not None
+        assert len(dep_ctx.upstream) == 1
+
+
+# ---------------------------------------------------------------------------
+# Entity context fn (lazy callable)
+# ---------------------------------------------------------------------------
+
+
+class TestEntityContextFn:
+    """entity_context_fn is called lazily only at T2."""
+
+    async def test_entity_context_fn_called_at_t2(self) -> None:
+        """entity_context_fn invoked when T2 is reached; result flows to diagnose()."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        ctx_fn_called = False
+
+        async def _ctx_fn() -> dict[str, Any]:
+            nonlocal ctx_fn_called
+            ctx_fn_called = True
+            return {"primary": {"entity_state": "unavailable"}}
+
+        await engine.process_event(
+            _make_event(), entity_context_fn=_ctx_fn,
+        )
+
+        assert ctx_fn_called
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs["entity_context"] == {
+            "primary": {"entity_state": "unavailable"},
+        }
+
+    async def test_entity_context_fn_not_called_at_t0(self) -> None:
+        """T0 match -> entity_context_fn never called."""
+        from oasisagent.engine.guardrails import GuardrailsEngine
+        from oasisagent.engine.known_fixes import (
+            FixAction,
+            FixActionType,
+            FixMatch,
+            KnownFix,
+            KnownFixRegistry,
+        )
+
+        registry = KnownFixRegistry()
+        registry._fixes = [
+            KnownFix(
+                id="test-fix",
+                match=FixMatch(system="homeassistant", event_type="integration_failure"),
+                action=FixAction(
+                    type=FixActionType.AUTO_FIX,
+                    handler="homeassistant",
+                    operation="restart_integration",
+                ),
+                risk_tier=RiskTier.AUTO_FIX,
+                diagnosis="Known fix",
+            ),
+        ]
+
+        engine = DecisionEngine(
+            registry=registry,
+            guardrails=GuardrailsEngine(_make_guardrails()),
+        )
+
+        ctx_fn_called = False
+
+        async def _ctx_fn() -> dict[str, Any]:
+            nonlocal ctx_fn_called
+            ctx_fn_called = True
+            return {"should": "not be called"}
+
+        result = await engine.process_event(
+            _make_event(), entity_context_fn=_ctx_fn,
+        )
+
+        assert not ctx_fn_called
+        assert result.tier == DecisionTier.T0
+
+    async def test_dependency_context_passed_through(self) -> None:
+        """dependency_context flows through to diagnose()."""
+        from oasisagent.models import DependencyContext, DependencyNode
+
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        dep_ctx = DependencyContext(
+            entity_id="sensor.temperature",
+            upstream=[DependencyNode(
+                entity_id="host:rpi4",
+                entity_type="host",
+                display_name="rpi4",
+                edge_type="runs_on",
+                depth=1,
+            )],
+        )
+
+        await engine.process_event(
+            _make_event(), dependency_context=dep_ctx,
+        )
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs["dependency_context"] is dep_ctx
+
+    async def test_both_none_backward_compat(self) -> None:
+        """No params -> entity_context={}, dependency_context computed internally."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        await engine.process_event(_make_event())
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs["entity_context"] == {}
+        # No service graph -> dependency_context=None
+        assert call_kwargs["dependency_context"] is None
+
+    async def test_multi_handler_context_systems_in_details(self) -> None:
+        """Details include multi_handler_context_systems when context is gathered."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        async def _ctx_fn() -> dict[str, Any]:
+            return {
+                "primary": {"state": "unavailable"},
+                "dependency:portainer:portainer:1/mqtt": {"status": "running"},
+            }
+
+        result = await engine.process_event(
+            _make_event(), entity_context_fn=_ctx_fn,
+        )
+
+        assert result.details["multi_handler_context_systems"] == [
+            "homeassistant", "portainer",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# T2 remediation plan threading
+# ---------------------------------------------------------------------------
+
+
+class TestT2PlanThreading:
+    """DecisionResult carries remediation_plan from T2 DiagnosisResult."""
+
+    async def test_plan_threaded_to_matched_result(self) -> None:
+        """MATCHED result includes remediation_plan from diagnosis."""
+        plan_steps = [
+            RemediationStep(
+                order=1,
+                action=RecommendedAction(
+                    description="Restart upstream",
+                    handler="portainer",
+                    operation="restart_container",
+                    risk_tier=RiskTier.AUTO_FIX,
+                ),
+                success_criteria="Container running",
+            ),
+            RemediationStep(
+                order=2,
+                action=RecommendedAction(
+                    description="Restart downstream",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                ),
+                success_criteria="Integration available",
+                depends_on=[1],
+            ),
+        ]
+        diagnosis = DiagnosisResult(
+            root_cause="Multi-system failure",
+            confidence=0.85,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Restart ZWave",
+                    handler="homeassistant",
+                    operation="restart_integration",
+                    risk_tier=RiskTier.AUTO_FIX,
+                ),
+            ],
+            remediation_plan=plan_steps,
+            risk_assessment="Low risk",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.disposition == DecisionDisposition.MATCHED
+        assert result.remediation_plan is not None
+        assert len(result.remediation_plan) == 2
+        assert result.remediation_plan[0].order == 1
+        assert result.remediation_plan[1].depends_on == [1]
+
+    async def test_plan_threaded_to_blocked_result(self) -> None:
+        """BLOCKED result also carries remediation_plan."""
+        diagnosis = DiagnosisResult(
+            root_cause="Lock firmware issue",
+            confidence=0.9,
+            recommended_actions=[
+                RecommendedAction(
+                    description="Update lock firmware",
+                    handler="homeassistant",
+                    operation="firmware_update",
+                    risk_tier=RiskTier.ESCALATE,
+                ),
+            ],
+            remediation_plan=[
+                RemediationStep(
+                    order=1,
+                    action=RecommendedAction(
+                        description="Update firmware",
+                        handler="homeassistant",
+                        operation="firmware_update",
+                        risk_tier=RiskTier.ESCALATE,
+                    ),
+                    success_criteria="Firmware updated",
+                ),
+            ],
+            risk_assessment="High risk",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.disposition == DecisionDisposition.BLOCKED
+        assert result.remediation_plan is not None
+        assert len(result.remediation_plan) == 1
+
+    async def test_plan_threaded_to_escalated_result(self) -> None:
+        """ESCALATED (no actions) result carries plan if present."""
+        diagnosis = DiagnosisResult(
+            root_cause="Unknown failure",
+            confidence=0.3,
+            recommended_actions=[],
+            remediation_plan=[
+                RemediationStep(
+                    order=1,
+                    action=RecommendedAction(
+                        description="Investigate",
+                        handler="homeassistant",
+                        operation="notify",
+                        risk_tier=RiskTier.RECOMMEND,
+                    ),
+                    success_criteria="Operator notified",
+                ),
+            ],
+            risk_assessment="Unknown",
+        )
+        reasoning = _make_reasoning_service(diagnosis)
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.disposition == DecisionDisposition.ESCALATED
+        assert result.remediation_plan is not None
+
+    async def test_no_plan_backward_compat(self) -> None:
+        """Default: remediation_plan=None when T2 returns no plan."""
+        reasoning = _make_reasoning_service()  # Default diagnosis has no plan
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        result = await engine.process_event(_make_event())
+
+        assert result.remediation_plan is None

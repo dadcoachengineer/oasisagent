@@ -10,7 +10,15 @@ from oasisagent.llm.prompts.diagnose_failure import (
     SYSTEM_PROMPT,
     build_diagnose_messages,
 )
-from oasisagent.models import Disposition, Event, Severity, TriageResult
+from oasisagent.models import (
+    DependencyContext,
+    DependencyEdgeInfo,
+    DependencyNode,
+    Disposition,
+    Event,
+    Severity,
+    TriageResult,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -174,3 +182,116 @@ class TestBuildDiagnoseMessages:
 
         parsed = json.loads(event_json)
         assert parsed["entity_id"] == event.entity_id
+
+
+# ---------------------------------------------------------------------------
+# Dependency context in prompts
+# ---------------------------------------------------------------------------
+
+
+def _make_dependency_context(
+    entity_id: str = "svc:zigbee",
+    upstream: list[DependencyNode] | None = None,
+    downstream: list[DependencyNode] | None = None,
+    same_host: list[DependencyNode] | None = None,
+    edges: list[DependencyEdgeInfo] | None = None,
+) -> DependencyContext:
+    return DependencyContext(
+        entity_id=entity_id,
+        entity_type="service",
+        host_ip="192.168.1.100",
+        upstream=upstream or [],
+        downstream=downstream or [],
+        same_host=same_host or [],
+        edges=edges or [],
+    )
+
+
+class TestDependencyContextInPrompt:
+    def test_prompt_includes_dependency_section(self) -> None:
+        dep_ctx = _make_dependency_context(
+            upstream=[
+                DependencyNode(
+                    entity_id="host:rpi4",
+                    entity_type="host",
+                    display_name="rpi4",
+                    edge_type="runs_on",
+                    depth=1,
+                ),
+            ],
+            edges=[
+                DependencyEdgeInfo(
+                    from_entity="svc:zigbee",
+                    to_entity="host:rpi4",
+                    edge_type="runs_on",
+                ),
+            ],
+        )
+        messages = build_diagnose_messages(
+            _make_event(), _make_triage(), dependency_context=dep_ctx,
+        )
+        user_content = messages[1]["content"]
+
+        assert "Service Dependencies" in user_content
+        assert "Upstream" in user_content
+        assert "host:rpi4" in user_content
+        assert "runs_on" in user_content
+        assert "Topology Edges" in user_content
+
+    def test_prompt_excludes_dependency_when_none(self) -> None:
+        messages = build_diagnose_messages(
+            _make_event(), _make_triage(), dependency_context=None,
+        )
+        user_content = messages[1]["content"]
+
+        assert "Service Dependencies" not in user_content
+
+    def test_prompt_excludes_dependency_when_empty(self) -> None:
+        dep_ctx = _make_dependency_context()  # all lists empty
+        messages = build_diagnose_messages(
+            _make_event(), _make_triage(), dependency_context=dep_ctx,
+        )
+        user_content = messages[1]["content"]
+
+        assert "Service Dependencies" not in user_content
+
+    def test_downstream_section_present(self) -> None:
+        dep_ctx = _make_dependency_context(
+            downstream=[
+                DependencyNode(
+                    entity_id="svc:ha",
+                    entity_type="service",
+                    display_name="homeassistant",
+                    edge_type="depends_on",
+                    depth=1,
+                ),
+            ],
+        )
+        messages = build_diagnose_messages(
+            _make_event(), _make_triage(), dependency_context=dep_ctx,
+        )
+        user_content = messages[1]["content"]
+
+        assert "Downstream" in user_content
+        assert "svc:ha" in user_content
+
+    def test_same_host_section_present(self) -> None:
+        dep_ctx = _make_dependency_context(
+            same_host=[
+                DependencyNode(
+                    entity_id="svc:mqtt",
+                    entity_type="service",
+                    display_name="mosquitto",
+                    edge_type="same_host",
+                    depth=0,
+                ),
+            ],
+        )
+        messages = build_diagnose_messages(
+            _make_event(), _make_triage(), dependency_context=dep_ctx,
+        )
+        user_content = messages[1]["content"]
+
+        assert "Same Host" in user_content
+        assert "192.168.1.100" in user_content
+        assert "svc:mqtt" in user_content

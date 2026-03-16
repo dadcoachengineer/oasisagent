@@ -1,0 +1,56 @@
+fixes:
+  - id: qbt-torrent-error
+    match:
+      system: qbittorrent
+      event_type: qbt_torrent_error
+    diagnosis: "Torrent is in error state — may indicate tracker issues, corrupt data, or permission problems"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          qBittorrent torrent error detected. Steps:
+          1. Check the torrent state in qBittorrent web UI
+          2. Common causes: tracker unreachable, corrupt download, disk full
+          3. Try force re-checking the torrent
+          4. If tracker error, verify tracker is online
+          5. Check disk space on download directory
+    risk_tier: recommend
+
+  - id: qbt-stalled
+    match:
+      system: qbittorrent
+      event_type: qbt_torrent_stalled
+    diagnosis: "Torrent download is stalled — no seeds available or connectivity issue"
+    action:
+      type: recommend
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          qBittorrent torrent stalled. Steps:
+          1. Check seed/peer count for the torrent
+          2. Verify port forwarding is configured correctly
+          3. Check VPN connectivity if using one
+          4. If no seeds, the torrent may need to be replaced
+    risk_tier: recommend
+
+  - id: qbt-connection-lost
+    match:
+      system: qbittorrent
+      event_type: qbt_connection_lost
+    diagnosis: "qBittorrent has lost internet connectivity — VPN or network issue"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          qBittorrent connection lost. Steps:
+          1. Check VPN connection status if using one
+          2. Verify host network connectivity
+          3. Check if qBittorrent is bound to a specific interface
+          4. Restart VPN/network service if needed
+          5. Verify firewall rules haven't changed
+    risk_tier: escalate

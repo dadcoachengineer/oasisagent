@@ -6,11 +6,16 @@ manages adapter lifecycle via start() and stop().
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from oasisagent.engine.queue import EventQueue
+    from oasisagent.models import TopologyEdge, TopologyNode
+    from oasisagent.models.event import Event
+
+logger = logging.getLogger(__name__)
 
 
 class IngestAdapter(ABC):
@@ -50,3 +55,29 @@ class IngestAdapter(ABC):
 
         Used by the agent for health checks and status reporting.
         """
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover services and relationships this adapter knows about.
+
+        Returns (nodes, edges) for the service topology graph. Default
+        implementation returns empty lists — adapters override this to
+        provide auto-discovery.
+
+        Called periodically by the orchestrator to keep the topology
+        graph up-to-date.
+        """
+        return [], []
+
+    def _enqueue(self, event: Event) -> None:
+        """Enqueue an event, logging on failure."""
+        try:
+            self._queue.put_nowait(event)
+        except Exception:
+            logger.warning(
+                "%s: failed to enqueue event: %s/%s",
+                self.name,
+                event.system,
+                event.event_type,
+            )

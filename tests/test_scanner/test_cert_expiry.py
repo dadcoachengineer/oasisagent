@@ -138,10 +138,20 @@ class TestCertExpiryEvaluate:
         assert events[0].event_type == "certificate_renewed"
         assert events[0].payload["previous_state"] == "warning"
 
-    def test_dedup_key_includes_endpoint(self) -> None:
+    def test_dedup_key_normalized(self) -> None:
         scanner = _make_scanner()
         events = scanner._evaluate("example.com", 3)
-        assert events[0].metadata.dedup_key == "scanner.cert_expiry:example.com"
+        assert events[0].metadata.dedup_key == "cert_expiry:example.com"
+
+    def test_dedup_key_strips_port_443(self) -> None:
+        scanner = _make_scanner(config=_make_config(endpoints=["example.com:443"]))
+        events = scanner._evaluate("example.com:443", 3)
+        assert events[0].metadata.dedup_key == "cert_expiry:example.com"
+
+    def test_dedup_key_preserves_non_443_port(self) -> None:
+        scanner = _make_scanner(config=_make_config(endpoints=["nas.example.com:8443"]))
+        events = scanner._evaluate("nas.example.com:8443", 3)
+        assert events[0].metadata.dedup_key == "cert_expiry:nas.example.com:8443"
 
     def test_multiple_endpoints_tracked_independently(self) -> None:
         cfg = _make_config(endpoints=["a.com", "b.com"])

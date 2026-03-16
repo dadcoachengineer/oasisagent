@@ -190,6 +190,16 @@ class TestParseDiagnosis:
         )
         assert result.additional_context == "USB device log shows errors"
 
+    def test_target_entity_id_parsed(self) -> None:
+        data = json.loads(_valid_diagnosis_json())
+        data["recommended_actions"][0]["target_entity_id"] = "lock.front_door"
+        result = _parse_diagnosis(json.dumps(data))
+        assert result.recommended_actions[0].target_entity_id == "lock.front_door"
+
+    def test_target_entity_id_absent_defaults_none(self) -> None:
+        result = _parse_diagnosis(_valid_diagnosis_json())
+        assert result.recommended_actions[0].target_entity_id is None
+
 
 # ---------------------------------------------------------------------------
 # ReasoningService.diagnose

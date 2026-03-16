@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -238,6 +238,152 @@ class TestLoadConfigWithData:
         assert config.audit.influxdb.token == "influx-tok"
 
 
+class TestLoadConfigNewTypes:
+    """Test that v0.3.3+ types are loaded from SQLite into config."""
+
+    async def test_unifi_connector(self, store: ConfigStore) -> None:
+        await store.create_connector(
+            "unifi", "oasis-udm",
+            {"enabled": True, "url": "https://192.168.1.1", "username": "admin", "password": "pw"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.unifi.url == "https://192.168.1.1"
+        assert config.ingestion.unifi.enabled is True
+
+    async def test_cloudflare_connector(self, store: ConfigStore) -> None:
+        await store.create_connector(
+            "cloudflare", "cf",
+            {"enabled": True, "api_token": "tok123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.cloudflare.api_token == "tok123"
+        assert config.ingestion.cloudflare.enabled is True
+
+    async def test_uptime_kuma_connector(self, store: ConfigStore) -> None:
+        await store.create_connector(
+            "uptime_kuma", "kuma",
+            {"enabled": True, "url": "http://kuma:3001", "api_key": "key123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.uptime_kuma.url == "http://kuma:3001"
+        assert config.ingestion.uptime_kuma.enabled is True
+
+    async def test_portainer_handler(self, store: ConfigStore) -> None:
+        await store.create_service(
+            "portainer_handler", "portainer",
+            {"url": "https://portainer:9443", "api_key": "ptk"},
+        )
+        config = await store.load_config()
+        assert config.handlers.portainer.url == "https://portainer:9443"
+        assert config.handlers.portainer.api_key == "ptk"
+
+    async def test_unifi_handler(self, store: ConfigStore) -> None:
+        await store.create_service(
+            "unifi_handler", "unifi",
+            {"url": "https://192.168.1.1", "username": "admin", "password": "pw"},
+        )
+        config = await store.load_config()
+        assert config.handlers.unifi.url == "https://192.168.1.1"
+        assert config.handlers.unifi.password == "pw"
+
+    async def test_cloudflare_handler(self, store: ConfigStore) -> None:
+        await store.create_service(
+            "cloudflare_handler", "cf-handler",
+            {"api_token": "cf-tok"},
+        )
+        config = await store.load_config()
+        assert config.handlers.cloudflare.api_token == "cf-tok"
+
+    async def test_telegram_notification(self, store: ConfigStore) -> None:
+        await store.create_notification(
+            "telegram", "tg",
+            {"enabled": True, "bot_token": "bot123", "chat_id": "456"},
+        )
+        config = await store.load_config()
+        assert config.notifications.telegram.bot_token == "bot123"
+        assert config.notifications.telegram.chat_id == "456"
+
+
+class TestEnabledFlagInjection:
+    """Regression: DB ``enabled`` column must be injected into config dict (#151).
+
+    UI-created rows store ``enabled`` as a DB column, not in ``config_json``.
+    Components whose Pydantic models default ``enabled=False`` would never
+    start without the injection.
+    """
+
+    async def test_connector_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """UniFi connector created without 'enabled' in config_json loads as enabled."""
+        await store.create_connector(
+            "unifi", "oasis-udm",
+            {"url": "https://192.168.1.1", "username": "admin", "password": "pw"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.unifi.enabled is True
+        assert config.ingestion.unifi.url == "https://192.168.1.1"
+
+    async def test_handler_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """Portainer handler created without 'enabled' in config_json loads as enabled."""
+        await store.create_service(
+            "portainer_handler", "portainer",
+            {"url": "https://portainer:9443", "api_key": "ptk"},
+        )
+        config = await store.load_config()
+        assert config.handlers.portainer.enabled is True
+
+    async def test_cloudflare_connector_without_enabled(
+        self, store: ConfigStore,
+    ) -> None:
+        await store.create_connector(
+            "cloudflare", "cf",
+            {"api_token": "tok123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.cloudflare.enabled is True
+
+    async def test_uptime_kuma_without_enabled(
+        self, store: ConfigStore,
+    ) -> None:
+        await store.create_connector(
+            "uptime_kuma", "kuma",
+            {"url": "http://kuma:3001", "api_key": "key123"},
+        )
+        config = await store.load_config()
+        assert config.ingestion.uptime_kuma.enabled is True
+
+    async def test_unifi_handler_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """UniFi handler created without 'enabled' in config_json loads as enabled."""
+        await store.create_service(
+            "unifi_handler", "unifi-handler",
+            {
+                "url": "https://192.168.1.1",
+                "username": "admin",
+                "password": "secret",
+            },
+        )
+        config = await store.load_config()
+        assert config.handlers.unifi.enabled is True
+        assert config.handlers.unifi.url == "https://192.168.1.1"
+
+    async def test_cloudflare_handler_without_enabled_in_config_json(
+        self, store: ConfigStore,
+    ) -> None:
+        """Cloudflare handler created without 'enabled' in config_json loads as enabled."""
+        await store.create_service(
+            "cloudflare_handler", "cloudflare-handler",
+            {"api_token": "cf-tok-123"},
+        )
+        config = await store.load_config()
+        assert config.handlers.cloudflare.enabled is True
+        assert config.handlers.cloudflare.api_token == "cf-tok-123"
+
+
 class TestAgentConfig:
     async def test_default_agent_config(self, store: ConfigStore) -> None:
         config = await store.load_config()
@@ -255,3 +401,149 @@ class TestAgentConfig:
     async def test_update_agent_config_rejects_unknown_fields(self, store: ConfigStore) -> None:
         with pytest.raises(ValueError, match="Unknown fields"):
             await store.update_agent_config({"bogus_field": "nope"})
+
+
+class TestImportYaml:
+    """Tests for YAML → SQLite import on virgin databases."""
+
+    def _make_config(self, **overrides: Any) -> OasisAgentConfig:
+        """Build a minimal config with some enabled components."""
+        from oasisagent.config import (
+            AuditConfig,
+            HandlersConfig,
+            InfluxDbConfig,
+            IngestionConfig,
+            MqttIngestionConfig,
+            MqttNotificationConfig,
+            NotificationsConfig,
+        )
+
+        return OasisAgentConfig(
+            ingestion=IngestionConfig(
+                mqtt=MqttIngestionConfig(
+                    enabled=True,
+                    broker="mqtt://test.local:1883",
+                    password="mqtt-secret",
+                ),
+            ),
+            audit=AuditConfig(
+                influxdb=InfluxDbConfig(
+                    enabled=True,
+                    url="http://influx.local:8086",
+                    token="influx-token",
+                ),
+            ),
+            handlers=HandlersConfig(),
+            notifications=NotificationsConfig(
+                mqtt=MqttNotificationConfig(
+                    enabled=True,
+                    broker="mqtt://test.local:1883",
+                    password="notif-secret",
+                ),
+            ),
+            **overrides,
+        )
+
+    async def test_import_creates_connector_rows(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_connectors()
+        type_names = {r["type"] for r in rows}
+        # mqtt, ha_websocket, ha_log_poller all default to enabled=True
+        assert "mqtt" in type_names
+        assert "ha_websocket" in type_names
+        assert "ha_log_poller" in type_names
+
+        mqtt_row = next(r for r in rows if r["type"] == "mqtt")
+        assert mqtt_row["config"]["broker"] == "mqtt://test.local:1883"
+
+    async def test_import_creates_notification_rows(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_notifications()
+        assert len(rows) == 1
+        assert rows[0]["type"] == "mqtt_notification"
+        assert rows[0]["config"]["broker"] == "mqtt://test.local:1883"
+
+    async def test_import_creates_service_rows(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_services()
+        type_names = {r["type"] for r in rows}
+        # influxdb + llm_options + guardrails + circuit_breaker (always imported)
+        assert "influxdb" in type_names
+        assert "llm_options" in type_names
+        assert "guardrails" in type_names
+        assert "circuit_breaker" in type_names
+
+    async def test_import_secrets_are_encrypted(
+        self, store: ConfigStore, db: aiosqlite.Connection,
+    ) -> None:
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        # Raw DB row should NOT contain plaintext password
+        cursor = await db.execute(
+            "SELECT config_json FROM notification_channels WHERE type = 'mqtt_notification'"
+        )
+        row = await cursor.fetchone()
+        raw = json.loads(row["config_json"])
+        assert "password" not in raw
+
+        # But decrypted read should have it
+        rows = await store.list_notifications()
+        assert rows[0]["config"]["password"] == "notif-secret"
+
+    async def test_import_makes_db_non_virgin(
+        self, store: ConfigStore,
+    ) -> None:
+        config = self._make_config()
+        assert await store.is_virgin() is True
+        await store.import_yaml(config)
+        assert await store.is_virgin() is False
+
+    async def test_roundtrip_yaml_to_sqlite_to_config(
+        self, store: ConfigStore,
+    ) -> None:
+        """Import YAML, then load from SQLite — should produce equivalent config."""
+        original = self._make_config()
+        await store.import_yaml(original)
+
+        loaded = await store.load_config()
+        # MQTT connector
+        assert loaded.ingestion.mqtt.enabled is True
+        assert loaded.ingestion.mqtt.broker == "mqtt://test.local:1883"
+        assert loaded.ingestion.mqtt.password == "mqtt-secret"
+        # MQTT notification
+        assert loaded.notifications.mqtt.enabled is True
+        assert loaded.notifications.mqtt.broker == "mqtt://test.local:1883"
+        assert loaded.notifications.mqtt.password == "notif-secret"
+        # InfluxDB
+        assert loaded.audit.influxdb.enabled is True
+        assert loaded.audit.influxdb.token == "influx-token"
+
+    async def test_disabled_components_not_imported(
+        self, store: ConfigStore,
+    ) -> None:
+        """Components with enabled=False should not create DB rows."""
+        config = self._make_config()
+        await store.import_yaml(config)
+
+        rows = await store.list_services()
+        type_names = {r["type"] for r in rows}
+        # UniFi handler defaults to enabled=False
+        assert "unifi_handler" not in type_names
+
+        conn_rows = await store.list_connectors()
+        conn_types = {r["type"] for r in conn_rows}
+        # Cloudflare adapter defaults to enabled=False
+        assert "cloudflare" not in conn_types

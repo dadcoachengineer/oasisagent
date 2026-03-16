@@ -1,28 +1,25 @@
 """Vaultwarden (Bitwarden) health-check ingestion adapter.
 
 Polls the Vaultwarden ``/alive`` endpoint to detect service outages.
-When ``deep_health`` is enabled, additionally polls ``/api/config``
-to detect partial degradation and tracks response time.
+Vaultwarden is a lightweight Bitwarden-compatible server — its ``/alive``
+endpoint returns HTTP 200 when the service is healthy.
 
 Events emitted on state transitions:
 - ``vaultwarden_unreachable`` (ERROR) when the health check fails
 - ``vaultwarden_recovered`` (INFO) when the service comes back online
-- ``vaultwarden_degraded`` (WARNING) when /alive OK but /api/config fails
-- ``vaultwarden_slow`` (WARNING) when response time exceeds threshold
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import aiohttp
 
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     from oasisagent.config import VaultwardenAdapterConfig
@@ -33,9 +30,6 @@ logger = logging.getLogger(__name__)
 
 class VaultwardenAdapter(IngestAdapter):
     """Polls Vaultwarden's ``/alive`` endpoint for service health.
-
-    When ``deep_health`` is enabled, also polls ``/api/config`` for
-    degraded detection and response time tracking.
 
     State-based dedup ensures events only fire on transitions.
     """
@@ -51,9 +45,6 @@ class VaultwardenAdapter(IngestAdapter):
 
         # State tracker: None = first poll, True = healthy, False = down
         self._service_ok: bool | None = None
-        # Deep health state
-        self._api_ok: bool | None = None
-        self._is_slow: bool | None = None
 
     @property
     def name(self) -> str:
@@ -124,10 +115,12 @@ class VaultwardenAdapter(IngestAdapter):
         async with session.get(url) as resp:
             resp.raise_for_status()
 
+        is_ok = True
         was_ok = self._service_ok
-        self._service_ok = True
+        self._service_ok = is_ok
 
-        if was_ok is not None and not was_ok:
+        # Transition from down -> up
+        if was_ok is not None and not was_ok and is_ok:
             self._enqueue(Event(
                 source=self.name,
                 system="vaultwarden",
@@ -136,87 +129,17 @@ class VaultwardenAdapter(IngestAdapter):
                 severity=Severity.INFO,
                 timestamp=datetime.now(tz=UTC),
                 payload={"url": self._config.url},
-                metadata=EventMetadata(dedup_key="vaultwarden:health"),
+                metadata=EventMetadata(
+                    dedup_key="vaultwarden:health",
+                ),
             ))
-
-        if self._config.deep_health:
-            await self._poll_deep_health(session)
-
-    # -----------------------------------------------------------------
-    # Deep health checks
-    # -----------------------------------------------------------------
-
-    async def _poll_deep_health(self, session: aiohttp.ClientSession) -> None:
-        """Poll ``/api/config`` for degraded detection and response time."""
-        base = self._config.url.rstrip("/")
-        api_url = f"{base}/api/config"
-
-        was_api_ok = self._api_ok
-        was_slow = self._is_slow
-
-        try:
-            t0 = time.monotonic()
-            async with session.get(api_url) as resp:
-                resp.raise_for_status()
-            elapsed_ms = (time.monotonic() - t0) * 1000
-
-            self._api_ok = True
-
-            if was_api_ok is not None and not was_api_ok:
-                logger.info("Vaultwarden: /api/config recovered")
-
-            is_slow = elapsed_ms > self._config.slow_threshold_ms
-            self._is_slow = is_slow
-
-            if is_slow and (was_slow is None or not was_slow):
-                self._enqueue(Event(
-                    source=self.name,
-                    system="vaultwarden",
-                    event_type="vaultwarden_slow",
-                    entity_id="vaultwarden",
-                    severity=Severity.WARNING,
-                    timestamp=datetime.now(tz=UTC),
-                    payload={
-                        "url": self._config.url,
-                        "response_time_ms": round(elapsed_ms, 1),
-                        "threshold_ms": self._config.slow_threshold_ms,
-                    },
-                    metadata=EventMetadata(dedup_key="vaultwarden:slow"),
-                ))
-
-        except (TimeoutError, aiohttp.ClientError, Exception) as exc:
-            self._api_ok = False
-            self._is_slow = None
-
-            if was_api_ok is None or was_api_ok:
-                logger.warning(
-                    "Vaultwarden: /api/config failed (degraded): %s", exc,
-                )
-                self._enqueue(Event(
-                    source=self.name,
-                    system="vaultwarden",
-                    event_type="vaultwarden_degraded",
-                    entity_id="vaultwarden",
-                    severity=Severity.WARNING,
-                    timestamp=datetime.now(tz=UTC),
-                    payload={
-                        "url": self._config.url,
-                        "reason": str(exc),
-                    },
-                    metadata=EventMetadata(
-                        dedup_key="vaultwarden:degraded",
-                    ),
-                ))
 
     def _handle_failure(self, reason: str) -> None:
         """Handle a failed health check — emit event on transition."""
         was_ok = self._service_ok
         self._service_ok = False
 
-        if self._config.deep_health:
-            self._api_ok = None
-            self._is_slow = None
-
+        # Transition from up -> down, or first poll is down
         if was_ok is None or was_ok:
             if was_ok is not None:
                 logger.warning("Vaultwarden: health check failed: %s", reason)
@@ -231,15 +154,33 @@ class VaultwardenAdapter(IngestAdapter):
                     "url": self._config.url,
                     "reason": reason,
                 },
-                metadata=EventMetadata(dedup_key="vaultwarden:health"),
+                metadata=EventMetadata(
+                    dedup_key="vaultwarden:health",
+                ),
             ))
 
-    def _enqueue(self, event: Event) -> None:
-        """Enqueue an event, logging on failure."""
-        try:
-            self._queue.put_nowait(event)
-        except Exception:
-            logger.warning(
-                "Vaultwarden: failed to enqueue event: %s/%s",
-                event.system, event.event_type,
-            )
+    # -----------------------------------------------------------------
+    # Topology discovery
+    # -----------------------------------------------------------------
+
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover this service as a topology node."""
+        from urllib.parse import urlparse
+
+        source = f"auto:{self.name}"
+        parsed = urlparse(self._config.url)
+        nodes = [
+            TopologyNode(
+                entity_id=f"{self.name}:{self.name}",
+                entity_type="service",
+                display_name="Vaultwarden",
+                host_ip=parsed.hostname,
+                source=source,
+                last_seen=datetime.now(UTC),
+                metadata={"url": self._config.url},
+            ),
+        ]
+        return nodes, []
+

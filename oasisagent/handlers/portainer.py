@@ -62,6 +62,23 @@ class PortainerHandler(Handler):
             f"/api/endpoints/{config.endpoint_id}/docker"
         )
 
+    def _docker_prefix_for(
+        self, event: Event, action: RecommendedAction | None = None,
+    ) -> str:
+        """Resolve Docker API prefix with per-request endpoint routing.
+
+        Checks action.params["endpoint_id"] and event.payload["endpoint_id"]
+        before falling back to the config default.
+        """
+        ep_id = None
+        if action is not None:
+            ep_id = action.params.get("endpoint_id")
+        if ep_id is None:
+            ep_id = event.payload.get("endpoint_id")
+        if ep_id is not None:
+            return f"/api/endpoints/{ep_id}/docker"
+        return self._docker_prefix
+
     def name(self) -> str:
         return "portainer"
 
@@ -162,12 +179,15 @@ class PortainerHandler(Handler):
         container_id = (
             result.details.get("container_id")
             or action.params.get("container_id")
-            or event.entity_id
+            or self._extract_container_id(event.entity_id)
         )
 
         expected = ("exited", "stopped") if action.operation == "stop_container" else ("running",)
+        prefix = self._docker_prefix_for(event, action)
 
-        return await self._verify_container_status(container_id, expected)
+        return await self._verify_container_status(
+            container_id, expected, docker_prefix=prefix,
+        )
 
     async def get_context(self, event: Event) -> dict[str, Any]:
         """Gather Docker-specific context via Portainer for T1/T2 diagnosis.
@@ -176,12 +196,13 @@ class PortainerHandler(Handler):
         """
         self._ensure_started()
         context: dict[str, Any] = {}
-        container_id = event.entity_id
+        container_id = self._extract_container_id(event.entity_id)
+        prefix = self._docker_prefix_for(event)
 
         try:
             assert self._session is not None
             async with self._session.get(
-                f"{self._docker_prefix}/containers/{container_id}/json",
+                f"{prefix}/containers/{container_id}/json",
             ) as resp:
                 resp.raise_for_status()
                 context["container_inspect"] = await resp.json()
@@ -191,13 +212,50 @@ class PortainerHandler(Handler):
         try:
             assert self._session is not None
             async with self._session.get(
-                f"{self._docker_prefix}/containers/{container_id}/logs",
+                f"{prefix}/containers/{container_id}/logs",
                 params={"tail": "100", "stdout": "true", "stderr": "true"},
             ) as resp:
                 resp.raise_for_status()
                 context["container_logs"] = await resp.text()
         except aiohttp.ClientError as exc:
             context["container_logs_error"] = str(exc)
+
+        return context
+
+    async def get_context_for_entity(self, entity_id: str) -> dict[str, Any]:
+        """Fetch container inspect data by entity_id (cross-entity query).
+
+        Parses ``portainer:{endpoint}/{container}`` format to extract
+        endpoint ID and container name.  Falls back to the default
+        endpoint when entity_id has no prefix.
+        """
+        self._ensure_started()
+        context: dict[str, Any] = {}
+
+        # Parse entity_id: "portainer:{endpoint}/{container}" or bare name
+        container_id = entity_id
+        prefix = self._docker_prefix
+        if ":" in entity_id:
+            _, _, rest = entity_id.partition(":")
+            if "/" in rest:
+                ep_str, _, container_id = rest.partition("/")
+                prefix = f"/api/endpoints/{ep_str}/docker"
+            else:
+                container_id = rest
+
+        try:
+            assert self._session is not None
+            async with self._session.get(
+                f"{prefix}/containers/{container_id}/json",
+            ) as resp:
+                resp.raise_for_status()
+                context["container_inspect"] = await resp.json()
+        except aiohttp.ClientError as exc:
+            logger.warning(
+                "Portainer get_context_for_entity(%s) failed: %s",
+                entity_id, exc,
+            )
+            context["container_inspect_error"] = str(exc)
 
         return context
 
@@ -220,16 +278,20 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Restart a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
                 error_message="restart_container requires container_id in params or entity_id",
             )
 
+        prefix = self._docker_prefix_for(event, action)
         assert self._session is not None
         async with self._session.post(
-            f"{self._docker_prefix}/containers/{container_id}/restart",
+            f"{prefix}/containers/{container_id}/restart",
         ) as resp:
             resp.raise_for_status()
 
@@ -243,13 +305,17 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Stop a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
                 error_message="stop_container requires container_id in params or entity_id",
             )
 
+        prefix = self._docker_prefix_for(event, action)
         assert self._session is not None
         params: dict[str, str] = {}
         timeout = action.params.get("timeout")
@@ -257,7 +323,7 @@ class PortainerHandler(Handler):
             params["t"] = str(timeout)
 
         async with self._session.post(
-            f"{self._docker_prefix}/containers/{container_id}/stop",
+            f"{prefix}/containers/{container_id}/stop",
             params=params,
         ) as resp:
             resp.raise_for_status()
@@ -272,16 +338,20 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Start a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
                 error_message="start_container requires container_id in params or entity_id",
             )
 
+        prefix = self._docker_prefix_for(event, action)
         assert self._session is not None
         async with self._session.post(
-            f"{self._docker_prefix}/containers/{container_id}/start",
+            f"{prefix}/containers/{container_id}/start",
         ) as resp:
             resp.raise_for_status()
 
@@ -295,17 +365,21 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Fetch container logs via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
                 error_message="get_container_logs requires container_id in params or entity_id",
             )
 
+        prefix = self._docker_prefix_for(event, action)
         tail = action.params.get("tail", "100")
         assert self._session is not None
         async with self._session.get(
-            f"{self._docker_prefix}/containers/{container_id}/logs",
+            f"{prefix}/containers/{container_id}/logs",
             params={"tail": str(tail), "stdout": "true", "stderr": "true"},
         ) as resp:
             resp.raise_for_status()
@@ -320,16 +394,20 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Fetch container stats via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
                 error_message="get_container_stats requires container_id in params or entity_id",
             )
 
+        prefix = self._docker_prefix_for(event, action)
         assert self._session is not None
         async with self._session.get(
-            f"{self._docker_prefix}/containers/{container_id}/stats",
+            f"{prefix}/containers/{container_id}/stats",
             params={"stream": "false"},
         ) as resp:
             resp.raise_for_status()
@@ -344,16 +422,20 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Inspect a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
                 error_message="inspect_container requires container_id in params or entity_id",
             )
 
+        prefix = self._docker_prefix_for(event, action)
         assert self._session is not None
         async with self._session.get(
-            f"{self._docker_prefix}/containers/{container_id}/json",
+            f"{prefix}/containers/{container_id}/json",
         ) as resp:
             resp.raise_for_status()
             inspect_data = await resp.json()
@@ -368,9 +450,10 @@ class PortainerHandler(Handler):
     ) -> ActionResult:
         """List containers in the Portainer environment."""
         all_containers = action.params.get("all", "false")
+        prefix = self._docker_prefix_for(event, action)
         assert self._session is not None
         async with self._session.get(
-            f"{self._docker_prefix}/containers/json",
+            f"{prefix}/containers/json",
             params={"all": str(all_containers).lower()},
         ) as resp:
             resp.raise_for_status()
@@ -388,6 +471,16 @@ class PortainerHandler(Handler):
     # Internal helpers
     # -------------------------------------------------------------------
 
+    @staticmethod
+    def _extract_container_id(entity_id: str) -> str:
+        """Strip ``portainer:endpoint/`` prefix from entity_id.
+
+        Adapter entity_ids use format ``portainer:{endpoint}/{container}``.
+        The Docker API expects just the container name or ID.
+        Returns the input unchanged if there's no ``/`` separator.
+        """
+        return entity_id.rsplit("/", 1)[-1] if "/" in entity_id else entity_id
+
     def _ensure_started(self) -> None:
         """Raise if the handler hasn't been started."""
         if self._session is None:
@@ -396,9 +489,13 @@ class PortainerHandler(Handler):
             )
 
     async def _verify_container_status(
-        self, container_id: str, expected: tuple[str, ...],
+        self,
+        container_id: str,
+        expected: tuple[str, ...],
+        docker_prefix: str | None = None,
     ) -> VerifyResult:
         """Poll container status until it matches one of the expected states."""
+        prefix = docker_prefix or self._docker_prefix
         timeout = self._config.verify_timeout
         interval = self._config.verify_poll_interval
         deadline = time.monotonic() + timeout
@@ -407,7 +504,7 @@ class PortainerHandler(Handler):
             try:
                 assert self._session is not None
                 async with self._session.get(
-                    f"{self._docker_prefix}/containers/{container_id}/json",
+                    f"{prefix}/containers/{container_id}/json",
                 ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()

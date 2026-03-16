@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from oasisagent.clients.cloudflare import CloudflareClient
 from oasisagent.ingestion.base import IngestAdapter
-from oasisagent.models import Event, EventMetadata, Severity
+from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     from oasisagent.config import CloudflareAdapterConfig
@@ -49,7 +49,15 @@ class CloudflareAdapter(IngestAdapter):
         )
         self._stopping = False
         self._task: asyncio.Task[None] | None = None
-        self._connected = False
+
+        # Per-endpoint health tracking (replaces single _connected bool)
+        self._endpoint_health: dict[str, bool] = {}
+        if self._config.poll_tunnels and self._config.account_id:
+            self._endpoint_health["tunnels"] = False
+        if self._config.poll_waf and self._config.zone_id:
+            self._endpoint_health["waf"] = False
+        if self._config.poll_ssl and self._config.zone_id:
+            self._endpoint_health["ssl"] = False
 
         # Dedup trackers
         self._tunnel_states: dict[str, str] = {}  # tunnel_id → status
@@ -64,10 +72,8 @@ class CloudflareAdapter(IngestAdapter):
         """Connect to Cloudflare API and start the polling loop."""
         try:
             await self._client.start()
-            self._connected = True
         except Exception as exc:
             logger.error("Cloudflare adapter: connection failed: %s", exc)
-            self._connected = False
             return
 
         self._task = asyncio.create_task(
@@ -80,10 +86,20 @@ class CloudflareAdapter(IngestAdapter):
         if self._task is not None:
             self._task.cancel()
         await self._client.close()
-        self._connected = False
+        for key in self._endpoint_health:
+            self._endpoint_health[key] = False
 
     async def healthy(self) -> bool:
-        return self._connected
+        if not self._endpoint_health:
+            return False
+        return any(self._endpoint_health.values())
+
+    def health_detail(self) -> dict[str, str]:
+        """Per-endpoint health for dashboard display."""
+        return {
+            endpoint: ("connected" if ok else "disconnected")
+            for endpoint, ok in self._endpoint_health.items()
+        }
 
     # -----------------------------------------------------------------
     # Poll loop
@@ -92,22 +108,35 @@ class CloudflareAdapter(IngestAdapter):
     async def _poll_loop(self) -> None:
         """Main polling loop — polls all enabled endpoints each interval."""
         while not self._stopping:
-            try:
-                if self._config.poll_tunnels and self._config.account_id:
+            if self._config.poll_tunnels and self._config.account_id:
+                try:
                     await self._poll_tunnels()
+                    self._endpoint_health["tunnels"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("Cloudflare tunnels poll error: %s", exc)
+                    self._endpoint_health["tunnels"] = False
 
-                if self._config.poll_waf and self._config.zone_id:
+            if self._config.poll_waf and self._config.zone_id:
+                try:
                     await self._poll_waf()
+                    self._endpoint_health["waf"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("Cloudflare waf poll error: %s", exc)
+                    self._endpoint_health["waf"] = False
 
-                if self._config.poll_ssl and self._config.zone_id:
+            if self._config.poll_ssl and self._config.zone_id:
+                try:
                     await self._poll_ssl()
-
-                self._connected = True
-            except asyncio.CancelledError:
-                return
-            except Exception as exc:
-                logger.warning("Cloudflare poll error: %s", exc)
-                self._connected = False
+                    self._endpoint_health["ssl"] = True
+                except asyncio.CancelledError:
+                    return
+                except Exception as exc:
+                    logger.warning("Cloudflare ssl poll error: %s", exc)
+                    self._endpoint_health["ssl"] = False
 
             for _ in range(self._config.poll_interval):
                 if self._stopping:
@@ -210,9 +239,21 @@ class CloudflareAdapter(IngestAdapter):
         self._last_waf_poll = now
 
         since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
-        path = f"/zones/{self._config.zone_id}/security/events"
-        data = await self._client.get(path, since=since_str)
-        events: list[dict[str, Any]] = data.get("result", [])
+        query = (
+            "{ viewer { zones(filter: {zoneTag: \""
+            + self._config.zone_id
+            + "\"}) { firewallEventsAdaptive("
+            + "filter: {datetime_gt: \""
+            + since_str
+            + "\"} limit: 100 orderBy: [datetime_DESC]"
+            + ") { action clientIP ruleId datetime } } } }"
+        )
+
+        resp = await self._client.graphql(query)
+        zones = resp.get("data", {}).get("viewer", {}).get("zones", [])
+        events: list[dict[str, Any]] = (
+            zones[0].get("firewallEventsAdaptive", []) if zones else []
+        )
 
         if not events:
             return
@@ -348,15 +389,21 @@ class CloudflareAdapter(IngestAdapter):
             ))
 
     # -----------------------------------------------------------------
-    # Helpers
+    # Topology discovery
     # -----------------------------------------------------------------
 
-    def _enqueue(self, event: Event) -> None:
-        """Enqueue an event, logging on failure."""
-        try:
-            self._queue.put_nowait(event)
-        except Exception:
-            logger.warning(
-                "Cloudflare adapter: failed to enqueue event: %s/%s",
-                event.system, event.event_type,
-            )
+    async def discover_topology(
+        self,
+    ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+        """Discover Cloudflare as a topology node."""
+        nodes = [
+            TopologyNode(
+                entity_id="cloudflare:cloudflare",
+                entity_type="service",
+                display_name="Cloudflare",
+                source=f"auto:{self.name}",
+                last_seen=datetime.now(UTC),
+            ),
+        ]
+        return nodes, []
+
