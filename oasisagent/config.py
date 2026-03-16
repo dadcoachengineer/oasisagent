@@ -800,6 +800,19 @@ class NotificationsConfig(BaseModel):
     telegram: TelegramNotificationConfig = Field(default_factory=TelegramNotificationConfig)
 
 
+# -- Learning loop ----------------------------------------------------------
+
+
+class LearningConfig(BaseModel):
+    """Learning loop configuration — T2 to T0 promotion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    min_confidence: Annotated[float, Field(ge=0.0, le=1.0)] = 0.8
+    min_verified_count: Annotated[int, Field(ge=1)] = 3
+
+
 # -- Top-level config -------------------------------------------------------
 
 
@@ -819,4 +832,5 @@ class OasisAgentConfig(BaseModel):
     handlers: HandlersConfig = Field(default_factory=HandlersConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    learning: LearningConfig = Field(default_factory=LearningConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
