@@ -326,7 +326,7 @@ class DependencyNode(BaseModel):
     entity_type: str
     display_name: str
     host_ip: str | None = None
-    edge_type: str
+    edge_type: str  # Edge from BFS parent (traversal edge, not relationship to root)
     depth: int
 
 

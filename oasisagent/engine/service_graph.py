@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+from collections import deque
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -318,10 +319,10 @@ def gather_dependency_context(
     # Upstream BFS: follow from_entity → to_entity (entities the root depends on)
     upstream_nodes: list[DependencyNode] = []
     visited_up: set[str] = {event_entity_id}
-    frontier: list[tuple[str, int]] = [(event_entity_id, 0)]
+    frontier: deque[tuple[str, int]] = deque([(event_entity_id, 0)])
 
     while frontier:
-        current_id, current_depth = frontier.pop(0)
+        current_id, current_depth = frontier.popleft()
         if current_depth >= depth:
             continue
         for edge in edges:
@@ -343,10 +344,10 @@ def gather_dependency_context(
     # Downstream BFS: follow to_entity → from_entity (entities that depend on root)
     downstream_nodes: list[DependencyNode] = []
     visited_down: set[str] = {event_entity_id}
-    frontier = [(event_entity_id, 0)]
+    frontier = deque([(event_entity_id, 0)])
 
     while frontier:
-        current_id, current_depth = frontier.pop(0)
+        current_id, current_depth = frontier.popleft()
         if current_depth >= depth:
             continue
         for edge in edges:
