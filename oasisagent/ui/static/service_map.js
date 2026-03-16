@@ -696,7 +696,7 @@
       depthMinus.addEventListener("click", function () {
         if (filterState.focusDepth > 1) {
           filterState.focusDepth--;
-          applyFilters();
+          try { applyFilters(); } catch (e) { updateFocusIndicator(); }
         }
       });
     }
@@ -704,7 +704,7 @@
       depthPlus.addEventListener("click", function () {
         if (filterState.focusDepth < 5) {
           filterState.focusDepth++;
-          applyFilters();
+          try { applyFilters(); } catch (e) { updateFocusIndicator(); }
         }
       });
     }
