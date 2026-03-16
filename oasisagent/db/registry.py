@@ -24,6 +24,7 @@ from oasisagent.config import (
     DiscordNotificationConfig,
     DockerHandlerConfig,
     EmailNotificationConfig,
+    EmqxAdapterConfig,
     FrigateAdapterConfig,
     GuardrailsConfig,
     HaHandlerConfig,
@@ -36,7 +37,9 @@ from oasisagent.config import (
     MqttIngestionConfig,
     MqttNotificationConfig,
     N8nAdapterConfig,
+    NextcloudAdapterConfig,
     NpmAdapterConfig,
+    OllamaAdapterConfig,
     OverseerrAdapterConfig,
     PlexAdapterConfig,
     PortainerAdapterConfig,
@@ -47,6 +50,7 @@ from oasisagent.config import (
     ScannerConfig,
     ServarrAdapterConfig,
     SlackNotificationConfig,
+    StalwartAdapterConfig,
     TautulliAdapterConfig,
     TdarrAdapterConfig,
     TelegramNotificationConfig,
@@ -181,6 +185,7 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     ),
     "vaultwarden": TypeMeta(
         model=VaultwardenAdapterConfig,
+        secret_fields=frozenset({"admin_token"}),
         module_path="oasisagent.ingestion.vaultwarden",
         class_name="VaultwardenAdapter",
     ),
@@ -195,6 +200,29 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
         secret_fields=frozenset({"api_key"}),
         module_path="oasisagent.ingestion.portainer",
         class_name="PortainerAdapter",
+    ),
+    "stalwart": TypeMeta(
+        model=StalwartAdapterConfig,
+        secret_fields=frozenset({"api_key"}),
+        module_path="oasisagent.ingestion.stalwart",
+        class_name="StalwartAdapter",
+    ),
+    "ollama": TypeMeta(
+        model=OllamaAdapterConfig,
+        module_path="oasisagent.ingestion.ollama",
+        class_name="OllamaAdapter",
+    ),
+    "emqx": TypeMeta(
+        model=EmqxAdapterConfig,
+        secret_fields=frozenset({"api_key", "api_secret"}),
+        module_path="oasisagent.ingestion.emqx",
+        class_name="EmqxAdapter",
+    ),
+    "nextcloud": TypeMeta(
+        model=NextcloudAdapterConfig,
+        secret_fields=frozenset({"password"}),
+        module_path="oasisagent.ingestion.nextcloud",
+        class_name="NextcloudAdapter",
     ),
 }
 

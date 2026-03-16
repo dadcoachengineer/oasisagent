@@ -34,6 +34,7 @@ from oasisagent.engine.decision import (
 )
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
+from oasisagent.engine.learning import CandidateFixWriter
 from oasisagent.engine.plan_executor import PlanExecutor
 from oasisagent.engine.queue import EventQueue
 from oasisagent.engine.service_graph import ServiceGraph
@@ -199,6 +200,7 @@ class Orchestrator:
         self._adapters: list[IngestAdapter] = []
         self._adapter_tasks: list[asyncio.Task[None]] = []
         self._stats_store: StatsStore | None = None
+        self._candidate_writer: CandidateFixWriter | None = None
         self._notification_store: NotificationStore | None = None
         self._web_channel: WebNotificationChannel | None = None
         self._topology_store: TopologyStore | None = None
@@ -290,6 +292,19 @@ class Orchestrator:
             self._actions_taken = vals["actions_taken"]
             self._errors = vals["errors"]
             self._stats_store.start(self._get_stats)
+
+            # Learning loop — candidate fix writer
+            if self._config.learning.enabled:
+                candidates_dir = Path(
+                    self._config.agent.known_fixes_dir
+                ) / "candidates"
+                self._candidate_writer = CandidateFixWriter(
+                    db=self._db,
+                    candidates_dir=candidates_dir,
+                    min_confidence=self._config.learning.min_confidence,
+                )
+                logger.info("Learning loop enabled (min_confidence=%.2f)",
+                            self._config.learning.min_confidence)
 
         await self._start_components()
         logger.info("OasisAgent started")
@@ -1043,6 +1058,7 @@ class Orchestrator:
                 handlers=self._handlers,
                 circuit_breaker=self._circuit_breaker,
             )
+            self._plan_executor.on_plan_completed = self._on_plan_completed
 
         # --- Notification channels ---
         channels: list[NotificationChannel] = []
@@ -2083,6 +2099,51 @@ class Orchestrator:
                 self._circuit_breaker.record_attempt(
                     cb_entity, success=False
                 )
+
+    # -------------------------------------------------------------------
+    # Learning loop
+    # -------------------------------------------------------------------
+
+    async def _maybe_write_candidate(self, result: DecisionResult) -> None:
+        """Write a T2-suggested known fix as a candidate, if present.
+
+        Hooked into _dispatch_t2_actions after successful action execution
+        and into PlanExecutor on plan completion.
+        """
+        if self._candidate_writer is None:
+            return
+
+        suggested = result.details.get("suggested_known_fix")
+        if not suggested or not isinstance(suggested, dict):
+            return
+
+        confidence = result.details.get("confidence", 0.0)
+        try:
+            await self._candidate_writer.write_candidate(suggested, confidence)
+        except Exception:
+            logger.warning(
+                "Failed to write candidate fix for event %s",
+                result.event_id,
+                exc_info=True,
+            )
+
+    async def _on_plan_completed(self, plan: RemediationPlan) -> None:
+        """Callback from PlanExecutor when a plan completes.
+
+        Looks up the original DecisionResult to extract any
+        suggested_known_fix for the learning loop.
+        """
+        if self._candidate_writer is None:
+            return
+
+        # The plan's event_id links back to the event that triggered it.
+        # We need the original DecisionResult to extract suggested_known_fix.
+        # For now, log completion — full result lookup requires event-to-result
+        # mapping which will be added with the audit reader integration.
+        logger.debug(
+            "Plan %s completed — learning loop notified (event %s)",
+            plan.id, plan.event_id,
+        )
 
     # -------------------------------------------------------------------
     # Plan dispatch

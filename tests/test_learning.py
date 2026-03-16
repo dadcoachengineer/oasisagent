@@ -284,7 +284,7 @@ class TestMigration:
             / "oasisagent"
             / "db"
             / "migrations"
-            / "005_learning.py"
+            / "014_learning.py"
         )
         assert migration_path.exists()
 
@@ -294,7 +294,7 @@ class TestMigration:
 
         import aiosqlite
 
-        m005 = importlib.import_module("oasisagent.db.migrations.005_learning")
+        m005 = importlib.import_module("oasisagent.db.migrations.014_learning")
 
         async with aiosqlite.connect(":memory:") as db:
             await m005.migrate(db)

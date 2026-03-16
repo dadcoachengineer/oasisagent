@@ -17,3 +17,39 @@ fixes:
           4. Review Vaultwarden container logs for errors
           5. Verify reverse proxy configuration if applicable
     risk_tier: escalate
+
+  - id: vaultwarden-degraded
+    match:
+      system: vaultwarden
+      event_type: vaultwarden_degraded
+    diagnosis: "Vaultwarden /api/config is failing — service is degraded but /alive still responds"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Vaultwarden is degraded — /alive responds but /api/config fails. Checklist:
+          1. Check Vaultwarden container logs for errors
+          2. Verify database connectivity (SQLite file or external DB)
+          3. Check disk space on the data volume
+          4. Review recent config changes or updates
+    risk_tier: escalate
+
+  - id: vaultwarden-slow
+    match:
+      system: vaultwarden
+      event_type: vaultwarden_slow
+    diagnosis: "Vaultwarden response time exceeds threshold — performance degradation detected"
+    action:
+      type: escalate
+      handler: homeassistant
+      operation: notify
+      details:
+        message: |
+          Vaultwarden is responding slowly. Checklist:
+          1. Check host resource usage (CPU, memory, disk I/O)
+          2. Review database size and performance
+          3. Check for backup jobs or maintenance tasks running
+          4. Verify network latency to the Vaultwarden host
+    risk_tier: escalate

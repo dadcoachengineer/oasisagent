@@ -360,6 +360,10 @@ class DecisionEngine:
         if "primary" in entity_context:
             context_systems = [event.system, *context_systems]
 
+        def _add_suggested_fix(details: dict[str, Any]) -> None:
+            if diagnosis.suggested_known_fix is not None:
+                details["suggested_known_fix"] = diagnosis.suggested_known_fix
+
         def _add_dependency_fields(details: dict[str, Any]) -> None:
             if dependency_ctx is not None:
                 details["dependency_upstream"] = [
@@ -389,6 +393,7 @@ class DecisionEngine:
                 "risk_assessment": diagnosis.risk_assessment,
                 "confidence": diagnosis.confidence,
             }
+            _add_suggested_fix(details)
             _add_dependency_fields(details)
             return DecisionResult(
                 event_id=event.id,
@@ -440,6 +445,7 @@ class DecisionEngine:
                 "blocked_count": blocked_count,
                 "guardrail_rule": ", ".join(guardrail_rules),
             }
+            _add_suggested_fix(details)
             _add_dependency_fields(details)
             return DecisionResult(
                 event_id=event.id,
@@ -467,6 +473,7 @@ class DecisionEngine:
             "approved_actions": len(approved_actions),
             "blocked_count": blocked_count,
         }
+        _add_suggested_fix(details)
         _add_dependency_fields(details)
 
         return DecisionResult(

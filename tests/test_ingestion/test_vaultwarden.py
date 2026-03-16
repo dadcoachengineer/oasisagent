@@ -317,7 +317,7 @@ class TestRegistry:
         assert "vaultwarden" in CONNECTOR_TYPES
         meta = CONNECTOR_TYPES["vaultwarden"]
         assert meta.model is VaultwardenAdapterConfig
-        assert meta.secret_fields == frozenset()
+        assert meta.secret_fields == frozenset({"admin_token"})
 
     def test_form_specs_exist(self) -> None:
         from oasisagent.ui.form_specs import FORM_SPECS

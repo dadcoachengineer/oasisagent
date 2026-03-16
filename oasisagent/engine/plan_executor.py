@@ -29,6 +29,8 @@ from oasisagent.models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     import aiosqlite
 
     from oasisagent.engine.circuit_breaker import CircuitBreaker
@@ -68,6 +70,7 @@ class PlanExecutor:
         self._handlers = handlers
         self._circuit_breaker = circuit_breaker
         self._plans: dict[str, RemediationPlan] = {}
+        self.on_plan_completed: Callable[[RemediationPlan], Awaitable[None]] | None = None
 
     async def create_plan(
         self,
@@ -286,6 +289,16 @@ class PlanExecutor:
         plan.completed_at = datetime.now(UTC)
         await self._persist_plan(plan)
         logger.info("Plan %s COMPLETED", plan.id)
+
+        if self.on_plan_completed is not None:
+            try:
+                await self.on_plan_completed(plan)
+            except Exception:
+                logger.warning(
+                    "on_plan_completed callback failed for plan %s",
+                    plan.id, exc_info=True,
+                )
+
         return plan
 
     async def approve_plan(self, plan_id: str) -> RemediationPlan | None:

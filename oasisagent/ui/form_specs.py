@@ -57,6 +57,10 @@ TYPE_DISPLAY_NAMES: dict[str, str] = {
     "vaultwarden": "Vaultwarden",
     "proxmox": "Proxmox VE",
     "portainer": "Portainer",
+    "stalwart": "Stalwart Mail",
+    "ollama": "Ollama",
+    "emqx": "EMQX",
+    "nextcloud": "Nextcloud",
     # Services
     "llm_triage": "LLM Triage (T1)",
     "llm_reasoning": "LLM Reasoning (T2)",
@@ -149,6 +153,22 @@ TYPE_DESCRIPTIONS: dict[str, str] = {
     "portainer": (
         "Monitor Docker containers, stacks, and"
         " endpoints via Portainer API"
+    ),
+    "stalwart": (
+        "Monitor Stalwart mail server health"
+        " and queue status"
+    ),
+    "ollama": (
+        "Monitor Ollama LLM server health"
+        " and loaded models"
+    ),
+    "emqx": (
+        "Monitor EMQX MQTT broker health,"
+        " alarms, and listeners"
+    ),
+    "nextcloud": (
+        "Monitor Nextcloud server health,"
+        " cron, and maintenance mode"
     ),
     # Services
     "llm_triage": (
@@ -902,6 +922,21 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             "timeout", "Request Timeout (seconds)",
             "number", default=10, min_val=1,
         ),
+        FieldSpec(
+            "deep_health", "Enable Deep Health", "checkbox",
+            help_text="Poll /api/config for degraded detection (requires admin token)",
+            default=False, group="Deep Health",
+        ),
+        FieldSpec(
+            "admin_token", "Admin Token", "password",
+            help_text="Vaultwarden admin panel token for deep health",
+            group="Deep Health",
+        ),
+        FieldSpec(
+            "slow_threshold_ms", "Slow Threshold (ms)", "number",
+            help_text="Response time above this triggers slow warning",
+            default=2000, min_val=100, group="Deep Health",
+        ),
     ],
 
     "proxmox": [
@@ -1032,6 +1067,113 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         FieldSpec(
             "ignore_containers", "Ignore Containers", "list_str",
             help_text="Container names to skip (one per line)",
+        ),
+    ],
+
+    "stalwart": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://mail.example.com:5000",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text="Required for queue monitoring",
+            group="Authentication",
+        ),
+        FieldSpec(
+            "queue_threshold", "Queue Alert Threshold", "number",
+            help_text="Emit warning when mail queue exceeds this",
+            default=100, min_val=1, group="Polling",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL", "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+
+    "ollama": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. http://localhost:11434",
+            required=True, default="http://localhost:11434",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+
+    "emqx": [
+        FieldSpec(
+            "url", "API URL", "text",
+            help_text="e.g. http://localhost:18083",
+            required=True,
+        ),
+        FieldSpec(
+            "api_key", "API Key", "password",
+            help_text="EMQX dashboard API key",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "api_secret", "API Secret", "password",
+            help_text="EMQX dashboard API secret",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL", "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
+        ),
+    ],
+
+    "nextcloud": [
+        FieldSpec(
+            "url", "Server URL", "text",
+            help_text="e.g. https://nextcloud.example.com",
+            required=True,
+        ),
+        FieldSpec(
+            "username", "Username", "text",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "password", "Password", "password",
+            required=True, group="Authentication",
+        ),
+        FieldSpec(
+            "poll_interval", "Poll Interval (seconds)",
+            "number", default=60,
+        ),
+        FieldSpec(
+            "verify_ssl", "Verify SSL", "checkbox",
+            help_text="Disable for self-signed certificates",
+            default=False,
+        ),
+        FieldSpec(
+            "timeout", "Request Timeout (seconds)",
+            "number", default=10, min_val=1,
         ),
     ],
 
