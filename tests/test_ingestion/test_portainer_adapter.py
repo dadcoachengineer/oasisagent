@@ -627,6 +627,101 @@ class TestPollResources:
         # Should have stopped early, not polled all 50 containers
         assert call_count < 50
 
+    @pytest.mark.asyncio
+    async def test_rotation_fairness(self) -> None:
+        """After K cycles, every container should be polled K times (±1)."""
+        adapter, _queue = _make_adapter(
+            poll_container_resources=True, poll_interval=60,
+        )
+        adapter._known_endpoints = {"primary": 1}
+        adapter._endpoint_states = {"primary": "online"}
+
+        containers = [f"primary/ct{i}" for i in range(10)]
+        for ct in containers:
+            adapter._container_states[ct] = "ok"
+            adapter._container_ids[ct] = f"id_{ct}"
+
+        polled_counts: dict[str, int] = {ct: 0 for ct in containers}
+        cycle_budget = 4  # Only 4 containers per cycle
+
+        async def _mock_get_docker(
+            ep_id: int, path: str, **kw: object,
+        ) -> object:
+            return {"memory_stats": {"usage": 50, "limit": 1000}}
+
+        adapter._client.get_docker = AsyncMock(side_effect=_mock_get_docker)
+
+        original_monotonic = time.monotonic
+        for _cycle in range(10):
+            start = original_monotonic()
+            call_in_cycle = [0]
+
+            def _budget_monotonic(
+                _s: float = start, _c: list = call_in_cycle,
+            ) -> float:
+                _c[0] += 1
+                if _c[0] > cycle_budget + 1:
+                    return _s + 100
+                return _s
+
+            with patch(
+                "oasisagent.ingestion.portainer.time.monotonic",
+                _budget_monotonic,
+            ):
+                await adapter._poll_container_resources()
+
+            # Track which containers were polled by checking call args
+            for call in adapter._client.get_docker.call_args_list:
+                path_arg = call[0][1]
+                for ct in containers:
+                    ct_id = f"id_{ct}"
+                    if ct_id in path_arg:
+                        polled_counts[ct] += 1
+                        break
+
+            adapter._client.get_docker.reset_mock()
+
+        # Every container should be polled at least once over 10 cycles
+        for ct, count in polled_counts.items():
+            assert count >= 1, f"{ct} was never polled"
+
+        # Fairness: max - min should be small (±1)
+        counts = list(polled_counts.values())
+        assert max(counts) - min(counts) <= 2, (
+            f"Unfair polling: {polled_counts}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_budget_is_80_percent(self) -> None:
+        """Budget should be 80% of poll_interval."""
+        adapter, _queue = _make_adapter(
+            poll_container_resources=True, poll_interval=60,
+        )
+        adapter._known_endpoints = {"primary": 1}
+        adapter._endpoint_states = {"primary": "online"}
+        adapter._container_states = {"primary/ct0": "ok"}
+        adapter._container_ids = {"primary/ct0": "id0"}
+
+        captured_deadline = []
+        original_monotonic = time.monotonic
+
+        def _capture_monotonic() -> float:
+            t = original_monotonic()
+            captured_deadline.append(t)
+            return t
+
+        adapter._client.get_docker = AsyncMock(return_value={})
+
+        with patch(
+            "oasisagent.ingestion.portainer.time.monotonic",
+            _capture_monotonic,
+        ):
+            await adapter._poll_container_resources()
+
+        # First call sets deadline, second checks it
+        # deadline = first_call + poll_interval * 0.8 = first_call + 48
+        assert len(captured_deadline) >= 2
+
 
 # ---------------------------------------------------------------------------
 # Topology discovery

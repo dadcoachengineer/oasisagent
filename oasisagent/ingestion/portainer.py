@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,10 @@ class PortainerAdapter(IngestAdapter):
         self._stack_health: dict[str, tuple[int, int]] = {}  # "ep/stack" → (running, total)
         self._container_cpu_alert: dict[str, bool] = {}
         self._container_mem_alert: dict[str, bool] = {}
+
+        # Round-robin rotation for resource polling fairness
+        self._resource_poll_order: deque[str] = deque()
+        self._last_polled_count: int = 0
 
     @property
     def name(self) -> str:
@@ -470,44 +475,79 @@ class PortainerAdapter(IngestAdapter):
     # -----------------------------------------------------------------
 
     async def _poll_container_resources(self) -> None:
-        """Poll per-container stats for CPU/memory threshold crossings."""
-        deadline = time.monotonic() + self._config.poll_interval * 0.5
+        """Poll per-container stats for CPU/memory threshold crossings.
 
+        Uses round-robin rotation (deque.rotate) so all containers get
+        equal polling frequency over N cycles, even when the time budget
+        is exhausted before the full list is polled.
+        """
+        deadline = time.monotonic() + self._config.poll_interval * 0.8
+
+        # Build ordered list of pollable (key, ep_id) pairs
+        eligible: list[tuple[str, int]] = []
         for ep_name, ep_id in list(self._known_endpoints.items()):
             if self._endpoint_states.get(ep_name) == "offline":
                 continue
-
             for key, effective in list(self._container_states.items()):
                 if not key.startswith(f"{ep_name}/"):
                     continue
                 if effective != "ok":
                     continue
+                if self._container_ids.get(key):
+                    eligible.append((key, ep_id))
 
-                # Cost guard: stop early if we're over budget
-                if time.monotonic() > deadline:
-                    logger.warning(
-                        "Portainer resource poll exceeded time budget, "
-                        "skipping remaining containers",
-                    )
-                    return
+        # Sync deque with current eligible set, preserving rotation order
+        eligible_keys = {k for k, _ in eligible}
+        ep_lookup = {k: eid for k, eid in eligible}
 
-                # Use cached container ID from _poll_containers()
-                ct_id = self._container_ids.get(key)
-                if not ct_id:
-                    continue
+        # Remove stale entries
+        self._resource_poll_order = deque(
+            k for k in self._resource_poll_order if k in eligible_keys
+        )
+        # Add new entries at the end
+        for key in eligible_keys - set(self._resource_poll_order):
+            self._resource_poll_order.append(key)
 
-                try:
-                    stats = await self._client.get_docker(
-                        ep_id, f"containers/{ct_id}/stats",
-                        stream="false",
-                    )
-                except Exception:
-                    continue
+        # Rotate by how many we polled last cycle for fairness
+        if self._last_polled_count > 0:
+            self._resource_poll_order.rotate(-self._last_polled_count)
 
-                if not isinstance(stats, dict):
-                    continue
+        polled = 0
+        for key in list(self._resource_poll_order):
+            if time.monotonic() > deadline:
+                logger.warning(
+                    "Portainer resource poll exceeded time budget after "
+                    "%d/%d containers",
+                    polled,
+                    len(self._resource_poll_order),
+                )
+                break
 
-                self._check_container_resources(key, stats)
+            ct_id = self._container_ids.get(key)
+            if not ct_id:
+                continue
+
+            ep_id = ep_lookup.get(key)
+            if ep_id is None:
+                continue
+
+            try:
+                stats = await self._client.get_docker(
+                    ep_id, f"containers/{ct_id}/stats",
+                    stream="false",
+                )
+            except Exception:
+                polled += 1
+                continue
+
+            if not isinstance(stats, dict):
+                polled += 1
+                continue
+
+            self._check_container_resources(key, stats)
+            polled += 1
+
+        self._last_polled_count = polled
 
     def _check_container_resources(
         self, key: str, stats: dict[str, object],
