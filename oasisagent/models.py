@@ -264,6 +264,9 @@ class DecisionDetails(TypedDict, total=False):
     dependency_same_host: list[str]
     dependency_depth: int
 
+    # Multi-handler context (T2)
+    multi_handler_context_systems: list[str]
+
 
 # ---------------------------------------------------------------------------
 # Service topology (§ issue #218 M2a)

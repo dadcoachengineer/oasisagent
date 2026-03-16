@@ -44,6 +44,14 @@ class Handler(ABC):
     async def get_context(self, event: Event) -> dict[str, Any]:
         """Gather system-specific context for diagnosis (called by T1/T2)."""
 
+    async def get_context_for_entity(self, entity_id: str) -> dict[str, Any]:
+        """Gather context for a specific entity (cross-entity query).
+
+        Default returns empty dict. Override in handlers that support
+        looking up arbitrary entities by ID.
+        """
+        return {}
+
     async def healthy(self) -> bool:
         """Check handler health. Default returns True — override for real checks."""
         return True

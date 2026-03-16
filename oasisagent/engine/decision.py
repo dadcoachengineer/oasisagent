@@ -19,12 +19,14 @@ from oasisagent.engine.guardrails import GuardrailResult  # noqa: TC001 — Pyda
 from oasisagent.models import RecommendedAction  # noqa: TC001 — Pydantic field type
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from oasisagent.engine.guardrails import GuardrailsEngine
     from oasisagent.engine.known_fixes import KnownFix, KnownFixRegistry
     from oasisagent.engine.service_graph import ServiceGraph
     from oasisagent.llm.reasoning import ReasoningService
     from oasisagent.llm.triage import TriageService
-    from oasisagent.models import Event, TriageResult
+    from oasisagent.models import DependencyContext, Event, TriageResult
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +112,22 @@ class DecisionEngine:
         """Set or update the service graph (deferred wiring)."""
         self._service_graph = graph
 
-    async def process_event(self, event: Event) -> DecisionResult:
+    async def process_event(
+        self,
+        event: Event,
+        entity_context_fn: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+        dependency_context: DependencyContext | None = None,
+    ) -> DecisionResult:
         """Process a single event through the decision pipeline.
+
+        Args:
+            event: The event to process.
+            entity_context_fn: Lazy callable that gathers multi-handler
+                context. Only invoked when the pipeline reaches T2, so
+                handler API calls are skipped for T0 matches and T1 drops.
+            dependency_context: Pre-computed dependency subgraph from the
+                service topology. Falls back to internal computation if
+                None and a service graph is available.
 
         Returns a DecisionResult regardless of outcome — every event
         that enters the engine produces an auditable result.
@@ -124,7 +140,9 @@ class DecisionEngine:
 
         # T1: Triage via local SLM (if available)
         if self._triage is not None:
-            return await self._apply_t1_triage(event)
+            return await self._apply_t1_triage(
+                event, entity_context_fn, dependency_context,
+            )
 
         # No T0 match, no T1 available
         logger.debug(
@@ -205,7 +223,12 @@ class DecisionEngine:
             details=details,
         )
 
-    async def _apply_t1_triage(self, event: Event) -> DecisionResult:
+    async def _apply_t1_triage(
+        self,
+        event: Event,
+        entity_context_fn: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+        dependency_context: DependencyContext | None = None,
+    ) -> DecisionResult:
         """Classify an unmatched event via T1 SLM and return a result."""
         from oasisagent.models import Disposition
 
@@ -233,7 +256,9 @@ class DecisionEngine:
 
         if triage_result.disposition == Disposition.ESCALATE_T2:
             if self._reasoning is not None:
-                return await self._apply_t2_reasoning(event, triage_result)
+                return await self._apply_t2_reasoning(
+                    event, triage_result, entity_context_fn, dependency_context,
+                )
             # No reasoning service configured — escalate to human
             logger.info(
                 "T1 escalated to T2 but reasoning service not configured, "
@@ -291,7 +316,11 @@ class DecisionEngine:
         )
 
     async def _apply_t2_reasoning(
-        self, event: Event, triage_result: TriageResult
+        self,
+        event: Event,
+        triage_result: TriageResult,
+        entity_context_fn: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+        dependency_context: DependencyContext | None = None,
     ) -> DecisionResult:
         """Call T2 reasoning and apply guardrails to each recommended action.
 
@@ -303,16 +332,29 @@ class DecisionEngine:
 
         assert self._reasoning is not None
 
-        dependency_ctx = None
-        if self._service_graph is not None:
+        # Lazy: only call handler APIs when we actually reach T2
+        entity_context: dict[str, Any] = {}
+        if entity_context_fn is not None:
+            entity_context = await entity_context_fn()
+
+        # Use passed dependency context; fall back to internal computation
+        dependency_ctx = dependency_context
+        if dependency_ctx is None and self._service_graph is not None:
             dependency_ctx = gather_dependency_context(
                 event.entity_id, self._service_graph, self._dependency_depth,
             )
 
         diagnosis = await self._reasoning.diagnose(
-            event, triage_result, entity_context={}, known_fixes=[],
+            event, triage_result, entity_context=entity_context, known_fixes=[],
             dependency_context=dependency_ctx,
         )
+
+        # Track which handler systems provided context (for audit)
+        context_systems = sorted(
+            {k.split(":")[1] for k in entity_context if k.startswith("dependency:")}
+        )
+        if "primary" in entity_context:
+            context_systems = [event.system, *context_systems]
 
         def _add_dependency_fields(details: dict[str, Any]) -> None:
             if dependency_ctx is not None:
@@ -326,6 +368,8 @@ class DecisionEngine:
                     n.entity_id for n in dependency_ctx.same_host
                 ]
                 details["dependency_depth"] = self._dependency_depth
+            if context_systems:
+                details["multi_handler_context_systems"] = context_systems
 
         if not diagnosis.recommended_actions:
             logger.info(

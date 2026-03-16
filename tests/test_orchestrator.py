@@ -314,7 +314,8 @@ class TestTTLExpiry:
 
         await orchestrator._process_one(event)
 
-        mocks["decision"].process_event.assert_called_once_with(event)
+        mocks["decision"].process_event.assert_called_once()
+        assert mocks["decision"].process_event.call_args.args[0] is event
 
     async def test_per_event_ttl_overrides_global(self) -> None:
         """Per-event TTL takes precedence over agent.event_ttl."""
