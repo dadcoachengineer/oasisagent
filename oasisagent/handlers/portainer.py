@@ -179,7 +179,7 @@ class PortainerHandler(Handler):
         container_id = (
             result.details.get("container_id")
             or action.params.get("container_id")
-            or event.entity_id
+            or self._extract_container_id(event.entity_id)
         )
 
         expected = ("exited", "stopped") if action.operation == "stop_container" else ("running",)
@@ -196,7 +196,7 @@ class PortainerHandler(Handler):
         """
         self._ensure_started()
         context: dict[str, Any] = {}
-        container_id = event.entity_id
+        container_id = self._extract_container_id(event.entity_id)
         prefix = self._docker_prefix_for(event)
 
         try:
@@ -278,7 +278,10 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Restart a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
@@ -302,7 +305,10 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Stop a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
@@ -332,7 +338,10 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Start a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
@@ -356,7 +365,10 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Fetch container logs via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
@@ -382,7 +394,10 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Fetch container stats via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
@@ -407,7 +422,10 @@ class PortainerHandler(Handler):
         self, event: Event, action: RecommendedAction,
     ) -> ActionResult:
         """Inspect a container via Portainer-proxied Docker API."""
-        container_id = action.params.get("container_id") or event.entity_id
+        container_id = (
+            action.params.get("container_id")
+            or self._extract_container_id(event.entity_id)
+        )
         if not container_id:
             return ActionResult(
                 status=ActionStatus.FAILURE,
@@ -452,6 +470,16 @@ class PortainerHandler(Handler):
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_container_id(entity_id: str) -> str:
+        """Strip ``portainer:endpoint/`` prefix from entity_id.
+
+        Adapter entity_ids use format ``portainer:{endpoint}/{container}``.
+        The Docker API expects just the container name or ID.
+        Returns the input unchanged if there's no ``/`` separator.
+        """
+        return entity_id.rsplit("/", 1)[-1] if "/" in entity_id else entity_id
 
     def _ensure_started(self) -> None:
         """Raise if the handler hasn't been started."""
