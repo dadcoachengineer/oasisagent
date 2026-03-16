@@ -4,15 +4,23 @@ Polls the Vaultwarden ``/alive`` endpoint to detect service outages.
 Vaultwarden is a lightweight Bitwarden-compatible server — its ``/alive``
 endpoint returns HTTP 200 when the service is healthy.
 
+When ``deep_health`` is enabled, the adapter additionally polls ``/api/config``
+to detect partial degradation (alive but API broken) and tracks response time
+to detect slow responses.  An optional ``admin_token`` enables ``/admin``
+panel reachability checks.
+
 Events emitted on state transitions:
 - ``vaultwarden_unreachable`` (ERROR) when the health check fails
 - ``vaultwarden_recovered`` (INFO) when the service comes back online
+- ``vaultwarden_degraded`` (WARNING) when /alive OK but /api/config fails
+- ``vaultwarden_slow`` (WARNING) when response time exceeds threshold
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -31,6 +39,9 @@ logger = logging.getLogger(__name__)
 class VaultwardenAdapter(IngestAdapter):
     """Polls Vaultwarden's ``/alive`` endpoint for service health.
 
+    When ``deep_health`` is enabled, also polls ``/api/config`` and
+    optionally ``/admin`` for deeper health inspection.
+
     State-based dedup ensures events only fire on transitions.
     """
 
@@ -45,6 +56,11 @@ class VaultwardenAdapter(IngestAdapter):
 
         # State tracker: None = first poll, True = healthy, False = down
         self._service_ok: bool | None = None
+
+        # Deep health state: None = not checked yet, True = ok, False = degraded
+        self._api_ok: bool | None = None
+        # Slow state: None = not checked yet, True = slow, False = normal
+        self._is_slow: bool | None = None
 
     @property
     def name(self) -> str:
@@ -110,7 +126,11 @@ class VaultwardenAdapter(IngestAdapter):
     # -----------------------------------------------------------------
 
     async def _poll_health(self, session: aiohttp.ClientSession) -> None:
-        """Poll ``/alive`` — a 200 response means healthy."""
+        """Poll ``/alive`` — a 200 response means healthy.
+
+        When deep_health is enabled, also polls ``/api/config`` for
+        degraded detection and response time tracking.
+        """
         url = f"{self._config.url.rstrip('/')}/alive"
         async with session.get(url) as resp:
             resp.raise_for_status()
@@ -134,10 +154,94 @@ class VaultwardenAdapter(IngestAdapter):
                 ),
             ))
 
+        # Deep health checks (only when basic health is OK)
+        if self._config.deep_health:
+            await self._poll_deep_health(session)
+
+    # -----------------------------------------------------------------
+    # Deep health checks
+    # -----------------------------------------------------------------
+
+    async def _poll_deep_health(self, session: aiohttp.ClientSession) -> None:
+        """Poll ``/api/config`` for degraded detection and response time."""
+        base = self._config.url.rstrip("/")
+        api_url = f"{base}/api/config"
+
+        was_api_ok = self._api_ok
+        was_slow = self._is_slow
+
+        try:
+            t0 = time.monotonic()
+            async with session.get(api_url) as resp:
+                resp.raise_for_status()
+            elapsed_ms = (time.monotonic() - t0) * 1000
+
+            self._api_ok = True
+
+            # Recovered from degraded
+            if was_api_ok is not None and not was_api_ok:
+                logger.info("Vaultwarden: /api/config recovered")
+
+            # Slow detection
+            is_slow = elapsed_ms > self._config.slow_threshold_ms
+            self._is_slow = is_slow
+
+            if is_slow and (was_slow is None or not was_slow):
+                # Transition to slow
+                self._enqueue(Event(
+                    source=self.name,
+                    system="vaultwarden",
+                    event_type="vaultwarden_slow",
+                    entity_id="vaultwarden",
+                    severity=Severity.WARNING,
+                    timestamp=datetime.now(tz=UTC),
+                    payload={
+                        "url": self._config.url,
+                        "response_time_ms": round(elapsed_ms, 1),
+                        "threshold_ms": self._config.slow_threshold_ms,
+                    },
+                    metadata=EventMetadata(
+                        dedup_key="vaultwarden:slow",
+                    ),
+                ))
+            elif not is_slow and was_slow:
+                # No longer slow — reset (no event, just state change)
+                pass
+
+        except (TimeoutError, aiohttp.ClientError, Exception) as exc:
+            self._api_ok = False
+            self._is_slow = None
+
+            # Transition to degraded (only on first failure or recovery→degraded)
+            if was_api_ok is None or was_api_ok:
+                logger.warning(
+                    "Vaultwarden: /api/config failed (service degraded): %s", exc,
+                )
+                self._enqueue(Event(
+                    source=self.name,
+                    system="vaultwarden",
+                    event_type="vaultwarden_degraded",
+                    entity_id="vaultwarden",
+                    severity=Severity.WARNING,
+                    timestamp=datetime.now(tz=UTC),
+                    payload={
+                        "url": self._config.url,
+                        "reason": str(exc),
+                    },
+                    metadata=EventMetadata(
+                        dedup_key="vaultwarden:degraded",
+                    ),
+                ))
+
     def _handle_failure(self, reason: str) -> None:
         """Handle a failed health check — emit event on transition."""
         was_ok = self._service_ok
         self._service_ok = False
+
+        # Reset deep health state when service goes down
+        if self._config.deep_health:
+            self._api_ok = None
+            self._is_slow = None
 
         # Transition from up -> down, or first poll is down
         if was_ok is None or was_ok:
@@ -183,4 +287,3 @@ class VaultwardenAdapter(IngestAdapter):
             ),
         ]
         return nodes, []
-

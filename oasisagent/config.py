@@ -607,6 +607,9 @@ class VaultwardenAdapterConfig(BaseModel):
     poll_interval: int = 60
     verify_ssl: bool = False
     timeout: int = 10
+    deep_health: bool = False
+    admin_token: str = ""
+    slow_threshold_ms: int = 2000
 
 
 class ProxmoxAdapterConfig(BaseModel):

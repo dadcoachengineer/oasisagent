@@ -181,6 +181,7 @@ CONNECTOR_TYPES: dict[str, TypeMeta] = {
     ),
     "vaultwarden": TypeMeta(
         model=VaultwardenAdapterConfig,
+        secret_fields=frozenset({"admin_token"}),
         module_path="oasisagent.ingestion.vaultwarden",
         class_name="VaultwardenAdapter",
     ),

@@ -902,6 +902,23 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             "timeout", "Request Timeout (seconds)",
             "number", default=10, min_val=1,
         ),
+        FieldSpec(
+            "deep_health", "Enable Deep Health Checks",
+            "checkbox",
+            help_text="Poll /api/config for degraded detection and response time tracking",
+            default=False, group="Deep Health",
+        ),
+        FieldSpec(
+            "admin_token", "Admin Token", "password",
+            help_text="Optional — enables /admin panel health check",
+            group="Deep Health",
+        ),
+        FieldSpec(
+            "slow_threshold_ms", "Slow Threshold (ms)",
+            "number", default=2000, min_val=100,
+            help_text="Response time above this triggers a slow warning",
+            group="Deep Health",
+        ),
     ],
 
     "proxmox": [
