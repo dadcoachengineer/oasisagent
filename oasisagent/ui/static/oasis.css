@@ -128,3 +128,47 @@ details[open] > .cluster-events-toggle .chevron {
     font-size: 0.75rem;
     color: #6b7280;
 }
+
+/* ---------------------------------------------------------------------------
+   Service Map — Filter Pills & Transitions
+   --------------------------------------------------------------------------- */
+
+.filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #6b7280;
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 150ms ease, background 150ms ease;
+}
+
+.filter-pill.active {
+    background: #f3f4f6;
+    color: #1f2937;
+    border-color: #9ca3af;
+}
+
+.filter-pill:not(.active) {
+    opacity: 0.5;
+}
+
+.filter-pill__dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+}
+
+/* Smooth transitions for D3 filter visibility */
+#service-map-svg .node-group,
+#service-map-svg .links line,
+#service-map-svg .links text,
+#service-map-svg .labels text {
+    transition: opacity 200ms ease;
+}

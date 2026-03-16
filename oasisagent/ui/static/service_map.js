@@ -25,9 +25,20 @@
     proxy: "#f97316",
     monitor: "#a855f7",
     container: "#06b6d4",
+    external: "#ef4444",
+  };
+
+  var EDGE_COLORS = {
+    runs_on: "#9ca3af",
+    depends_on: "#3b82f6",
+    proxies_to: "#f97316",
+    forwards_to: "#8b5cf6",
+    resolves_via: "#06b6d4",
+    connects_via: "#6b7280",
   };
 
   var DEFAULT_COLOR = "#94a3b8";
+  var DEFAULT_EDGE_COLOR = "#d1d5db";
   var NODE_RADIUS = 24;
   var LABEL_OFFSET = NODE_RADIUS + 10;
   var ARROW_SIZE = 8;
@@ -40,6 +51,17 @@
   var linkGroup, nodeGroup, labelGroup;
   var width, height;
   var currentData = { nodes: [], links: [] };
+
+  var filterState = {
+    searchText: "",
+    typeFilters: {
+      network_device: true, service: true, host: true,
+      container: true, proxy: true, monitor: true, external: true,
+    },
+    focusNode: null,
+    focusDepth: 1,
+  };
+  var searchDebounceTimer = null;
 
   // -----------------------------------------------------------------------
   // Helpers
@@ -172,11 +194,17 @@
     var linksEnter = links
       .enter()
       .append("line")
-      .attr("stroke", "#d1d5db")
+      .attr("stroke", function (d) { return EDGE_COLORS[d.type] || DEFAULT_EDGE_COLOR; })
       .attr("stroke-width", 1.5)
+      .attr("stroke-dasharray", function (d) { return d.manually_edited ? "6,3" : "none"; })
       .attr("marker-end", "url(#arrowhead)");
 
     links = linksEnter.merge(links);
+
+    // Update existing edge visuals
+    links
+      .attr("stroke", function (d) { return EDGE_COLORS[d.type] || DEFAULT_EDGE_COLOR; })
+      .attr("stroke-dasharray", function (d) { return d.manually_edited ? "6,3" : "none"; });
 
     // Link labels
     var linkLabels = linkGroup
@@ -192,13 +220,16 @@
       .append("text")
       .attr("text-anchor", "middle")
       .attr("font-size", "9px")
-      .attr("fill", "#9ca3af")
+      .attr("fill", function (d) { return EDGE_COLORS[d.type] || "#9ca3af"; })
       .attr("dy", -6)
       .text(function (d) {
         return d.type;
       });
 
     linkLabels = linkLabelsEnter.merge(linkLabels);
+
+    // Update existing link label colors
+    linkLabels.attr("fill", function (d) { return EDGE_COLORS[d.type] || "#9ca3af"; });
 
     // Nodes
     var nodes = nodeGroup
@@ -306,6 +337,10 @@
     svg.__linkLabels = linkGroup.selectAll("text");
     svg.__nodes = nodeGroup.selectAll("g");
     svg.__labels = labelGroup.selectAll("text");
+
+    // Apply current filters and rebuild edge datalists
+    applyFilters();
+    rebuildEdgeDatalist();
   }
 
   function ticked() {
@@ -387,15 +422,23 @@
       "</dd></div>" +
       "</dl>";
 
+    // Focus button (all roles)
+    html +=
+      '<div class="mt-4 pt-4 border-t border-gray-200 flex flex-wrap gap-2">' +
+      '  <button id="btn-focus-node" data-id="' + escapeHtml(d.id) + '"' +
+      '    class="bg-indigo-50 text-indigo-600 px-3 py-1 rounded text-xs hover:bg-indigo-100">Focus</button>';
+
     if (canEdit) {
       html +=
-        '<div class="mt-4 pt-4 border-t border-gray-200 flex gap-2">' +
+        '  <button id="btn-connect-node" data-id="' + escapeHtml(d.id) + '"' +
+        '    class="bg-green-50 text-green-600 px-3 py-1 rounded text-xs hover:bg-green-100">Connect</button>' +
         '  <button id="btn-edit-node" data-id="' + escapeHtml(d.id) + '"' +
         '    class="bg-gray-100 text-gray-600 px-3 py-1 rounded text-xs hover:bg-gray-200">Edit</button>' +
         '  <button id="btn-delete-node" data-id="' + escapeHtml(d.id) + '"' +
-        '    class="bg-red-50 text-red-600 px-3 py-1 rounded text-xs hover:bg-red-100">Delete</button>' +
-        "</div>";
+        '    class="bg-red-50 text-red-600 px-3 py-1 rounded text-xs hover:bg-red-100">Delete</button>';
     }
+
+    html += "</div>";
 
     content.innerHTML = html;
 
@@ -434,6 +477,26 @@
         showEditForm(d, entityId);
       });
     }
+
+    // Focus button
+    var focusBtn = document.getElementById("btn-focus-node");
+    if (focusBtn) {
+      focusBtn.addEventListener("click", function () {
+        filterState.focusNode = this.getAttribute("data-id");
+        filterState.focusDepth = 1;
+        applyFilters();
+      });
+    }
+
+    // Connect button — pre-fill Add Edge modal
+    var connectBtn = document.getElementById("btn-connect-node");
+    if (connectBtn) {
+      connectBtn.addEventListener("click", function () {
+        var fromInput = document.getElementById("edge-from-entity");
+        if (fromInput) fromInput.value = this.getAttribute("data-id");
+        window.dispatchEvent(new CustomEvent("open-add-edge"));
+      });
+    }
   }
 
   function showEditForm(d, entityId) {
@@ -457,6 +520,7 @@
       '      <option value="network_device"' + (d.type === "network_device" ? " selected" : "") + ">Network Device</option>" +
       '      <option value="proxy"' + (d.type === "proxy" ? " selected" : "") + ">Proxy</option>" +
       '      <option value="monitor"' + (d.type === "monitor" ? " selected" : "") + ">Monitor</option>" +
+      '      <option value="external"' + (d.type === "external" ? " selected" : "") + ">External</option>" +
       "    </select>" +
       "  </div>" +
       "  <div>" +
@@ -510,6 +574,14 @@
       });
     }
 
+    // Add Edge
+    var addEdgeBtn = document.getElementById("btn-add-edge");
+    if (addEdgeBtn) {
+      addEdgeBtn.addEventListener("click", function () {
+        window.dispatchEvent(new CustomEvent("open-add-edge"));
+      });
+    }
+
     // Add Node form submit
     var addForm = document.getElementById("add-node-form");
     if (addForm) {
@@ -529,6 +601,30 @@
             window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
             refreshGraph();
             showToast("success", "Node created");
+          })
+          .catch(function (err) {
+            showToast("error", "Create failed: " + err.message);
+          });
+      });
+    }
+
+    // Add Edge form submit
+    var addEdgeForm = document.getElementById("add-edge-form");
+    if (addEdgeForm) {
+      addEdgeForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var fd = new FormData(this);
+        var payload = {
+          from_entity: fd.get("from_entity"),
+          to_entity: fd.get("to_entity"),
+          edge_type: fd.get("edge_type"),
+        };
+        apiRequest("POST", "/ui/service-map/edges", payload)
+          .then(function () {
+            addEdgeForm.reset();
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+            refreshGraph();
+            showToast("success", "Edge created");
           })
           .catch(function (err) {
             showToast("error", "Create failed: " + err.message);
@@ -567,7 +663,63 @@
       fitBtn.addEventListener("click", fitView);
     }
 
-    // Click background to close panel
+    // --- Filter controls ---
+
+    // Search input
+    var searchInput = document.getElementById("filter-search");
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        var val = this.value;
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(function () {
+          filterState.searchText = val;
+          applyFilters();
+        }, 150);
+      });
+      var clearBtn = document.getElementById("filter-search-clear");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", function () {
+          searchInput.value = "";
+          filterState.searchText = "";
+          applyFilters();
+        });
+      }
+    }
+
+    // Type filter pills
+    initTypeFilterPills();
+
+    // Focus depth controls
+    var depthMinus = document.getElementById("focus-depth-minus");
+    var depthPlus = document.getElementById("focus-depth-plus");
+    if (depthMinus) {
+      depthMinus.addEventListener("click", function () {
+        if (filterState.focusDepth > 1) {
+          filterState.focusDepth--;
+          try { applyFilters(); } catch (e) { updateFocusIndicator(); }
+        }
+      });
+    }
+    if (depthPlus) {
+      depthPlus.addEventListener("click", function () {
+        if (filterState.focusDepth < 5) {
+          filterState.focusDepth++;
+          try { applyFilters(); } catch (e) { updateFocusIndicator(); }
+        }
+      });
+    }
+
+    // Show All (exit focus)
+    var showAllBtn = document.getElementById("focus-show-all");
+    if (showAllBtn) {
+      showAllBtn.addEventListener("click", function () {
+        filterState.focusNode = null;
+        filterState.focusDepth = 1;
+        applyFilters();
+      });
+    }
+
+    // Click background to close panel (NOT exit focus — that's explicit via Show All)
     svg.on("click", function () {
       var panel = document.getElementById("side-panel");
       if (panel) panel.classList.add("hidden");
@@ -641,6 +793,186 @@
     window.dispatchEvent(
       new CustomEvent("toast-" + type, { detail: { message: message } })
     );
+  }
+
+  // -----------------------------------------------------------------------
+  // Filter & Focus
+  // -----------------------------------------------------------------------
+
+  function getNeighborhood(nodeId, depth) {
+    var visited = {};
+    visited[nodeId] = true;
+    var frontier = [nodeId];
+
+    for (var d = 0; d < depth; d++) {
+      var nextFrontier = [];
+      for (var i = 0; i < frontier.length; i++) {
+        var nid = frontier[i];
+        for (var j = 0; j < currentData.links.length; j++) {
+          var link = currentData.links[j];
+          var srcId = link.source.id || link.source;
+          var tgtId = link.target.id || link.target;
+          if (srcId === nid && !visited[tgtId]) {
+            visited[tgtId] = true;
+            nextFrontier.push(tgtId);
+          } else if (tgtId === nid && !visited[srcId]) {
+            visited[srcId] = true;
+            nextFrontier.push(srcId);
+          }
+        }
+      }
+      frontier = nextFrontier;
+    }
+    return visited;
+  }
+
+  function applyFilters() {
+    if (!svg || !svg.__nodes) return;
+
+    // If focus node was deleted, clear focus
+    if (filterState.focusNode) {
+      var found = false;
+      for (var i = 0; i < currentData.nodes.length; i++) {
+        if (currentData.nodes[i].id === filterState.focusNode) { found = true; break; }
+      }
+      if (!found) {
+        filterState.focusNode = null;
+        filterState.focusDepth = 1;
+      }
+    }
+
+    var neighborhood = filterState.focusNode
+      ? getNeighborhood(filterState.focusNode, filterState.focusDepth)
+      : null;
+
+    var searchLower = filterState.searchText.toLowerCase();
+
+    // Build set of visible node IDs for edge filtering
+    var visibleNodes = {};
+
+    svg.__nodes.each(function (d) {
+      var el = d3.select(this);
+      var typeHidden = !filterState.typeFilters[d.type];
+      var focusHidden = neighborhood && !neighborhood[d.id];
+      var hidden = typeHidden || focusHidden;
+
+      el.attr("display", hidden ? "none" : null);
+
+      if (!hidden) {
+        visibleNodes[d.id] = true;
+        if (searchLower && d.name) {
+          var matches = d.name.toLowerCase().indexOf(searchLower) !== -1 ||
+            d.id.toLowerCase().indexOf(searchLower) !== -1;
+          el.attr("opacity", matches ? 1 : 0.15);
+          // Gold highlight ring on matches
+          el.select("circle")
+            .attr("stroke", matches && searchLower ? "#eab308" :
+              (d.manually_edited ? "#eab308" : "#e5e7eb"))
+            .attr("stroke-width", matches && searchLower ? 3 :
+              (d.manually_edited ? 3 : 2));
+        } else {
+          el.attr("opacity", 1);
+          el.select("circle")
+            .attr("stroke", d.manually_edited ? "#eab308" : "#e5e7eb")
+            .attr("stroke-width", d.manually_edited ? 3 : 2);
+        }
+      }
+    });
+
+    // Labels follow same visibility/opacity as nodes
+    svg.__labels.each(function (d) {
+      var el = d3.select(this);
+      var typeHidden = !filterState.typeFilters[d.type];
+      var focusHidden = neighborhood && !neighborhood[d.id];
+      var hidden = typeHidden || focusHidden;
+
+      el.attr("display", hidden ? "none" : null);
+
+      if (!hidden && searchLower && d.name) {
+        var matches = d.name.toLowerCase().indexOf(searchLower) !== -1 ||
+          d.id.toLowerCase().indexOf(searchLower) !== -1;
+        el.attr("opacity", matches ? 1 : 0.15);
+      } else if (!hidden) {
+        el.attr("opacity", 1);
+      }
+    });
+
+    // Links: hide if either endpoint hidden
+    svg.__links.each(function (d) {
+      var srcId = d.source.id || d.source;
+      var tgtId = d.target.id || d.target;
+      var hidden = !visibleNodes[srcId] || !visibleNodes[tgtId];
+      d3.select(this).attr("display", hidden ? "none" : null);
+    });
+
+    svg.__linkLabels.each(function (d) {
+      var srcId = d.source.id || d.source;
+      var tgtId = d.target.id || d.target;
+      var hidden = !visibleNodes[srcId] || !visibleNodes[tgtId];
+      d3.select(this).attr("display", hidden ? "none" : null);
+    });
+
+    updateFocusIndicator();
+  }
+
+  function updateFocusIndicator() {
+    var indicator = document.getElementById("focus-indicator");
+    if (!indicator) return;
+
+    if (filterState.focusNode) {
+      var nodeName = filterState.focusNode;
+      for (var i = 0; i < currentData.nodes.length; i++) {
+        if (currentData.nodes[i].id === filterState.focusNode) {
+          nodeName = currentData.nodes[i].name;
+          break;
+        }
+      }
+      indicator.classList.remove("hidden");
+      var label = indicator.querySelector("#focus-node-label");
+      var depthLabel = indicator.querySelector("#focus-depth-label");
+      if (label) label.textContent = nodeName;
+      if (depthLabel) depthLabel.textContent = filterState.focusDepth;
+    } else {
+      indicator.classList.add("hidden");
+    }
+  }
+
+  function initTypeFilterPills() {
+    var container = document.getElementById("type-filter-pills");
+    if (!container) return;
+
+    var types = Object.keys(TYPE_COLORS);
+    for (var i = 0; i < types.length; i++) {
+      (function (type) {
+        var pill = document.createElement("button");
+        pill.className = "filter-pill active";
+        pill.setAttribute("data-type", type);
+        pill.innerHTML =
+          '<span class="filter-pill__dot" style="background:' + TYPE_COLORS[type] + '"></span>' +
+          type.replace("_", " ");
+        pill.addEventListener("click", function () {
+          filterState.typeFilters[type] = !filterState.typeFilters[type];
+          pill.classList.toggle("active", filterState.typeFilters[type]);
+          applyFilters();
+        });
+        container.appendChild(pill);
+      })(types[i]);
+    }
+  }
+
+  function rebuildEdgeDatalist() {
+    var fromList = document.getElementById("edge-from-options");
+    var toList = document.getElementById("edge-to-options");
+    if (!fromList || !toList) return;
+
+    var html = "";
+    for (var i = 0; i < currentData.nodes.length; i++) {
+      var n = currentData.nodes[i];
+      html += '<option value="' + escapeHtml(n.id) + '">' +
+        escapeHtml(n.name) + " (" + escapeHtml(n.id) + ")</option>";
+    }
+    fromList.innerHTML = html;
+    toList.innerHTML = html;
   }
 
   // -----------------------------------------------------------------------
