@@ -16,7 +16,6 @@ Rule-based matching (ordered by cost, short-circuit on first match):
 from __future__ import annotations
 
 import collections
-import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -72,7 +71,7 @@ class CorrelationCluster(BaseModel):
 class WindowEntry:
     """A recent (event, decision) pair in the sliding window."""
 
-    __slots__ = ("event", "decision", "timestamp", "host_ip", "entity_id", "_cluster_id")
+    __slots__ = ("_cluster_id", "decision", "entity_id", "event", "host_ip", "timestamp")
 
     def __init__(
         self, event: Event, decision: DecisionResult, host_ip: str | None,

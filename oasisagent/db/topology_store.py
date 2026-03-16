@@ -10,12 +10,13 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from oasisagent.models import TopologyEdge, TopologyNode
 
 if TYPE_CHECKING:
     import aiosqlite
+    from aiosqlite import Row
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ class TopologyStore:
     # -------------------------------------------------------------------
 
     @staticmethod
-    def _row_to_node(row: Any) -> TopologyNode:
+    def _row_to_node(row: Row) -> TopologyNode:
         """Convert a database row to a TopologyNode."""
         last_seen_str = row["last_seen"]
         last_seen = (
@@ -208,7 +209,7 @@ class TopologyStore:
         )
 
     @staticmethod
-    def _row_to_edge(row: Any) -> TopologyEdge:
+    def _row_to_edge(row: Row) -> TopologyEdge:
         """Convert a database row to a TopologyEdge."""
         last_seen_str = row["last_seen"]
         last_seen = (

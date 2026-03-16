@@ -17,7 +17,6 @@ from oasisagent.db.topology_store import TopologyStore
 from oasisagent.engine.service_graph import ServiceGraph
 from oasisagent.models import TopologyEdge, TopologyNode
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -333,7 +332,7 @@ class TestServiceGraphMerge:
         await graph.load_from_db(store)
 
         auto_node = _node(entity_id="manual_svc", display_name="Auto")
-        diffs = await graph.merge_discovered([auto_node], [], store)
+        await graph.merge_discovered([auto_node], [], store)
 
         node = graph.get_node("manual_svc")
         assert node is not None

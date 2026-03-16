@@ -26,7 +26,6 @@ from oasisagent.db.topology_store import TopologyStore
 from oasisagent.engine.circuit_breaker import CircuitBreaker
 from oasisagent.engine.correlator import EventCorrelator
 from oasisagent.engine.cross_correlator import CrossDomainCorrelator
-from oasisagent.engine.service_graph import ServiceGraph
 from oasisagent.engine.decision import (
     DecisionDisposition,
     DecisionEngine,
@@ -36,6 +35,7 @@ from oasisagent.engine.decision import (
 from oasisagent.engine.guardrails import GuardrailsEngine
 from oasisagent.engine.known_fixes import KnownFixRegistry
 from oasisagent.engine.queue import EventQueue
+from oasisagent.engine.service_graph import ServiceGraph
 from oasisagent.handlers.docker import DockerHandler
 from oasisagent.handlers.homeassistant import HomeAssistantHandler
 from oasisagent.ingestion.ha_log_poller import HaLogPollerAdapter

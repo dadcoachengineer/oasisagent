@@ -10,16 +10,13 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
 
 from oasisagent.engine.cross_correlator import (
     ClusterCircuitBreaker,
-    ClusterMatch,
     CrossDomainCorrelator,
-    WindowEntry,
 )
 from oasisagent.engine.decision import (
     DecisionDisposition,
@@ -27,8 +24,7 @@ from oasisagent.engine.decision import (
     DecisionTier,
 )
 from oasisagent.engine.service_graph import ServiceGraph
-from oasisagent.models import Event, EventMetadata, Severity, TopologyEdge, TopologyNode
-
+from oasisagent.models import Event, Severity, TopologyEdge, TopologyNode
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -109,7 +105,11 @@ def _decision(event_id: str = "test") -> DecisionResult:
     )
 
 
-async def _setup_graph(db: aiosqlite.Connection, nodes: list[dict], edges: list[dict] | None = None) -> ServiceGraph:
+async def _setup_graph(
+    db: aiosqlite.Connection,
+    nodes: list[dict],
+    edges: list[dict] | None = None,
+) -> ServiceGraph:
     """Helper to set up graph with nodes and edges."""
     from oasisagent.db.topology_store import TopologyStore
 
@@ -267,6 +267,25 @@ class TestSubnetCorrelation:
 # ---------------------------------------------------------------------------
 
 
+_INS_CLUSTER = (
+    "INSERT INTO correlation_clusters"
+    " (id, created_at, updated_at, leader_event_id, event_count)"
+    " VALUES (?, ?, ?, ?, ?)"
+)
+_INS_CLUSTER_RT = (
+    "INSERT INTO correlation_clusters"
+    " (id, created_at, updated_at, leader_event_id,"
+    " rule_type, event_count)"
+    " VALUES (?, ?, ?, ?, ?, ?)"
+)
+_INS_EVENT = (
+    "INSERT INTO cluster_events"
+    " (cluster_id, event_id, entity_id, source,"
+    " system, severity, timestamp)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
+
+
 class TestClusterMerge:
     """Merging two clusters into the older one."""
 
@@ -278,29 +297,24 @@ class TestClusterMerge:
         now = datetime.now(UTC).isoformat()
         # Insert two clusters
         await db.execute(
-            "INSERT INTO correlation_clusters (id, created_at, updated_at, leader_event_id, event_count) "
-            "VALUES (?, ?, ?, ?, ?)",
+            _INS_CLUSTER,
             ("old_cluster", "2024-01-01T00:00:00", now, "ev1", 2),
         )
         await db.execute(
-            "INSERT INTO correlation_clusters (id, created_at, updated_at, leader_event_id, event_count) "
-            "VALUES (?, ?, ?, ?, ?)",
+            _INS_CLUSTER,
             ("new_cluster", "2024-06-01T00:00:00", now, "ev3", 1),
         )
         # Add events to each
         await db.execute(
-            "INSERT INTO cluster_events (cluster_id, event_id, entity_id, source, system, severity, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INS_EVENT,
             ("old_cluster", "ev1", "a", "s", "sys", "error", "2024-01-01T00:00:00"),
         )
         await db.execute(
-            "INSERT INTO cluster_events (cluster_id, event_id, entity_id, source, system, severity, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INS_EVENT,
             ("old_cluster", "ev2", "b", "s", "sys", "error", "2024-01-01T00:01:00"),
         )
         await db.execute(
-            "INSERT INTO cluster_events (cluster_id, event_id, entity_id, source, system, severity, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INS_EVENT,
             ("new_cluster", "ev3", "c", "s", "sys", "error", "2024-06-01T00:00:00"),
         )
         await db.commit()
@@ -397,13 +411,11 @@ class TestClusterLookup:
 
         now = datetime.now(UTC).isoformat()
         await db.execute(
-            "INSERT INTO correlation_clusters (id, created_at, updated_at, leader_event_id, rule_type, event_count) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            _INS_CLUSTER_RT,
             ("c1", now, now, "ev1", "same_host", 2),
         )
         await db.execute(
-            "INSERT INTO cluster_events (cluster_id, event_id, entity_id, source, system, severity, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            _INS_EVENT,
             ("c1", "ev1", "a", "s", "sys", "error", now),
         )
         await db.commit()
@@ -420,14 +432,12 @@ class TestClusterLookup:
 
         now = datetime.now(UTC).isoformat()
         await db.execute(
-            "INSERT INTO correlation_clusters (id, created_at, updated_at, leader_event_id, event_count) "
-            "VALUES (?, ?, ?, ?, ?)",
+            _INS_CLUSTER,
             ("c1", now, now, "ev1", 2),
         )
         for ev_id in ("ev1", "ev2"):
             await db.execute(
-                "INSERT INTO cluster_events (cluster_id, event_id, entity_id, source, system, severity, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                _INS_EVENT,
                 ("c1", ev_id, "a", "s", "sys", "error", now),
             )
         await db.commit()
@@ -449,7 +459,11 @@ class TestCascadeIntegration:
         graph = await _setup_graph(
             db,
             [
-                {"entity_id": "switch:main", "entity_type": "network_device", "host_ip": "192.168.1.1"},
+                {
+                    "entity_id": "switch:main",
+                    "entity_type": "network_device",
+                    "host_ip": "192.168.1.1",
+                },
                 {"entity_id": "ha:entity1", "host_ip": "192.168.1.10"},
                 {"entity_id": "ha:entity2", "host_ip": "192.168.1.10"},
                 {"entity_id": "uptime:monitor1", "host_ip": "192.168.1.10"},

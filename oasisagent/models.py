@@ -211,13 +211,13 @@ class DecisionDetails(TypedDict, total=False):
 
     T1 fields:
         classification: Event category from T1 triage.
-        confidence: T1 confidence score (0.0–1.0).
+        confidence: T1 confidence score (0.0-1.0).
         reasoning: T1 model reasoning text.
         suggested_fix: T1 suggested fix (if disposition=KNOWN_PATTERN).
 
     T2 fields:
         t2_root_cause: Root cause analysis from T2 reasoning.
-        t2_confidence: T2 confidence score (0.0–1.0).
+        t2_confidence: T2 confidence score (0.0-1.0).
         risk_assessment: T2 risk assessment text.
         total_actions: Total actions recommended by T2.
         approved_actions: Actions that passed guardrails.

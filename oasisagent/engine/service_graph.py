@@ -122,7 +122,9 @@ class ServiceGraph:
 
         return diffs
 
-    def detect_stale(self, max_missed_cycles: int = 3, cycle_seconds: int = 300) -> list[TopologyDiff]:
+    def detect_stale(
+        self, max_missed_cycles: int = 3, cycle_seconds: int = 300,
+    ) -> list[TopologyDiff]:
         """Find nodes not seen for more than max_missed_cycles * cycle_seconds.
 
         Returns diffs with action="stale". Does not delete — the operator
