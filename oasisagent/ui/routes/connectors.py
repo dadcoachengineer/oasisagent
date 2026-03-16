@@ -97,7 +97,7 @@ def _parse_form_config(
                 if spec.default is not None:
                     config[spec.name] = spec.default
                 continue
-            config[spec.name] = int(value)
+            config[spec.name] = int(float(value))
             continue
 
         if spec.input_type == "float":
@@ -262,9 +262,9 @@ def _build_ui_crud(
             raise HTTPException(status_code=422, detail=f"Unknown type: {type_name}")
 
         specs = get_form_specs(type_name)
-        config = _parse_form_config(form_data, specs, is_edit=False)
 
         try:
+            config = _parse_form_config(form_data, specs, is_edit=False)
             await getattr(store, create_method)(type_name, name, config)
         except (ValueError, ValidationError) as exc:
             errors = (
@@ -387,12 +387,11 @@ def _build_ui_crud(
         type_name = existing["type"]
         name = str(form_data.get("name", existing["name"])).strip()
         specs = get_form_specs(type_name)
-        config = _parse_form_config(form_data, specs, is_edit=True)
-
-        # Build the update payload
-        updates: dict[str, Any] = {"name": name, "config": config}
 
         try:
+            config = _parse_form_config(form_data, specs, is_edit=True)
+            # Build the update payload
+            updates: dict[str, Any] = {"name": name, "config": config}
             result = await getattr(store, update_method)(row_id, updates)
         except (ValueError, ValidationError) as exc:
             errors = (

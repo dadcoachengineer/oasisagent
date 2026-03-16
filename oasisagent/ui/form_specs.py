@@ -961,12 +961,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
         ),
         FieldSpec(
             "cpu_threshold", "CPU Alert Threshold (%)",
-            "number", default=90.0, min_val=0, max_val=100,
+            "float", default=90.0, min_val=0, max_val=100,
             group="Thresholds",
         ),
         FieldSpec(
             "memory_threshold", "Memory Alert Threshold (%)",
-            "number", default=90.0, min_val=0, max_val=100,
+            "float", default=90.0, min_val=0, max_val=100,
             group="Thresholds",
         ),
     ],
