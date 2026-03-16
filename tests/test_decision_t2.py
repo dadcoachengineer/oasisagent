@@ -524,3 +524,147 @@ class TestT2DependencyContext:
         dep_ctx = reasoning.diagnose.call_args.kwargs.get("dependency_context")
         assert dep_ctx is not None
         assert len(dep_ctx.upstream) == 1
+
+
+# ---------------------------------------------------------------------------
+# Entity context fn (lazy callable)
+# ---------------------------------------------------------------------------
+
+
+class TestEntityContextFn:
+    """entity_context_fn is called lazily only at T2."""
+
+    async def test_entity_context_fn_called_at_t2(self) -> None:
+        """entity_context_fn invoked when T2 is reached; result flows to diagnose()."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        ctx_fn_called = False
+
+        async def _ctx_fn() -> dict[str, Any]:
+            nonlocal ctx_fn_called
+            ctx_fn_called = True
+            return {"primary": {"entity_state": "unavailable"}}
+
+        await engine.process_event(
+            _make_event(), entity_context_fn=_ctx_fn,
+        )
+
+        assert ctx_fn_called
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs["entity_context"] == {
+            "primary": {"entity_state": "unavailable"},
+        }
+
+    async def test_entity_context_fn_not_called_at_t0(self) -> None:
+        """T0 match -> entity_context_fn never called."""
+        from oasisagent.engine.guardrails import GuardrailsEngine
+        from oasisagent.engine.known_fixes import (
+            FixAction,
+            FixActionType,
+            FixMatch,
+            KnownFix,
+            KnownFixRegistry,
+        )
+
+        registry = KnownFixRegistry()
+        registry._fixes = [
+            KnownFix(
+                id="test-fix",
+                match=FixMatch(system="homeassistant", event_type="integration_failure"),
+                action=FixAction(
+                    type=FixActionType.AUTO_FIX,
+                    handler="homeassistant",
+                    operation="restart_integration",
+                ),
+                risk_tier=RiskTier.AUTO_FIX,
+                diagnosis="Known fix",
+            ),
+        ]
+
+        engine = DecisionEngine(
+            registry=registry,
+            guardrails=GuardrailsEngine(_make_guardrails()),
+        )
+
+        ctx_fn_called = False
+
+        async def _ctx_fn() -> dict[str, Any]:
+            nonlocal ctx_fn_called
+            ctx_fn_called = True
+            return {"should": "not be called"}
+
+        result = await engine.process_event(
+            _make_event(), entity_context_fn=_ctx_fn,
+        )
+
+        assert not ctx_fn_called
+        assert result.tier == DecisionTier.T0
+
+    async def test_dependency_context_passed_through(self) -> None:
+        """dependency_context flows through to diagnose()."""
+        from oasisagent.models import DependencyContext, DependencyNode
+
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        dep_ctx = DependencyContext(
+            entity_id="sensor.temperature",
+            upstream=[DependencyNode(
+                entity_id="host:rpi4",
+                entity_type="host",
+                display_name="rpi4",
+                edge_type="runs_on",
+                depth=1,
+            )],
+        )
+
+        await engine.process_event(
+            _make_event(), dependency_context=dep_ctx,
+        )
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs["dependency_context"] is dep_ctx
+
+    async def test_both_none_backward_compat(self) -> None:
+        """No params -> entity_context={}, dependency_context computed internally."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        await engine.process_event(_make_event())
+
+        call_kwargs = reasoning.diagnose.call_args.kwargs
+        assert call_kwargs["entity_context"] == {}
+        # No service graph -> dependency_context=None
+        assert call_kwargs["dependency_context"] is None
+
+    async def test_multi_handler_context_systems_in_details(self) -> None:
+        """Details include multi_handler_context_systems when context is gathered."""
+        reasoning = _make_reasoning_service()
+        engine = _make_engine(
+            triage_service=_make_triage_service(),
+            reasoning_service=reasoning,
+        )
+
+        async def _ctx_fn() -> dict[str, Any]:
+            return {
+                "primary": {"state": "unavailable"},
+                "dependency:portainer:portainer:1/mqtt": {"status": "running"},
+            }
+
+        result = await engine.process_event(
+            _make_event(), entity_context_fn=_ctx_fn,
+        )
+
+        assert result.details["multi_handler_context_systems"] == [
+            "homeassistant", "portainer",
+        ]

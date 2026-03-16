@@ -1750,7 +1750,38 @@ class Orchestrator:
 
             # 3. Decision (T0 → T1 → T2, guardrails applied)
             assert self._decision_engine is not None
-            result = await self._decision_engine.process_event(event)
+
+            # Compute dependency context eagerly (cheap, in-memory BFS)
+            dep_ctx = None
+            if self._service_graph is not None:
+                from oasisagent.engine.service_graph import gather_dependency_context
+
+                dep_ctx = gather_dependency_context(
+                    event.entity_id,
+                    self._service_graph,
+                    self._config.agent.dependency_context_depth,
+                )
+
+            # Build lazy closure for handler context (expensive, I/O)
+            # Only invoked when the pipeline actually reaches T2.
+            entity_context_fn = None
+            if self._handlers and dep_ctx is not None:
+                from oasisagent.engine.context_assembly import (
+                    gather_multi_handler_context,
+                )
+
+                async def _gather_context() -> dict[str, Any]:
+                    return await gather_multi_handler_context(
+                        event, dep_ctx, self._handlers, self._service_graph,
+                    )
+
+                entity_context_fn = _gather_context
+
+            result = await self._decision_engine.process_event(
+                event,
+                entity_context_fn=entity_context_fn,
+                dependency_context=dep_ctx,
+            )
 
             duration_ms = (time.monotonic() - start) * 1000
 

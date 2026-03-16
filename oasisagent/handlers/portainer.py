@@ -222,6 +222,43 @@ class PortainerHandler(Handler):
 
         return context
 
+    async def get_context_for_entity(self, entity_id: str) -> dict[str, Any]:
+        """Fetch container inspect data by entity_id (cross-entity query).
+
+        Parses ``portainer:{endpoint}/{container}`` format to extract
+        endpoint ID and container name.  Falls back to the default
+        endpoint when entity_id has no prefix.
+        """
+        self._ensure_started()
+        context: dict[str, Any] = {}
+
+        # Parse entity_id: "portainer:{endpoint}/{container}" or bare name
+        container_id = entity_id
+        prefix = self._docker_prefix
+        if ":" in entity_id:
+            _, _, rest = entity_id.partition(":")
+            if "/" in rest:
+                ep_str, _, container_id = rest.partition("/")
+                prefix = f"/api/endpoints/{ep_str}/docker"
+            else:
+                container_id = rest
+
+        try:
+            assert self._session is not None
+            async with self._session.get(
+                f"{prefix}/containers/{container_id}/json",
+            ) as resp:
+                resp.raise_for_status()
+                context["container_inspect"] = await resp.json()
+        except aiohttp.ClientError as exc:
+            logger.warning(
+                "Portainer get_context_for_entity(%s) failed: %s",
+                entity_id, exc,
+            )
+            context["container_inspect_error"] = str(exc)
+
+        return context
+
     # -------------------------------------------------------------------
     # Operation implementations
     # -------------------------------------------------------------------

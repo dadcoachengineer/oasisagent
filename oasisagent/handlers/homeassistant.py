@@ -160,6 +160,18 @@ class HomeAssistantHandler(Handler):
 
         return context
 
+    async def get_context_for_entity(self, entity_id: str) -> dict[str, Any]:
+        """Fetch state for any HA entity by ID (cross-entity query)."""
+        self._ensure_started()
+        context: dict[str, Any] = {}
+        try:
+            state = await self._get_state(entity_id)
+            context["entity_state"] = state
+        except aiohttp.ClientError as exc:
+            logger.warning("HA get_context_for_entity(%s) failed: %s", entity_id, exc)
+            context["entity_state_error"] = str(exc)
+        return context
+
     # -------------------------------------------------------------------
     # Operation implementations
     # -------------------------------------------------------------------
