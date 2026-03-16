@@ -38,13 +38,13 @@ This is a **public open-source project (MIT license)**. All code must be config-
 
 ### Database
 - SQLite with WAL mode for concurrent reads during web UI
-- Numbered migrations in `oasisagent/db/migrations/` (currently 13 migrations, 001–013)
+- Numbered migrations in `oasisagent/db/migrations/` (currently 14 migrations, 001–014)
 - Schema version tracked in `_meta` table
 - Migrations discovered via `pkgutil.iter_modules` matching pattern `^\d{3}_\w+$`
 - No Alembic — migrations are simple async functions: `async def migrate(db: aiosqlite.Connection)`
 
 ### Testing
-- pytest + pytest-asyncio (2868 tests as of v0.3.5)
+- pytest + pytest-asyncio (3018 tests as of v0.3.6)
 - Unit tests for all business logic (decision engine, known_fixes matcher, circuit breaker, guardrails)
 - Integration tests with mocked external services (MQTT broker, HA API, InfluxDB)
 - Test the LLM client with mock responses — don't call real LLM endpoints in tests
@@ -53,12 +53,12 @@ This is a **public open-source project (MIT license)**. All code must be config-
 ### Project Structure
 Follow the layout in ARCHITECTURE.md §12 exactly. The package is `oasisagent/` (not `oasis_agent/` or `src/`).
 
-## Current State (v0.3.5)
+## Current State (v0.3.6)
 
 ### Architecture
 - **Single process**: FastAPI serves web UI + webhook receiver + REST API on one port
-- **Web admin UI**: HTMX-powered dashboard, setup wizard, config CRUD, event explorer, approval queue, service map, notification feed
-- **19 ingestion adapters**: MQTT, HA WebSocket, HA log poller, HTTP poller, Portainer, Proxmox, UniFi, Cloudflare, Servarr (Radarr/Sonarr/etc.), Plex, qBittorrent, Tdarr, Tautulli, Overseerr, Frigate, N8N, NPM, Vaultwarden, Uptime Kuma
+- **Web admin UI**: HTMX-powered dashboard, setup wizard, config CRUD, event explorer, approval queue, service map, notification feed, dark mode
+- **24 ingestion adapters**: MQTT, HA WebSocket, HA log poller, HTTP poller, Portainer, Proxmox, UniFi, Cloudflare, Servarr (Radarr/Sonarr/etc.), Plex, qBittorrent, Tdarr, Tautulli, Overseerr, Frigate, N8N, NPM, Vaultwarden (with deep health), Uptime Kuma, Stalwart, Ollama, EMQX, Nextcloud
 - **6 handlers**: Home Assistant, Docker, Portainer, Proxmox, UniFi, Cloudflare
 - **8 notification channels**: MQTT, Email, Webhook, Telegram (interactive), Discord, Slack, Web UI (interactive)
 - **5 scanners**: Certificate expiry, disk space, backup freshness, HA health, Docker health
@@ -69,6 +69,7 @@ Follow the layout in ARCHITECTURE.md §12 exactly. The package is `oasisagent/` 
 - **Dependency-aware context**: Service topology graph with BFS-based subgraph extraction for T2
 - **Multi-handler context assembly**: Lazy entity context gathering, only invoked at T2
 - **Plan-aware dispatch**: T2 can produce multi-step `RemediationPlan` with dependency ordering. `PlanExecutor` runs steps sequentially with handler verification. Whole-plan approval for non-AUTO_FIX plans.
+- **Learning loop**: T2-to-T0 known fix promotion. `CandidateFixWriter` writes candidates from T2's `suggested_known_fix`, tracked in SQLite `candidate_fixes` table. Hooks into both `_dispatch_t2_actions()` and `PlanExecutor.on_plan_completed`.
 - **Event correlation**: Same-entity dedup window + cross-domain correlation
 - **Circuit breaker**: Per-entity and global failure rate tracking
 
@@ -82,6 +83,7 @@ Follow the layout in ARCHITECTURE.md §12 exactly. The package is `oasisagent/` 
 - `oasisagent/engine/circuit_breaker.py` — Per-entity/global circuit breaker
 - `oasisagent/engine/guardrails.py` — Risk tier enforcement
 - `oasisagent/engine/known_fixes.py` — YAML known fix registry + matcher
+- `oasisagent/engine/learning.py` — T2-to-T0 candidate fix writer
 
 ### Web UI Routes (10 route files)
 `oasisagent/ui/routes/`: approvals, auth_routes, connectors, dashboard, events, known_fixes, notifications, service_map, setup_routes, users
@@ -103,5 +105,5 @@ Dev: pytest, pytest-asyncio, pytest-cov, ruff
 - Don't call LiteLLM directly outside the LLM client module
 - Don't create Event-like objects outside the canonical model
 - Don't access `process.env` directly — use the config store / Pydantic models
-- Don't add migrations without bumping the number sequentially (currently at 013)
+- Don't add migrations without bumping the number sequentially (currently at 014)
 - Don't bypass the PendingQueue's CAS transitions — always use approve()/reject()
