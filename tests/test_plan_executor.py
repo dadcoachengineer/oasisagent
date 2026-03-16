@@ -688,3 +688,31 @@ class TestUtilityMethods:
         plan = await executor.create_plan(event, steps, "tier")
 
         assert plan.effective_risk_tier == RiskTier.RECOMMEND
+
+    async def test_effective_risk_tier_escalate_beats_recommend(self) -> None:
+        """ESCALATE > RECOMMEND — catches lexicographic ordering bug."""
+        executor = _make_executor()
+        event = _make_event()
+
+        steps = [
+            _make_step(1, risk_tier=RiskTier.AUTO_FIX),
+            _make_step(2, risk_tier=RiskTier.ESCALATE),
+            _make_step(3, risk_tier=RiskTier.RECOMMEND),
+        ]
+        plan = await executor.create_plan(event, steps, "escalate")
+
+        assert plan.effective_risk_tier == RiskTier.ESCALATE
+
+    async def test_effective_risk_tier_block_is_highest(self) -> None:
+        """BLOCK is the highest risk tier."""
+        executor = _make_executor()
+        event = _make_event()
+
+        steps = [
+            _make_step(1, risk_tier=RiskTier.ESCALATE),
+            _make_step(2, risk_tier=RiskTier.BLOCK),
+            _make_step(3, risk_tier=RiskTier.RECOMMEND),
+        ]
+        plan = await executor.create_plan(event, steps, "block")
+
+        assert plan.effective_risk_tier == RiskTier.BLOCK

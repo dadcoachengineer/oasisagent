@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     from oasisagent.db.notification_store import NotificationStore
     from oasisagent.handlers.base import Handler
     from oasisagent.ingestion.base import IngestAdapter
-    from oasisagent.models import Event
+    from oasisagent.models import Event, RemediationPlan
     from oasisagent.notifications.base import NotificationChannel
 
 logger = logging.getLogger(__name__)
@@ -2136,41 +2136,62 @@ class Orchestrator:
 
         # AUTO_FIX plan — execute immediately
         completed_plan = await self._plan_executor.execute_plan(plan, event)
+        await self._finalize_plan(completed_plan, event, result)
 
-        # Audit plan completion
+    async def _finalize_plan(
+        self,
+        plan: RemediationPlan,
+        event: Event,
+        result: DecisionResult | None = None,
+    ) -> None:
+        """Audit, count actions, and notify after plan execution.
+
+        Called from both _dispatch_remediation_plan (auto-execute) and
+        _process_plan_approval (operator-approved).
+        """
+        # Audit
         if self._audit is not None:
+            transition = (
+                "completed" if plan.status.value == "completed" else "failed"
+            )
             try:
                 await self._audit.write_plan_event(
-                    plan=completed_plan,
-                    transition=(
-                        "completed"
-                        if completed_plan.status.value == "completed"
-                        else "failed"
-                    ),
+                    plan=plan, transition=transition,
                 )
             except Exception:
                 logger.warning("Audit plan write failed for plan %s", plan.id)
 
         self._actions_taken += sum(
-            1 for s in completed_plan.step_states
+            1 for s in plan.step_states
             if s.status.value == "succeeded"
         )
 
-        # Notify on completion
-        if completed_plan.status.value == "completed":
+        # Notify — build a dummy DecisionResult when called from approval path
+        if result is None:
+            result = DecisionResult(
+                event_id=event.id,
+                tier=DecisionTier.T2,
+                disposition=DecisionDisposition.MATCHED,
+                diagnosis=plan.diagnosis,
+            )
+
+        if plan.status.value == "completed":
             await self._send_notification(
                 event, result,
-                title_override=f"[PLAN] Complete: {result.diagnosis[:60]}",
+                title_override=f"[PLAN] Complete: {plan.diagnosis[:60]}",
             )
         else:
             failed_step = next(
-                (s for s in completed_plan.step_states if s.status.value == "failed"),
+                (s for s in plan.step_states if s.status.value == "failed"),
                 None,
             )
             step_num = failed_step.order if failed_step else "?"
             await self._send_notification(
                 event, result,
-                title_override=f"[PLAN] Failed at step {step_num}: {result.diagnosis[:60]}",
+                title_override=(
+                    f"[PLAN] Failed at step {step_num}: "
+                    f"{plan.diagnosis[:60]}"
+                ),
             )
 
     async def _process_plan_approval(self, plan_id: str) -> None:
@@ -2197,25 +2218,7 @@ class Orchestrator:
         )
 
         completed_plan = await self._plan_executor.execute_plan(plan, event)
-
-        # Audit
-        if self._audit is not None:
-            try:
-                await self._audit.write_plan_event(
-                    plan=completed_plan,
-                    transition=(
-                        "completed"
-                        if completed_plan.status.value == "completed"
-                        else "failed"
-                    ),
-                )
-            except Exception:
-                logger.warning("Audit plan write failed for plan %s", plan_id)
-
-        self._actions_taken += sum(
-            1 for s in completed_plan.step_states
-            if s.status.value == "succeeded"
-        )
+        await self._finalize_plan(completed_plan, event)
 
         logger.info(
             "Plan %s approved and executed: status=%s",

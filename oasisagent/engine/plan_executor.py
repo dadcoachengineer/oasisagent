@@ -23,6 +23,7 @@ from oasisagent.models import (
     ActionStatus,
     PlanStatus,
     RemediationPlan,
+    RiskTier,
     StepState,
     StepStatus,
 )
@@ -32,9 +33,18 @@ if TYPE_CHECKING:
 
     from oasisagent.engine.circuit_breaker import CircuitBreaker
     from oasisagent.handlers.base import Handler
-    from oasisagent.models import Event, RemediationStep, RiskTier
+    from oasisagent.models import Event, RemediationStep
 
 logger = logging.getLogger(__name__)
+
+# Explicit risk ordering — StrEnum comparison is lexicographic (wrong),
+# so we define the actual severity progression for max() comparisons.
+_RISK_ORDER: dict[RiskTier, int] = {
+    RiskTier.AUTO_FIX: 0,
+    RiskTier.RECOMMEND: 1,
+    RiskTier.ESCALATE: 2,
+    RiskTier.BLOCK: 3,
+}
 
 
 class PlanExecutor:
@@ -100,8 +110,6 @@ class PlanExecutor:
 
     def requires_approval(self, plan: RemediationPlan) -> bool:
         """True if any step has risk_tier != AUTO_FIX."""
-        from oasisagent.models import RiskTier
-
         return any(
             step.action.risk_tier != RiskTier.AUTO_FIX
             for step in plan.steps
@@ -417,19 +425,11 @@ class PlanExecutor:
     @staticmethod
     def _compute_effective_risk_tier(steps: list[RemediationStep]) -> RiskTier:
         """Compute the highest risk tier among all steps."""
-        from oasisagent.models import RiskTier
-
-        tier_order = {
-            RiskTier.AUTO_FIX: 0,
-            RiskTier.RECOMMEND: 1,
-            RiskTier.ESCALATE: 2,
-            RiskTier.BLOCK: 3,
-        }
-        max_tier = RiskTier.AUTO_FIX
-        for step in steps:
-            if tier_order.get(step.action.risk_tier, 0) > tier_order.get(max_tier, 0):
-                max_tier = step.action.risk_tier
-        return max_tier
+        return max(
+            (s.action.risk_tier for s in steps),
+            key=lambda t: _RISK_ORDER[t],
+            default=RiskTier.AUTO_FIX,
+        )
 
     async def _persist_plan(self, plan: RemediationPlan) -> None:
         """Write the plan to SQLite. Upsert (INSERT OR REPLACE)."""
