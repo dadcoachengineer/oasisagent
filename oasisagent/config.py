@@ -141,6 +141,7 @@ class AgentConfig(BaseModel):
     max_consecutive_identical: Annotated[int, Field(ge=1)] = 3
     discovery_interval: Annotated[int, Field(ge=60)] = 300
     dependency_context_depth: Annotated[int, Field(ge=1, le=5)] = 2
+    plan_step_notifications: bool = False
 
 
 # -- Ingestion: MQTT --------------------------------------------------------

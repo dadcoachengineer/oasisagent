@@ -118,7 +118,8 @@ class ConfigStore:
                 "shutdown_timeout=?, event_ttl=?, known_fixes_dir=?, "
                 "correlation_window=?, metrics_port=?, "
                 "max_consecutive_identical=?, discovery_interval=?, "
-                "dependency_context_depth=? WHERE id=1",
+                "dependency_context_depth=?, plan_step_notifications=? "
+                "WHERE id=1",
                 (
                     agent.name, agent.log_level,
                     agent.event_queue_size, agent.dedup_window_seconds,
@@ -126,6 +127,7 @@ class ConfigStore:
                     agent.known_fixes_dir, agent.correlation_window,
                     agent.metrics_port, agent.max_consecutive_identical,
                     agent.discovery_interval, agent.dependency_context_depth,
+                    int(agent.plan_step_notifications),
                 ),
             )
 
@@ -287,6 +289,7 @@ class ConfigStore:
             max_consecutive_identical=row["max_consecutive_identical"],
             discovery_interval=row["discovery_interval"],
             dependency_context_depth=row["dependency_context_depth"],
+            plan_step_notifications=bool(row["plan_step_notifications"]),
         )
 
     async def update_agent_config(self, updates: dict[str, Any]) -> AgentConfig:
