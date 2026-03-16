@@ -111,6 +111,9 @@ async def gather_multi_handler_context(
         if handler_name is None:
             return None
 
+        # Dedup: check-then-add is safe because single-threaded asyncio has
+        # no await between the `in` check and `add()`, so no other coroutine
+        # can interleave here even under asyncio.gather().
         dedup_key = (handler_name, node.entity_id)
         if dedup_key in seen:
             return None
