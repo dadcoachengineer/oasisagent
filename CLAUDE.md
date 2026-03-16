@@ -53,7 +53,7 @@ This is a **public open-source project (MIT license)**. All code must be config-
 ### Project Structure
 Follow the layout in ARCHITECTURE.md §12 exactly. The package is `oasisagent/` (not `oasis_agent/` or `src/`).
 
-## Current State (v0.3.6)
+## Current State (v1.0.0)
 
 ### Architecture
 - **Single process**: FastAPI serves web UI + webhook receiver + REST API on one port
