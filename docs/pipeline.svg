@@ -136,8 +136,8 @@
     <text x="55" y="32" font-family="ui-monospace, monospace" font-size="8"
           fill="#475569" text-anchor="middle">dependency graph + BFS</text>
   </g>
-  <!-- Arrow: Topology → T2 (up) -->
-  <line x1="485" y1="150" x2="524" y2="128" stroke="#475569" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arr)"/>
+  <!-- Arrow: Topology → T2 (up into Decision Engine) -->
+  <line x1="485" y1="150" x2="524" y2="140" stroke="#475569" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arr)"/>
 
   <!-- Cross-Domain Correlator -->
   <g transform="translate(164, 150)">
@@ -268,12 +268,12 @@
           fill="#64748b" text-anchor="middle">candidate → verify → T0</text>
   </g>
 
-  <!-- Learning Loop feedback arrow: Learning → T0 (curved up-left) -->
-  <path d="M 702 310 C 620 250, 420 40, 340 68"
+  <!-- Learning Loop feedback arrow: sweeps up right side, lands on Decision Engine top -->
+  <path d="M 702 310 C 790 310, 790 36, 432 50"
         fill="none" stroke="#34d399" stroke-width="1.2" stroke-dasharray="5,3"
         marker-end="url(#arr-green)" opacity="0.7"/>
-  <text x="545" y="158" font-family="ui-monospace, monospace" font-size="8"
-        fill="#34d399" opacity="0.8">promote</text>
+  <text x="786" y="185" font-family="ui-monospace, monospace" font-size="8"
+        fill="#34d399" opacity="0.8" transform="rotate(-90, 786, 185)">promote</text>
 
   <!-- Arrow: Audit → Observability (down) -->
   <line x1="309" y1="276" x2="340" y2="306" stroke="#475569" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arr)"/>
