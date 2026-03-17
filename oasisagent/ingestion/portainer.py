@@ -661,14 +661,12 @@ class PortainerAdapter(IngestAdapter):
     async def discover_topology(
         self,
     ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
-        """Discover Docker hosts, containers, stacks, and network relationships.
+        """Discover Docker hosts, containers, and stack relationships.
 
         Creates:
         - Host nodes for each Portainer endpoint
         - Container nodes with ``runs_on`` edges to their host
         - Stack nodes with ``member_of`` edges from containers
-        - ``shares_network`` edges between containers on the same
-          user-defined Docker network
         """
         nodes: list[TopologyNode] = []
         edges: list[TopologyEdge] = []
@@ -724,8 +722,6 @@ class PortainerAdapter(IngestAdapter):
                 continue
 
             stacks_seen: set[str] = set()
-            # Map Docker network name → [container entity_ids]
-            network_members: dict[str, list[str]] = {}
 
             for ct in containers:
                 raw_names = ct.get("Names", [])
@@ -788,30 +784,5 @@ class PortainerAdapter(IngestAdapter):
                         source=source,
                         last_seen=now,
                     ))
-
-                # Collect Docker network membership
-                net_settings = ct.get("NetworkSettings", {}) or {}
-                networks = net_settings.get("Networks", {}) or {}
-                for net_name in networks:
-                    if net_name in ("bridge", "host", "none", "ingress"):
-                        continue
-                    network_members.setdefault(net_name, []).append(entity_id)
-
-            # Create shares_network edges for small, purpose-specific
-            # networks only.  Broad overlay networks (>5 members) produce
-            # O(n²) edges that drown the graph — stack member_of edges
-            # already capture that grouping.
-            for _net_name, members in network_members.items():
-                if len(members) < 2 or len(members) > 5:
-                    continue
-                for i, a in enumerate(members):
-                    for b in members[i + 1:]:
-                        edges.append(TopologyEdge(
-                            from_entity=a,
-                            to_entity=b,
-                            edge_type="shares_network",
-                            source=source,
-                            last_seen=now,
-                        ))
 
         return nodes, edges

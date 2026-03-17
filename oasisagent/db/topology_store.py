@@ -183,6 +183,15 @@ class TopologyStore:
         )
         await self._db.commit()
 
+    async def delete_edges_by_type(self, edge_type: str) -> int:
+        """Delete all edges of a given type. Returns count deleted."""
+        cursor = await self._db.execute(
+            "DELETE FROM topology_edges WHERE edge_type = ?",
+            (edge_type,),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
     # -------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------

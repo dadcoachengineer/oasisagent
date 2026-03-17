@@ -1607,6 +1607,12 @@ class Orchestrator:
 
         interval = self._config.agent.discovery_interval
 
+        # One-time cleanup: remove stale shares_network edges from
+        # v1.0.1 that overwhelmed the service map
+        deleted = await self._topology_store.delete_edges_by_type("shares_network")
+        if deleted:
+            logger.info("Cleaned up %d stale shares_network edges", deleted)
+
         # Wait for adapters to establish connections
         await asyncio.sleep(30)
 
