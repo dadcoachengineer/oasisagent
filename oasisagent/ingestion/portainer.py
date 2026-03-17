@@ -661,7 +661,15 @@ class PortainerAdapter(IngestAdapter):
     async def discover_topology(
         self,
     ) -> tuple[list[TopologyNode], list[TopologyEdge]]:
-        """Discover Docker hosts and containers with runs_on relationships."""
+        """Discover Docker hosts, containers, stacks, and network relationships.
+
+        Creates:
+        - Host nodes for each Portainer endpoint
+        - Container nodes with ``runs_on`` edges to their host
+        - Stack nodes with ``member_of`` edges from containers
+        - ``shares_network`` edges between containers on the same
+          user-defined Docker network
+        """
         nodes: list[TopologyNode] = []
         edges: list[TopologyEdge] = []
         source = f"auto:{self.name}"
@@ -715,6 +723,10 @@ class PortainerAdapter(IngestAdapter):
             if not isinstance(containers, list):
                 continue
 
+            stacks_seen: set[str] = set()
+            # Map Docker network name → [container entity_ids]
+            network_members: dict[str, list[str]] = {}
+
             for ct in containers:
                 raw_names = ct.get("Names", [])
                 ct_name = raw_names[0].lstrip("/") if raw_names else ""
@@ -748,5 +760,56 @@ class PortainerAdapter(IngestAdapter):
                     source=source,
                     last_seen=now,
                 ))
+
+                # Stack grouping
+                if stack:
+                    if stack not in stacks_seen:
+                        stacks_seen.add(stack)
+                        nodes.append(TopologyNode(
+                            entity_id=f"portainer:{ep_name}/stack:{stack}",
+                            entity_type="stack",
+                            display_name=stack,
+                            source=source,
+                            last_seen=now,
+                            metadata={"endpoint": ep_name},
+                        ))
+                        edges.append(TopologyEdge(
+                            from_entity=f"portainer:{ep_name}/stack:{stack}",
+                            to_entity=f"portainer:{ep_name}",
+                            edge_type="runs_on",
+                            source=source,
+                            last_seen=now,
+                        ))
+
+                    edges.append(TopologyEdge(
+                        from_entity=entity_id,
+                        to_entity=f"portainer:{ep_name}/stack:{stack}",
+                        edge_type="member_of",
+                        source=source,
+                        last_seen=now,
+                    ))
+
+                # Collect Docker network membership
+                net_settings = ct.get("NetworkSettings", {}) or {}
+                networks = net_settings.get("Networks", {}) or {}
+                for net_name in networks:
+                    if net_name in ("bridge", "host", "none"):
+                        continue
+                    network_members.setdefault(net_name, []).append(entity_id)
+
+            # Create shares_network edges between containers on the
+            # same user-defined Docker network
+            for _net_name, members in network_members.items():
+                if len(members) < 2:
+                    continue
+                for i, a in enumerate(members):
+                    for b in members[i + 1:]:
+                        edges.append(TopologyEdge(
+                            from_entity=a,
+                            to_entity=b,
+                            edge_type="shares_network",
+                            source=source,
+                            last_seen=now,
+                        ))
 
         return nodes, edges
