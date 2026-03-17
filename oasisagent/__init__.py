@@ -1,3 +1,3 @@
 """OasisAgent — Autonomous infrastructure operations agent for home labs."""
 
-__version__ = "1.0.9"
+__version__ = "1.0.10"

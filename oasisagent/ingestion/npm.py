@@ -167,7 +167,13 @@ class NpmAdapter(IngestAdapter):
     async def _poll_proxy_hosts(self) -> None:
         """Poll proxy host status for state transitions."""
         data = await self._client.get("/api/nginx/proxy-hosts")
-        hosts: list[dict[str, Any]] = data if isinstance(data, list) else []
+        # NPM v2 returns a bare list; v3+ may wrap in {"data": [...]}
+        if isinstance(data, list):
+            hosts: list[dict[str, Any]] = data
+        elif isinstance(data, dict) and isinstance(data.get("data"), list):
+            hosts = data["data"]
+        else:
+            hosts = []
 
         for host in hosts:
             host_id = host.get("id")
@@ -407,7 +413,18 @@ class NpmAdapter(IngestAdapter):
             logger.warning("NPM topology discovery failed: %s", exc)
             return [], []
 
-        hosts: list[dict[str, Any]] = data if isinstance(data, list) else []
+        # NPM v2 returns a bare list; v3+ may wrap in {"data": [...]}
+        if isinstance(data, list):
+            hosts: list[dict[str, Any]] = data
+        elif isinstance(data, dict) and isinstance(data.get("data"), list):
+            hosts = data["data"]
+        else:
+            logger.warning(
+                "NPM topology: unexpected response type %s (keys=%s)",
+                type(data).__name__,
+                list(data.keys()) if isinstance(data, dict) else "N/A",
+            )
+            hosts = []
         for host in hosts:
             host_id = host.get("id")
             if host_id is None:
