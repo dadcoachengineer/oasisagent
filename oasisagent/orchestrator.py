@@ -1613,6 +1613,17 @@ class Orchestrator:
         if deleted:
             logger.info("Cleaned up %d stale shares_network edges", deleted)
 
+        # Prune stale container/stack nodes not seen in 2 discovery cycles
+        stale_age = interval * 2
+        pruned = await self._topology_store.prune_stale_nodes(
+            max_age_seconds=stale_age, entity_type="container",
+        )
+        pruned += await self._topology_store.prune_stale_nodes(
+            max_age_seconds=stale_age, entity_type="stack",
+        )
+        if pruned:
+            logger.info("Pruned %d stale topology nodes", pruned)
+
         # Wait for adapters to establish connections
         await asyncio.sleep(30)
 

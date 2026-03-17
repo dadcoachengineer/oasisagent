@@ -192,6 +192,51 @@ class TopologyStore:
         await self._db.commit()
         return cursor.rowcount
 
+    async def prune_stale_nodes(
+        self, max_age_seconds: int, entity_type: str | None = None,
+    ) -> int:
+        """Delete auto-discovered nodes not seen within *max_age_seconds*.
+
+        Also deletes all edges referencing pruned nodes.
+        Manually edited nodes are never pruned.
+        Returns count of nodes deleted.
+        """
+        cutoff = datetime.now(UTC).isoformat()
+        # Nodes with NULL last_seen are considered stale
+        type_clause = " AND entity_type = ?" if entity_type else ""
+        params: list[object] = [cutoff, max_age_seconds]
+        if entity_type:
+            params.append(entity_type)
+
+        # Find stale node IDs
+        rows = await self._db.execute_fetchall(
+            "SELECT entity_id FROM topology_nodes "
+            "WHERE manually_edited = 0 "
+            "AND (last_seen IS NULL OR "
+            "     (julianday(?) - julianday(last_seen)) * 86400 > ?)"
+            + type_clause,
+            params,
+        )
+        if not rows:
+            return 0
+
+        ids = [r[0] for r in rows]
+        placeholders = ",".join("?" for _ in ids)
+
+        # Delete edges referencing these nodes
+        await self._db.execute(
+            f"DELETE FROM topology_edges WHERE from_entity IN ({placeholders})"
+            f" OR to_entity IN ({placeholders})",
+            ids + ids,
+        )
+        # Delete the nodes
+        cursor = await self._db.execute(
+            f"DELETE FROM topology_nodes WHERE entity_id IN ({placeholders})",
+            ids,
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
     # -------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------
