@@ -1092,3 +1092,131 @@ class TestIPSynthesis:
 
         # Same adapter — no synthesis needed
         assert len(edges) == 0
+
+
+class TestServiceContainerSynthesis:
+    """Tests for service-to-container name matching."""
+
+    def test_links_plex_service_to_container(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="plex:plex", entity_type="service",
+                display_name="Plex", source="auto:plex",
+            ),
+            TopologyNode(
+                entity_id="portainer:Swarm/mediastack_plex.1.abc123",
+                entity_type="container",
+                display_name="mediastack_plex.1.abc123",
+                source="auto:portainer",
+                metadata={"image": "plexinc/pms-docker"},
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_service_container_edges(nodes)
+
+        assert len(edges) == 1
+        assert edges[0].from_entity == "plex:plex"
+        assert edges[0].to_entity == "portainer:Swarm/mediastack_plex.1.abc123"
+        assert edges[0].edge_type == "runs_in"
+
+    def test_links_servarr_to_sonarr_container(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="servarr_sonarr:servarr_sonarr",
+                entity_type="service",
+                display_name="Sonarr", source="auto:servarr",
+            ),
+            TopologyNode(
+                entity_id="portainer:Swarm/mediastack_sonarr1.1.xyz",
+                entity_type="container",
+                display_name="mediastack_sonarr1.1.xyz",
+                source="auto:portainer",
+                metadata={"image": "linuxserver/sonarr"},
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_service_container_edges(nodes)
+
+        assert len(edges) == 1
+        assert edges[0].to_entity == "portainer:Swarm/mediastack_sonarr1.1.xyz"
+
+    def test_no_match_returns_empty(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="custom:myapp", entity_type="service",
+                display_name="My App", source="auto:custom",
+            ),
+            TopologyNode(
+                entity_id="portainer:Swarm/nginx.1.abc",
+                entity_type="container",
+                display_name="nginx.1.abc",
+                source="auto:portainer",
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_service_container_edges(nodes)
+
+        assert len(edges) == 0
+
+    def test_image_fallback_match(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="vaultwarden:vaultwarden",
+                entity_type="service",
+                display_name="Vaultwarden", source="auto:vaultwarden",
+            ),
+            TopologyNode(
+                entity_id="portainer:Swarm/bitwarden.1.xyz",
+                entity_type="container",
+                display_name="bitwarden.1.xyz",
+                source="auto:portainer",
+                metadata={"image": "vaultwarden/server:latest"},
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_service_container_edges(nodes)
+
+        assert len(edges) == 1
+        assert edges[0].to_entity == "portainer:Swarm/bitwarden.1.xyz"
+
+    def test_prefers_same_ip(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="plex:plex", entity_type="service",
+                display_name="Plex", host_ip="10.0.0.1",
+                source="auto:plex",
+            ),
+            TopologyNode(
+                entity_id="portainer:host-a/plex.1.aaa",
+                entity_type="container",
+                display_name="plex.1.aaa", host_ip="10.0.0.2",
+                source="auto:portainer",
+            ),
+            TopologyNode(
+                entity_id="portainer:host-b/plex.1.bbb",
+                entity_type="container",
+                display_name="plex.1.bbb", host_ip="10.0.0.1",
+                source="auto:portainer",
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_service_container_edges(nodes)
+
+        assert len(edges) == 1
+        # Should prefer the container on the same IP
+        assert edges[0].to_entity == "portainer:host-b/plex.1.bbb"

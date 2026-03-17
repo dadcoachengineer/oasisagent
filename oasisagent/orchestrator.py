@@ -1594,6 +1594,79 @@ class Orchestrator:
 
         return edges
 
+    @staticmethod
+    def _synthesize_service_container_edges(
+        nodes: list[object],
+    ) -> list[object]:
+        """Create ``runs_in`` edges linking service nodes to containers.
+
+        When an adapter discovers a service node (e.g. ``plex:plex``)
+        and Portainer discovers a container whose name contains that
+        service name, link them with a ``runs_in`` edge.
+
+        Uses word-boundary matching against container ``display_name``
+        and Docker ``image`` metadata to avoid false positives.
+        """
+        import re
+
+        from oasisagent.models import TopologyEdge
+
+        services = [n for n in nodes if n.entity_type == "service"]
+        containers = [n for n in nodes if n.entity_type == "container"]
+
+        if not services or not containers:
+            return []
+
+        now = datetime.now(UTC)
+        edges: list[TopologyEdge] = []
+
+        for svc in services:
+            # Extract match key from entity_id (e.g. "plex" from "plex:plex")
+            key = svc.entity_id.split(":")[-1] if ":" in svc.entity_id else ""
+            if not key:
+                continue
+
+            # For servarr adapters, also try the bare app type
+            # e.g. "servarr_sonarr" → also try "sonarr"
+            keys = [key]
+            if "_" in key:
+                keys.append(key.split("_", 1)[-1])
+
+            # Build word-boundary patterns (space included for
+            # matching inside "display_name image" combined text)
+            patterns = [re.compile(r"(?:^|[_.\-/ ])" + re.escape(k)
+                                   + r"(?:$|[_.\-/\d: ])", re.IGNORECASE)
+                        for k in keys]
+
+            best_match = None
+            for ct in containers:
+                # Search in display_name and image metadata
+                search_text = ct.display_name or ""
+                image = (ct.metadata or {}).get("image", "")
+                if isinstance(image, str):
+                    search_text += " " + image
+
+                for pat in patterns:
+                    if pat.search(search_text):
+                        # Prefer same-IP match
+                        if svc.host_ip and ct.host_ip == svc.host_ip:
+                            best_match = ct
+                            break
+                        if best_match is None:
+                            best_match = ct
+                        break
+
+            if best_match is not None:
+                edges.append(TopologyEdge(
+                    from_entity=svc.entity_id,
+                    to_entity=best_match.entity_id,
+                    edge_type="runs_in",
+                    source="auto:service_synthesis",
+                    last_seen=now,
+                ))
+
+        return edges
+
     async def _run_topology_discovery(self) -> None:
         """Periodically discover topology from all adapters.
 
@@ -1615,14 +1688,14 @@ class Orchestrator:
 
         # Prune stale container/stack nodes not seen in 2 discovery cycles
         stale_age = interval * 2
-        pruned = await self._topology_store.prune_stale_nodes(
+        pruned_ids = await self._topology_store.prune_stale_nodes(
             max_age_seconds=stale_age, entity_type="container",
         )
-        pruned += await self._topology_store.prune_stale_nodes(
+        pruned_ids += await self._topology_store.prune_stale_nodes(
             max_age_seconds=stale_age, entity_type="stack",
         )
-        if pruned:
-            logger.info("Pruned %d stale topology nodes", pruned)
+        if pruned_ids:
+            logger.info("Pruned %d stale topology nodes on startup", len(pruned_ids))
 
         # Wait for adapters to establish connections
         await asyncio.sleep(30)
@@ -1636,15 +1709,23 @@ class Orchestrator:
                         nodes, edges = await adapter.discover_topology()
                         all_nodes.extend(nodes)
                         all_edges.extend(edges)
-                    except Exception:
-                        logger.debug(
-                            "Topology discovery failed for %s", adapter.name
+                    except Exception as exc:
+                        logger.warning(
+                            "Topology discovery failed for %s: %s",
+                            adapter.name, exc,
                         )
 
                 # Cross-adapter IP synthesis: link nodes from different
                 # adapters that share a host_ip
                 ip_synth_edges = self._synthesize_ip_edges(all_nodes)
                 all_edges.extend(ip_synth_edges)
+
+                # Service-container synthesis: link adapter service nodes
+                # to Portainer containers by name matching
+                svc_synth_edges = self._synthesize_service_container_edges(
+                    all_nodes,
+                )
+                all_edges.extend(svc_synth_edges)
 
                 if all_nodes or all_edges:
                     diffs = await self._service_graph.merge_discovered(
@@ -1657,6 +1738,22 @@ class Orchestrator:
                             len(all_nodes),
                             len(all_edges),
                         )
+
+                # Prune stale container/stack nodes not seen in 2 cycles
+                stale_age = interval * 2
+                pruned_ids = await self._topology_store.prune_stale_nodes(
+                    max_age_seconds=stale_age, entity_type="container",
+                )
+                pruned_ids += await self._topology_store.prune_stale_nodes(
+                    max_age_seconds=stale_age, entity_type="stack",
+                )
+                if pruned_ids:
+                    await self._service_graph.remove_pruned(
+                        pruned_ids, self._topology_store,
+                    )
+                    logger.info(
+                        "Pruned %d stale topology nodes", len(pruned_ids),
+                    )
 
             except asyncio.CancelledError:
                 return
