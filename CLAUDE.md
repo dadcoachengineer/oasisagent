@@ -44,7 +44,7 @@ This is a **public open-source project (MIT license)**. All code must be config-
 - No Alembic — migrations are simple async functions: `async def migrate(db: aiosqlite.Connection)`
 
 ### Testing
-- pytest + pytest-asyncio (3018 tests as of v0.3.6)
+- pytest + pytest-asyncio (3026 tests as of v1.0.9)
 - Unit tests for all business logic (decision engine, known_fixes matcher, circuit breaker, guardrails)
 - Integration tests with mocked external services (MQTT broker, HA API, InfluxDB)
 - Test the LLM client with mock responses — don't call real LLM endpoints in tests
@@ -53,16 +53,16 @@ This is a **public open-source project (MIT license)**. All code must be config-
 ### Project Structure
 Follow the layout in ARCHITECTURE.md §12 exactly. The package is `oasisagent/` (not `oasis_agent/` or `src/`).
 
-## Current State (v1.0.0)
+## Current State (v1.0.9)
 
 ### Architecture
 - **Single process**: FastAPI serves web UI + webhook receiver + REST API on one port
-- **Web admin UI**: HTMX-powered dashboard, setup wizard, config CRUD, event explorer, approval queue, service map, notification feed, dark mode
+- **Web admin UI**: HTMX-powered dashboard, setup wizard, config CRUD, event explorer, approval queue, service map (with collapsible stacks), notification feed, dark mode
 - **24 ingestion adapters**: MQTT, HA WebSocket, HA log poller, HTTP poller, Portainer, Proxmox, UniFi, Cloudflare, Servarr (Radarr/Sonarr/etc.), Plex, qBittorrent, Tdarr, Tautulli, Overseerr, Frigate, N8N, NPM, Vaultwarden (with deep health), Uptime Kuma, Stalwart, Ollama, EMQX, Nextcloud
 - **6 handlers**: Home Assistant, Docker, Portainer, Proxmox, UniFi, Cloudflare
 - **8 notification channels**: MQTT, Email, Webhook, Telegram (interactive), Discord, Slack, Web UI (interactive)
 - **5 scanners**: Certificate expiry, disk space, backup freshness, HA health, Docker health
-- **15 known fix YAML files** covering all supported systems
+- **19 known fix YAML files** covering all supported systems
 
 ### Decision Engine Pipeline
 - T0 (known fixes lookup) → T1 (SLM triage) → T2 (cloud reasoning)
@@ -73,11 +73,21 @@ Follow the layout in ARCHITECTURE.md §12 exactly. The package is `oasisagent/` 
 - **Event correlation**: Same-entity dedup window + cross-domain correlation
 - **Circuit breaker**: Per-entity and global failure rate tracking
 
+### Topology Discovery Pipeline
+Runs periodically in `_run_topology_discovery()`. Each cycle:
+1. **Adapter discovery**: Each adapter's `discover_topology()` returns nodes + edges. Portainer creates host/container/stack nodes with `runs_on` and `member_of` edges. Docker Swarm stacks use `com.docker.stack.namespace` label.
+2. **IP synthesis**: `_synthesize_ip_edges()` links nodes from different adapters sharing a `host_ip` via `hosted_by` edges (e.g. Proxmox node ↔ Portainer endpoint).
+3. **Service-container synthesis**: `_synthesize_service_container_edges()` links adapter service nodes (Plex, Sonarr, etc.) to Portainer containers via word-boundary name/image matching → `runs_in` edges.
+4. **Merge**: `ServiceGraph.merge_discovered()` upserts to SQLite, respecting `manually_edited` flag.
+5. **Prune**: `prune_stale_nodes()` removes container/stack nodes not seen in 2 cycles. `ServiceGraph.remove_pruned()` syncs the in-memory graph.
+
+Topology discovery only includes **running** containers (not stopped/exited Swarm tasks).
+
 ### Key Engine Modules
 - `oasisagent/engine/decision.py` — Decision engine (T0/T1/T2 + guardrails)
 - `oasisagent/engine/plan_executor.py` — Multi-step remediation state machine
 - `oasisagent/engine/context_assembly.py` — Multi-handler context gathering for T2
-- `oasisagent/engine/service_graph.py` — Service topology graph + dependency BFS
+- `oasisagent/engine/service_graph.py` — Service topology graph + dependency BFS + `remove_pruned()`
 - `oasisagent/engine/correlator.py` — Same-entity event correlation
 - `oasisagent/engine/cross_correlator.py` — Cross-domain event correlation
 - `oasisagent/engine/circuit_breaker.py` — Per-entity/global circuit breaker

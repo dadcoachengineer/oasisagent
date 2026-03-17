@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oasisagent"
-version = "1.0.8"
+version = "1.0.9"
 description = "Autonomous infrastructure operations agent for home labs"
 readme = "README.md"
 license = "MIT"
