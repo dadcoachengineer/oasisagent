@@ -6,7 +6,10 @@
  *
  * Node colors by entity_type:
  *   network_device = blue, service = green, host = gray,
- *   proxy = orange, monitor = purple
+ *   proxy = orange, monitor = purple, stack = teal (collapsed)
+ *
+ * Stack nodes are collapsible — collapsed by default, click to
+ * expand and show member containers.
  *
  * Supports: drag, zoom/pan, click-to-inspect, manual/auto badge.
  */
@@ -25,6 +28,7 @@
     proxy: "#f97316",
     monitor: "#a855f7",
     container: "#06b6d4",
+    stack: "#14b8a6",
     external: "#ef4444",
   };
 
@@ -35,28 +39,37 @@
     forwards_to: "#8b5cf6",
     resolves_via: "#06b6d4",
     connects_via: "#6b7280",
+    member_of: "#14b8a6",
+    hosted_by: "#6b7280",
   };
 
   var DEFAULT_COLOR = "#94a3b8";
   var DEFAULT_EDGE_COLOR = "#d1d5db";
   var NODE_RADIUS = 24;
+  var STACK_RADIUS = 34;
   var LABEL_OFFSET = NODE_RADIUS + 10;
+  var STACK_LABEL_OFFSET = STACK_RADIUS + 10;
   var ARROW_SIZE = 8;
 
   // -----------------------------------------------------------------------
   // State
   // -----------------------------------------------------------------------
 
-  var svg, container, simulation;
+  var svg, graphContainer, simulation;
   var linkGroup, nodeGroup, labelGroup;
   var width, height;
+  var rawData = { nodes: [], links: [] };
   var currentData = { nodes: [], links: [] };
+
+  // Stacks collapsed by default — set of stack entity_ids
+  var collapsedStacks = {};
 
   var filterState = {
     searchText: "",
     typeFilters: {
       network_device: true, service: true, host: true,
-      container: true, proxy: true, monitor: true, external: true,
+      container: true, proxy: true, monitor: true,
+      stack: true, external: true,
     },
     focusNode: null,
     focusDepth: 1,
@@ -69,6 +82,10 @@
 
   function nodeColor(d) {
     return TYPE_COLORS[d.type] || DEFAULT_COLOR;
+  }
+
+  function nodeRadius(d) {
+    return d.type === "stack" ? STACK_RADIUS : NODE_RADIUS;
   }
 
   function getCsrfToken() {
@@ -95,6 +112,113 @@
       }
       return resp.json();
     });
+  }
+
+  // -----------------------------------------------------------------------
+  // Stack collapse logic
+  // -----------------------------------------------------------------------
+
+  /**
+   * Build the mapping: stackId → [member entity_ids].
+   * Also returns memberToStack: memberId → stackId.
+   */
+  function buildStackMembership(data) {
+    var stackMembers = {};   // stackId → [memberIds]
+    var memberToStack = {};  // memberId → stackId
+
+    for (var i = 0; i < data.links.length; i++) {
+      var link = data.links[i];
+      var srcId = link.source.id || link.source;
+      var tgtId = link.target.id || link.target;
+      if (link.type === "member_of") {
+        // from=container, to=stack
+        if (!stackMembers[tgtId]) stackMembers[tgtId] = [];
+        stackMembers[tgtId].push(srcId);
+        memberToStack[srcId] = tgtId;
+      }
+    }
+    return { stackMembers: stackMembers, memberToStack: memberToStack };
+  }
+
+  /**
+   * Process raw data with stack collapse applied.
+   * Returns a new {nodes, links} with collapsed stacks' members hidden.
+   */
+  function applyCollapse(data) {
+    var membership = buildStackMembership(data);
+    var stackMembers = membership.stackMembers;
+    var memberToStack = membership.memberToStack;
+
+    // Build set of hidden node IDs (members of collapsed stacks)
+    var hiddenNodes = {};
+    var stackNodeIds = {};
+    for (var i = 0; i < data.nodes.length; i++) {
+      if (data.nodes[i].type === "stack") {
+        stackNodeIds[data.nodes[i].id] = true;
+      }
+    }
+
+    for (var stackId in collapsedStacks) {
+      if (!collapsedStacks[stackId]) continue;
+      var members = stackMembers[stackId] || [];
+      for (var j = 0; j < members.length; j++) {
+        hiddenNodes[members[j]] = true;
+      }
+    }
+
+    // Filter nodes — keep non-hidden, annotate stacks with member count
+    var filteredNodes = [];
+    for (var k = 0; k < data.nodes.length; k++) {
+      var node = data.nodes[k];
+      if (hiddenNodes[node.id]) continue;
+
+      // Clone and annotate stack nodes
+      if (node.type === "stack") {
+        var count = (stackMembers[node.id] || []).length;
+        var clone = Object.assign({}, node);
+        clone.memberCount = count;
+        clone.collapsed = !!collapsedStacks[node.id];
+        filteredNodes.push(clone);
+      } else {
+        filteredNodes.push(node);
+      }
+    }
+
+    // Filter links — hide if either endpoint is hidden, or if it's a
+    // member_of edge to a collapsed stack
+    var filteredLinks = [];
+    for (var m = 0; m < data.links.length; m++) {
+      var link = data.links[m];
+      var srcId = link.source.id || link.source;
+      var tgtId = link.target.id || link.target;
+
+      if (hiddenNodes[srcId] || hiddenNodes[tgtId]) continue;
+      // Hide member_of edges when stack is collapsed (the stack node
+      // itself represents the relationship)
+      if (link.type === "member_of" && collapsedStacks[tgtId]) continue;
+
+      filteredLinks.push(link);
+    }
+
+    return { nodes: filteredNodes, links: filteredLinks };
+  }
+
+  /**
+   * Initialize all stacks as collapsed.
+   */
+  function initCollapsedStacks(data) {
+    collapsedStacks = {};
+    for (var i = 0; i < data.nodes.length; i++) {
+      if (data.nodes[i].type === "stack") {
+        collapsedStacks[data.nodes[i].id] = true;
+      }
+    }
+  }
+
+  function toggleStack(stackId) {
+    collapsedStacks[stackId] = !collapsedStacks[stackId];
+    var processed = applyCollapse(rawData);
+    update(processed, true);
   }
 
   // -----------------------------------------------------------------------
@@ -131,7 +255,7 @@
       .zoom()
       .scaleExtent([0.1, 4])
       .on("zoom", function (event) {
-        container.attr("transform", event.transform);
+        graphContainer.attr("transform", event.transform);
       });
 
     svg.call(zoom);
@@ -140,12 +264,12 @@
     svg.__zoom_behavior = zoom;
 
     // Container for zoomable content
-    container = svg.append("g").attr("class", "graph-container");
+    graphContainer = svg.append("g").attr("class", "graph-container");
 
     // Draw order: links, nodes, labels
-    linkGroup = container.append("g").attr("class", "links");
-    nodeGroup = container.append("g").attr("class", "nodes");
-    labelGroup = container.append("g").attr("class", "labels");
+    linkGroup = graphContainer.append("g").attr("class", "links");
+    nodeGroup = graphContainer.append("g").attr("class", "nodes");
+    labelGroup = graphContainer.append("g").attr("class", "labels");
 
     // Force simulation
     simulation = d3
@@ -157,16 +281,25 @@
           .id(function (d) {
             return d.id;
           })
-          .distance(120)
+          .distance(function (d) {
+            // Shorter distance for member_of edges within a stack
+            if (d.type === "member_of") return 60;
+            return 120;
+          })
       )
       .force("charge", d3.forceManyBody().strength(-300))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius(NODE_RADIUS + 8))
+      .force("collision", d3.forceCollide().radius(function (d) {
+        return nodeRadius(d) + 8;
+      }))
       .on("tick", ticked);
 
     // Load initial data
     var initial = window.__TOPOLOGY_DATA__ || { nodes: [], links: [] };
-    update(initial);
+    rawData = initial;
+    initCollapsedStacks(initial);
+    var processed = applyCollapse(initial);
+    update(processed, false);
 
     // Wire up buttons
     bindButtons();
@@ -179,14 +312,31 @@
   // Render
   // -----------------------------------------------------------------------
 
-  function update(data) {
+  function update(data, preservePositions) {
     currentData = data;
+
+    // Build position map from existing nodes to preserve layout
+    var posMap = {};
+    if (preservePositions && simulation) {
+      var oldNodes = simulation.nodes();
+      for (var p = 0; p < oldNodes.length; p++) {
+        posMap[oldNodes[p].id] = { x: oldNodes[p].x, y: oldNodes[p].y };
+      }
+      // Apply saved positions to new nodes
+      for (var q = 0; q < data.nodes.length; q++) {
+        var saved = posMap[data.nodes[q].id];
+        if (saved) {
+          data.nodes[q].x = saved.x;
+          data.nodes[q].y = saved.y;
+        }
+      }
+    }
 
     // Links
     var links = linkGroup
       .selectAll("line")
       .data(data.links, function (d) {
-        return d.source.id || d.source + "-" + (d.target.id || d.target) + "-" + d.type;
+        return (d.source.id || d.source) + "-" + (d.target.id || d.target) + "-" + d.type;
       });
 
     links.exit().remove();
@@ -245,12 +395,14 @@
     // Main circle
     nodesEnter
       .append("circle")
-      .attr("r", NODE_RADIUS)
+      .attr("r", nodeRadius)
       .attr("fill", nodeColor)
       .attr("stroke", function (d) {
+        if (d.type === "stack") return d.collapsed ? "#0d9488" : "#5eead4";
         return d.manually_edited ? "#eab308" : "#e5e7eb";
       })
       .attr("stroke-width", function (d) {
+        if (d.type === "stack") return 3;
         return d.manually_edited ? 3 : 2;
       })
       .attr("stroke-dasharray", function (d) {
@@ -259,14 +411,32 @@
       .attr("cursor", "pointer")
       .on("click", function (event, d) {
         event.stopPropagation();
-        showNodeDetail(d);
-        document.dispatchEvent(
-          new CustomEvent("node-clicked", { detail: { entity_id: d.id } })
-        );
+        if (d.type === "stack") {
+          toggleStack(d.id);
+        } else {
+          showNodeDetail(d);
+          document.dispatchEvent(
+            new CustomEvent("node-clicked", { detail: { entity_id: d.id } })
+          );
+        }
       });
+
+    // Count badge for stack nodes (inside circle)
+    nodesEnter
+      .filter(function (d) { return d.type === "stack"; })
+      .append("text")
+      .attr("class", "stack-count")
+      .attr("text-anchor", "middle")
+      .attr("dy", "0.35em")
+      .attr("font-size", "14px")
+      .attr("font-weight", "700")
+      .attr("fill", "#ffffff")
+      .attr("pointer-events", "none")
+      .text(function (d) { return d.memberCount || ""; });
 
     // Source badge (manual vs auto)
     nodesEnter
+      .filter(function (d) { return d.type !== "stack"; })
       .append("text")
       .attr("class", "source-badge")
       .attr("text-anchor", "middle")
@@ -293,16 +463,24 @@
     // Update existing node visuals
     nodes
       .select("circle")
+      .attr("r", nodeRadius)
       .attr("fill", nodeColor)
       .attr("stroke", function (d) {
+        if (d.type === "stack") return d.collapsed ? "#0d9488" : "#5eead4";
         return d.manually_edited ? "#eab308" : "#e5e7eb";
       })
       .attr("stroke-width", function (d) {
+        if (d.type === "stack") return 3;
         return d.manually_edited ? 3 : 2;
       })
       .attr("stroke-dasharray", function (d) {
         return d.manually_edited ? "4,3" : "none";
       });
+
+    // Update stack count text
+    nodes
+      .select(".stack-count")
+      .text(function (d) { return d.memberCount || ""; });
 
     // Labels
     var labels = labelGroup
@@ -317,20 +495,31 @@
       .enter()
       .append("text")
       .attr("text-anchor", "middle")
-      .attr("font-size", "11px")
-      .attr("font-weight", "500")
+      .attr("font-size", function (d) { return d.type === "stack" ? "12px" : "11px"; })
+      .attr("font-weight", function (d) { return d.type === "stack" ? "700" : "500"; })
       .attr("fill", "#374151")
       .attr("pointer-events", "none")
       .text(function (d) {
+        if (d.type === "stack" && d.collapsed) {
+          return d.name + " (" + (d.memberCount || 0) + ")";
+        }
         return d.name;
       });
 
     labels = labelsEnter.merge(labels);
 
+    // Update label text for stacks (may change on collapse toggle)
+    labels.text(function (d) {
+      if (d.type === "stack" && d.collapsed) {
+        return d.name + " (" + (d.memberCount || 0) + ")";
+      }
+      return d.name;
+    });
+
     // Restart simulation
     simulation.nodes(data.nodes);
     simulation.force("link").links(data.links);
-    simulation.alpha(0.8).restart();
+    simulation.alpha(preservePositions ? 0.3 : 0.8).restart();
 
     // Store selections for tick
     svg.__links = linkGroup.selectAll("line");
@@ -362,7 +551,9 @@
 
     svg.__labels
       .attr("x", function (d) { return d.x; })
-      .attr("y", function (d) { return d.y - LABEL_OFFSET; });
+      .attr("y", function (d) {
+        return d.y - (d.type === "stack" ? STACK_LABEL_OFFSET : LABEL_OFFSET);
+      });
   }
 
   // -----------------------------------------------------------------------
@@ -517,6 +708,7 @@
       '      <option value="service"' + (d.type === "service" ? " selected" : "") + ">Service</option>" +
       '      <option value="host"' + (d.type === "host" ? " selected" : "") + ">Host</option>" +
       '      <option value="container"' + (d.type === "container" ? " selected" : "") + ">Container</option>" +
+      '      <option value="stack"' + (d.type === "stack" ? " selected" : "") + ">Stack</option>" +
       '      <option value="network_device"' + (d.type === "network_device" ? " selected" : "") + ">Network Device</option>" +
       '      <option value="proxy"' + (d.type === "proxy" ? " selected" : "") + ">Proxy</option>" +
       '      <option value="monitor"' + (d.type === "monitor" ? " selected" : "") + ">Monitor</option>" +
@@ -738,7 +930,10 @@
         return resp.json();
       })
       .then(function (data) {
-        update(data);
+        rawData = data;
+        initCollapsedStacks(data);
+        var processed = applyCollapse(data);
+        update(processed, false);
       })
       .catch(function (err) {
         console.error("Failed to refresh graph:", err);
@@ -748,7 +943,7 @@
   function fitView() {
     if (!currentData.nodes.length) return;
 
-    var bounds = container.node().getBBox();
+    var bounds = graphContainer.node().getBBox();
     if (bounds.width === 0 || bounds.height === 0) return;
 
     var padding = 40;
@@ -873,8 +1068,14 @@
         } else {
           el.attr("opacity", 1);
           el.select("circle")
-            .attr("stroke", d.manually_edited ? "#eab308" : "#e5e7eb")
-            .attr("stroke-width", d.manually_edited ? 3 : 2);
+            .attr("stroke", function () {
+              if (d.type === "stack") return d.collapsed ? "#0d9488" : "#5eead4";
+              return d.manually_edited ? "#eab308" : "#e5e7eb";
+            })
+            .attr("stroke-width", function () {
+              if (d.type === "stack") return 3;
+              return d.manually_edited ? 3 : 2;
+            });
         }
       }
     });
@@ -938,8 +1139,8 @@
   }
 
   function initTypeFilterPills() {
-    var container = document.getElementById("type-filter-pills");
-    if (!container) return;
+    var pillContainer = document.getElementById("type-filter-pills");
+    if (!pillContainer) return;
 
     var types = Object.keys(TYPE_COLORS);
     for (var i = 0; i < types.length; i++) {
@@ -955,7 +1156,7 @@
           pill.classList.toggle("active", filterState.typeFilters[type]);
           applyFilters();
         });
-        container.appendChild(pill);
+        pillContainer.appendChild(pill);
       })(types[i]);
     }
   }
