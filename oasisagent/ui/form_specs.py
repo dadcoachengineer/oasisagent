@@ -1065,6 +1065,12 @@ FORM_SPECS: dict[str, list[FieldSpec]] = {
             group="Thresholds",
         ),
         FieldSpec(
+            "resource_poll_concurrency", "Resource Poll Concurrency",
+            "number", default=8, min_val=1, max_val=20,
+            help_text="Concurrent stats API calls (increase for large fleets)",
+            group="Polling",
+        ),
+        FieldSpec(
             "ignore_containers", "Ignore Containers", "list_str",
             help_text="Container names to skip (one per line)",
         ),
