@@ -477,9 +477,10 @@ class PortainerAdapter(IngestAdapter):
     async def _poll_container_resources(self) -> None:
         """Poll per-container stats for CPU/memory threshold crossings.
 
-        Uses round-robin rotation (deque.rotate) so all containers get
-        equal polling frequency over N cycles, even when the time budget
-        is exhausted before the full list is polled.
+        Uses bounded concurrency (semaphore) to poll multiple containers
+        in parallel, with round-robin rotation (deque.rotate) so all
+        containers get equal polling frequency over N cycles if the time
+        budget is still exhausted.
         """
         deadline = time.monotonic() + self._config.poll_interval * 0.8
 
@@ -512,42 +513,50 @@ class PortainerAdapter(IngestAdapter):
         if self._last_polled_count > 0:
             self._resource_poll_order.rotate(-self._last_polled_count)
 
-        polled = 0
+        sem = asyncio.Semaphore(self._config.resource_poll_concurrency)
+        results: dict[str, dict[str, object]] = {}
+        budget_exceeded = False
+
+        async def _fetch_one(key: str, ct_id: str, ep_id: int) -> None:
+            nonlocal budget_exceeded
+            if budget_exceeded:
+                return
+            async with sem:
+                if time.monotonic() > deadline:
+                    budget_exceeded = True
+                    return
+                try:
+                    stats = await self._client.get_docker(
+                        ep_id, f"containers/{ct_id}/stats",
+                        stream="false",
+                    )
+                    if isinstance(stats, dict):
+                        results[key] = stats
+                except Exception:
+                    pass
+
+        tasks: list[asyncio.Task[None]] = []
         for key in list(self._resource_poll_order):
-            if time.monotonic() > deadline:
-                logger.warning(
-                    "Portainer resource poll exceeded time budget after "
-                    "%d/%d containers",
-                    polled,
-                    len(self._resource_poll_order),
-                )
-                break
-
             ct_id = self._container_ids.get(key)
-            if not ct_id:
-                continue
-
             ep_id = ep_lookup.get(key)
-            if ep_id is None:
-                continue
+            if ct_id and ep_id is not None:
+                tasks.append(asyncio.create_task(_fetch_one(key, ct_id, ep_id)))
 
-            try:
-                stats = await self._client.get_docker(
-                    ep_id, f"containers/{ct_id}/stats",
-                    stream="false",
-                )
-            except Exception:
-                polled += 1
-                continue
+        if tasks:
+            await asyncio.gather(*tasks)
 
-            if not isinstance(stats, dict):
-                polled += 1
-                continue
+        if budget_exceeded:
+            logger.warning(
+                "Portainer resource poll exceeded time budget after "
+                "%d/%d containers",
+                len(results),
+                len(self._resource_poll_order),
+            )
 
+        for key, stats in results.items():
             self._check_container_resources(key, stats)
-            polled += 1
 
-        self._last_polled_count = polled
+        self._last_polled_count = len(results)
 
     def _check_container_resources(
         self, key: str, stats: dict[str, object],

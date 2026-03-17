@@ -654,6 +654,7 @@ class PortainerAdapterConfig(BaseModel):
     poll_container_resources: bool = False
     cpu_threshold: float = 90.0
     memory_threshold: float = 90.0
+    resource_poll_concurrency: Annotated[int, Field(ge=1, le=20)] = 8
     ignore_containers: list[str] = Field(default_factory=list)
 
 
