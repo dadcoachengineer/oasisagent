@@ -1543,6 +1543,57 @@ class Orchestrator:
         except Exception:
             logger.exception("Approval listener crashed")
 
+    @staticmethod
+    def _synthesize_ip_edges(
+        nodes: list[object],
+    ) -> list[object]:
+        """Create ``hosted_by`` edges between nodes sharing a host_ip.
+
+        When different adapters discover nodes on the same IP (e.g. a
+        Proxmox node and a Portainer endpoint both at 192.168.1.120),
+        link them so the service map shows cross-layer relationships.
+
+        Only links nodes from *different* adapters to avoid duplicating
+        intra-adapter edges.  Prefers linking to a "host" entity_type
+        when one exists.
+        """
+        from oasisagent.models import TopologyEdge, TopologyNode
+
+        ip_groups: dict[str, list[TopologyNode]] = {}
+        for node in nodes:
+            if node.host_ip:
+                ip_groups.setdefault(node.host_ip, []).append(node)
+
+        now = datetime.now(UTC)
+        edges: list[TopologyEdge] = []
+        for _ip, group in ip_groups.items():
+            if len(group) < 2:
+                continue
+
+            # Find the preferred anchor (a host-type node, or first node)
+            anchor = next(
+                (n for n in group if n.entity_type == "host"), group[0],
+            )
+
+            for node in group:
+                if node is anchor:
+                    continue
+                # Only cross-adapter links — skip if same adapter
+                if node.source == anchor.source:
+                    continue
+                # Skip if node is also a host (avoid host↔host noise)
+                if node.entity_type == "host":
+                    continue
+                edges.append(TopologyEdge(
+                    from_entity=node.entity_id,
+                    to_entity=anchor.entity_id,
+                    edge_type="hosted_by",
+                    source="auto:ip_synthesis",
+                    last_seen=now,
+                ))
+
+        return edges
+
     async def _run_topology_discovery(self) -> None:
         """Periodically discover topology from all adapters.
 
@@ -1572,6 +1623,11 @@ class Orchestrator:
                         logger.debug(
                             "Topology discovery failed for %s", adapter.name
                         )
+
+                # Cross-adapter IP synthesis: link nodes from different
+                # adapters that share a host_ip
+                ip_synth_edges = self._synthesize_ip_edges(all_nodes)
+                all_edges.extend(ip_synth_edges)
 
                 if all_nodes or all_edges:
                     diffs = await self._service_graph.merge_discovered(

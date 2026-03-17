@@ -180,8 +180,9 @@ def _container(
     ct_id: str = "abc123",
     image: str = "nginx:latest",
     labels: dict[str, str] | None = None,
+    networks: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    ct: dict[str, object] = {
         "Id": ct_id,
         "Names": [f"/{name}"],
         "State": state,
@@ -189,6 +190,9 @@ def _container(
         "Image": image,
         "Labels": labels or {},
     }
+    if networks is not None:
+        ct["NetworkSettings"] = {"Networks": networks}
+    return ct
 
 
 class TestPollContainers:
@@ -752,6 +756,7 @@ class TestTopologyDiscovery:
 
         host_nodes = [n for n in nodes if n.entity_type == "host"]
         ct_nodes = [n for n in nodes if n.entity_type == "container"]
+        stack_nodes = [n for n in nodes if n.entity_type == "stack"]
 
         assert len(host_nodes) == 1
         assert host_nodes[0].entity_id == "portainer:primary"
@@ -760,10 +765,51 @@ class TestTopologyDiscovery:
         assert len(ct_nodes) == 1
         assert ct_nodes[0].entity_id == "portainer:primary/nginx"
 
-        assert len(edges) == 1
-        assert edges[0].from_entity == "portainer:primary/nginx"
-        assert edges[0].to_entity == "portainer:primary"
-        assert edges[0].edge_type == "runs_on"
+        # Stack node created for "web" compose project
+        assert len(stack_nodes) == 1
+        assert stack_nodes[0].entity_id == "portainer:primary/stack:web"
+
+        edge_types = {(e.from_entity, e.to_entity, e.edge_type) for e in edges}
+        # Container → host
+        assert ("portainer:primary/nginx", "portainer:primary", "runs_on") in edge_types
+        # Stack → host
+        assert ("portainer:primary/stack:web", "portainer:primary", "runs_on") in edge_types
+        # Container → stack
+        assert ("portainer:primary/nginx", "portainer:primary/stack:web", "member_of") in edge_types
+
+    @pytest.mark.asyncio
+    async def test_shares_network_edges(self) -> None:
+        """Containers on the same Docker network get shares_network edges."""
+        adapter, _ = _make_adapter()
+
+        async def _mock_get(path: str) -> list[dict[str, object]]:
+            return [
+                {"Id": 1, "Name": "node1", "Type": 1, "Status": 1,
+                 "PublicURL": "", "URL": ""},
+            ]
+
+        async def _mock_get_docker(
+            ep_id: int, path: str, **kw: object,
+        ) -> list[dict[str, object]]:
+            return [
+                _container("app", "running", ct_id="a1",
+                           networks={"mynet": {}, "bridge": {}}),
+                _container("db", "running", ct_id="a2",
+                           networks={"mynet": {}}),
+                _container("solo", "running", ct_id="a3",
+                           networks={"bridge": {}}),
+            ]
+
+        adapter._client.get = AsyncMock(side_effect=_mock_get)
+        adapter._client.get_docker = AsyncMock(side_effect=_mock_get_docker)
+
+        _nodes, edges = await adapter.discover_topology()
+
+        net_edges = [e for e in edges if e.edge_type == "shares_network"]
+        # app and db share "mynet" → 1 edge. "bridge" is excluded.
+        assert len(net_edges) == 1
+        pair = {net_edges[0].from_entity, net_edges[0].to_entity}
+        assert pair == {"portainer:node1/app", "portainer:node1/db"}
 
     @pytest.mark.asyncio
     async def test_empty_on_api_error(self) -> None:

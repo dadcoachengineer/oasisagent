@@ -1020,3 +1020,75 @@ class TestNotifyAutoExecution:
 
         # Actions counter NOT incremented (handler failed)
         assert orchestrator._actions_taken == 0
+
+
+class TestIPSynthesis:
+    """Tests for cross-adapter IP synthesis."""
+
+    def test_creates_hosted_by_edges_across_adapters(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="proxmox:node1", entity_type="host",
+                host_ip="192.168.1.120", source="auto:proxmox",
+            ),
+            TopologyNode(
+                entity_id="portainer:swarm", entity_type="host",
+                host_ip="192.168.1.120", source="auto:portainer",
+            ),
+            TopologyNode(
+                entity_id="unifi:ab:cd:ef", entity_type="network_device",
+                host_ip="192.168.1.1", source="auto:unifi",
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_ip_edges(nodes)
+
+        # Two hosts on same IP from different adapters — one is anchor,
+        # but both are host type, so the non-anchor host is skipped
+        # (host↔host noise filter)
+        assert len(edges) == 0
+
+    def test_links_service_to_host_across_adapters(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="proxmox:node1", entity_type="host",
+                host_ip="192.168.1.120", source="auto:proxmox",
+            ),
+            TopologyNode(
+                entity_id="npm:proxy:example.com", entity_type="proxy",
+                host_ip="192.168.1.120", source="auto:npm",
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_ip_edges(nodes)
+
+        assert len(edges) == 1
+        assert edges[0].from_entity == "npm:proxy:example.com"
+        assert edges[0].to_entity == "proxmox:node1"
+        assert edges[0].edge_type == "hosted_by"
+
+    def test_skips_same_adapter_nodes(self) -> None:
+        from oasisagent.models import TopologyNode
+        from oasisagent.orchestrator import Orchestrator
+
+        nodes = [
+            TopologyNode(
+                entity_id="portainer:node1", entity_type="host",
+                host_ip="10.0.0.1", source="auto:portainer",
+            ),
+            TopologyNode(
+                entity_id="portainer:node1/nginx", entity_type="container",
+                host_ip="10.0.0.1", source="auto:portainer",
+            ),
+        ]
+
+        edges = Orchestrator._synthesize_ip_edges(nodes)
+
+        # Same adapter — no synthesis needed
+        assert len(edges) == 0
