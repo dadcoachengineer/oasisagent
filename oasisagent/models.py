@@ -394,7 +394,7 @@ class TopologyDiff(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["added", "updated", "stale"]
+    action: Literal["added", "updated", "stale", "pruned"]
     entity_type: Literal["node", "edge"]
     entity_id: str  # node entity_id or "from->to" for edges
     details: str = ""

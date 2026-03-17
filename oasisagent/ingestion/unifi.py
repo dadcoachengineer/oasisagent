@@ -791,10 +791,10 @@ class UnifiAdapter(IngestAdapter):
         now = datetime.now(UTC)
 
         try:
-            resp = await self._client.get("/api/s/{site}/stat/device")
+            resp = await self._client.get("stat/device")
             devices: list[dict[str, Any]] = resp.get("data", [])
-        except Exception:
-            logger.debug("UniFi topology discovery failed (API unreachable)")
+        except Exception as exc:
+            logger.warning("UniFi topology discovery failed: %s", exc)
             return [], []
 
         for dev in devices:

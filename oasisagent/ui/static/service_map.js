@@ -41,6 +41,7 @@
     connects_via: "#6b7280",
     member_of: "#14b8a6",
     hosted_by: "#6b7280",
+    runs_in: "#22c55e",
   };
 
   var DEFAULT_COLOR = "#94a3b8";

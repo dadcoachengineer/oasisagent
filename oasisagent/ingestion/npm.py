@@ -403,8 +403,8 @@ class NpmAdapter(IngestAdapter):
 
         try:
             data = await self._client.get("/api/nginx/proxy-hosts")
-        except Exception:
-            logger.debug("NPM topology discovery failed (API unreachable)")
+        except Exception as exc:
+            logger.warning("NPM topology discovery failed: %s", exc)
             return [], []
 
         hosts: list[dict[str, Any]] = data if isinstance(data, list) else []

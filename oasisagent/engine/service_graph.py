@@ -130,6 +130,35 @@ class ServiceGraph:
 
         return diffs
 
+    async def remove_pruned(
+        self,
+        pruned_ids: list[str],
+        store: TopologyStore,
+    ) -> list[TopologyDiff]:
+        """Remove pruned nodes from the in-memory graph.
+
+        Called after ``TopologyStore.prune_stale_nodes()`` deletes from
+        SQLite. Removes nodes from ``_nodes``, reloads edges from the
+        store (pruning already deleted referencing edges), and rebuilds
+        all four indexes.
+        """
+        diffs: list[TopologyDiff] = []
+        for entity_id in pruned_ids:
+            node = self._nodes.pop(entity_id, None)
+            if node:
+                diffs.append(TopologyDiff(
+                    action="pruned",
+                    entity_type="node",
+                    entity_id=entity_id,
+                    details=f"{node.entity_type}: {node.display_name}",
+                ))
+
+        if diffs:
+            self._edges = await store.list_edges()
+            self._rebuild_indexes()
+
+        return diffs
+
     def detect_stale(
         self, max_missed_cycles: int = 3, cycle_seconds: int = 300,
     ) -> list[TopologyDiff]:
@@ -259,7 +288,7 @@ class ServiceGraph:
         for edge in self._edges:
             if edge.edge_type in (
                 "depends_on", "proxies_to", "runs_on", "connects_via",
-                "forwards_to", "resolves_via",
+                "forwards_to", "resolves_via", "runs_in",
             ):
                 self._entity_to_deps.setdefault(edge.from_entity, []).append(
                     edge.to_entity
