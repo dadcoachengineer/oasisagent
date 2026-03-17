@@ -793,14 +793,16 @@ class PortainerAdapter(IngestAdapter):
                 net_settings = ct.get("NetworkSettings", {}) or {}
                 networks = net_settings.get("Networks", {}) or {}
                 for net_name in networks:
-                    if net_name in ("bridge", "host", "none"):
+                    if net_name in ("bridge", "host", "none", "ingress"):
                         continue
                     network_members.setdefault(net_name, []).append(entity_id)
 
-            # Create shares_network edges between containers on the
-            # same user-defined Docker network
+            # Create shares_network edges for small, purpose-specific
+            # networks only.  Broad overlay networks (>5 members) produce
+            # O(n²) edges that drown the graph — stack member_of edges
+            # already capture that grouping.
             for _net_name, members in network_members.items():
-                if len(members) < 2:
+                if len(members) < 2 or len(members) > 5:
                     continue
                 for i, a in enumerate(members):
                     for b in members[i + 1:]:
