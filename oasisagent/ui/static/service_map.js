@@ -301,6 +301,12 @@
     var processed = applyCollapse(initial);
     update(processed, false);
 
+    // Auto-fit after simulation stabilizes
+    simulation.on("end", function onceStabilized() {
+      fitView();
+      simulation.on("end", null); // Only run once
+    });
+
     // Wire up buttons
     bindButtons();
 
@@ -372,6 +378,7 @@
       .attr("font-size", "9px")
       .attr("fill", function (d) { return EDGE_COLORS[d.type] || "#9ca3af"; })
       .attr("dy", -6)
+      .attr("display", "none")
       .text(function (d) {
         return d.type;
       });
@@ -434,20 +441,16 @@
       .attr("pointer-events", "none")
       .text(function (d) { return d.memberCount || ""; });
 
-    // Source badge (manual vs auto)
+    // Source badge — only for manually edited nodes
     nodesEnter
-      .filter(function (d) { return d.type !== "stack"; })
+      .filter(function (d) { return d.type !== "stack" && d.manually_edited; })
       .append("text")
       .attr("class", "source-badge")
       .attr("text-anchor", "middle")
       .attr("dy", NODE_RADIUS + 20)
       .attr("font-size", "8px")
-      .attr("fill", function (d) {
-        return d.manually_edited ? "#eab308" : "#9ca3af";
-      })
-      .text(function (d) {
-        return d.manually_edited ? "manual" : "auto";
-      });
+      .attr("fill", "#eab308")
+      .text("manual");
 
     // Drag behavior
     nodesEnter.call(
