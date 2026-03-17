@@ -289,7 +289,8 @@ class PortainerAdapter(IngestAdapter):
                 status_text = ct.get("Status", "")
                 image = ct.get("Image", "")
                 labels = ct.get("Labels", {}) or {}
-                stack = labels.get("com.docker.compose.project", "")
+                stack = (labels.get("com.docker.stack.namespace")
+                         or labels.get("com.docker.compose.project", ""))
 
                 # Compute effective state
                 effective = self._compute_effective_state(state, status_text)
@@ -730,7 +731,8 @@ class PortainerAdapter(IngestAdapter):
                     continue
 
                 labels = ct.get("Labels", {}) or {}
-                stack = labels.get("com.docker.compose.project", "")
+                stack = (labels.get("com.docker.stack.namespace")
+                         or labels.get("com.docker.compose.project", ""))
 
                 entity_id = f"portainer:{ep_name}/{ct_name}"
                 meta: dict[str, object] = {
