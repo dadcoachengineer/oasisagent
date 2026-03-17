@@ -711,10 +711,11 @@ class PortainerAdapter(IngestAdapter):
                 },
             ))
 
-            # Containers on this endpoint
+            # Running containers only — exclude stopped/exited Swarm tasks
+            # that would pollute the topology with stale node IDs
             try:
                 containers = await self._client.get_docker(
-                    ep_id, "containers/json", all="true",
+                    ep_id, "containers/json",
                 )
             except Exception:
                 continue
